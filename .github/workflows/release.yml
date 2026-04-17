@@ -10,6 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   release:
@@ -17,7 +18,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable

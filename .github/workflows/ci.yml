@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Node 20 kalktıktan sonra dahi çalışması için Node 24'e zorla.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   test:
@@ -16,7 +18,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -42,7 +44,7 @@ jobs:
         run: ./scripts/bundle.sh
 
       - name: Upload .app artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: HekaDrop-app-macos-arm64
           path: target/release/HekaDrop.app
