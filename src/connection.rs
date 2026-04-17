@@ -19,15 +19,13 @@ use crate::location::nearby::connections::{
 };
 use crate::payload::{CompletedPayload, PayloadAssembler};
 use crate::secure::SecureCtx;
-use crate::state::{self, HistoryItem, ProgressState};
 use crate::sharing::nearby::{
-    connection_response_frame::Status as ConsentStatus,
-    frame::Version as ShVersion,
-    paired_key_result_frame::Status as PkrStatus,
-    text_metadata::Type as TextType,
+    connection_response_frame::Status as ConsentStatus, frame::Version as ShVersion,
+    paired_key_result_frame::Status as PkrStatus, text_metadata::Type as TextType,
     v1_frame as sh_v1, ConnectionResponseFrame as ShConsent, Frame as SharingFrame,
     PairedKeyEncryptionFrame, PairedKeyResultFrame, V1Frame as ShV1Frame,
 };
+use crate::state::{self, HistoryItem, ProgressState};
 use crate::ui;
 use crate::ukey2;
 use anyhow::{anyhow, Context, Result};
@@ -38,7 +36,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::net::TcpStream;
 use tracing::{info, warn};
-
 
 pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     // 1) plain ConnectionRequest
@@ -76,7 +73,8 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     let resp_in = frame::read_frame(&mut socket)
         .await
         .context("peer ConnectionResponse okunamadı")?;
-    let peer_resp = OfflineFrame::decode(resp_in.as_ref()).context("peer ConnectionResponse decode")?;
+    let peer_resp =
+        OfflineFrame::decode(resp_in.as_ref()).context("peer ConnectionResponse decode")?;
     info!(
         "[{}] peer ConnectionResponse → tip={:?}",
         peer,
@@ -108,9 +106,14 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
 
     loop {
         if state::is_cancelled() {
-            info!("[{}] kullanıcı iptal — Cancel + Disconnect gönderiliyor", peer);
+            info!(
+                "[{}] kullanıcı iptal — Cancel + Disconnect gönderiliyor",
+                peer
+            );
             let cancel = build_sharing_cancel();
-            send_sharing_frame(&mut socket, &mut ctx, &cancel).await.ok();
+            send_sharing_frame(&mut socket, &mut ctx, &cancel)
+                .await
+                .ok();
             send_disconnection(&mut socket, &mut ctx).await.ok();
             state::clear_cancel();
             state::set_progress(ProgressState::Idle);
@@ -160,8 +163,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                         let id = header.id.unwrap_or(0);
                         let total = header.total_size.unwrap_or(0);
                         let offset = chunk.offset.unwrap_or(0);
-                        let body_len =
-                            chunk.body.as_ref().map(|b| b.len()).unwrap_or(0) as i64;
+                        let body_len = chunk.body.as_ref().map(|b| b.len()).unwrap_or(0) as i64;
                         let written = offset + body_len;
                         if total > 0 {
                             let percent = ((written * 100) / total).clamp(0, 100) as u8;
@@ -236,9 +238,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 "HekaDrop",
                                 &format!(
                                     "İndirildi: {} ({})",
-                                    path.file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or("dosya"),
+                                    path.file_name().and_then(|n| n.to_str()).unwrap_or("dosya"),
                                     human_size(total_size)
                                 ),
                             );
@@ -329,8 +329,7 @@ async fn handle_sharing_frame(
 
             let mut planned_texts: Vec<(i64, TextType)> = Vec::new();
             for tm in &intro.text_metadata {
-                let kind =
-                    TextType::try_from(tm.r#type.unwrap_or(0)).unwrap_or(TextType::Unknown);
+                let kind = TextType::try_from(tm.r#type.unwrap_or(0)).unwrap_or(TextType::Unknown);
                 if let Some(pid) = tm.payload_id {
                     planned_texts.push((pid, kind));
                 }
@@ -390,7 +389,11 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
         }
         _ => {
             copy_to_clipboard(&text);
-            info!("[{}] metin panoya kopyalandı ({} karakter)", peer, text.len());
+            info!(
+                "[{}] metin panoya kopyalandı ({} karakter)",
+                peer,
+                text.len()
+            );
             ui::notify(
                 "HekaDrop",
                 &format!("Metin panoya kopyalandı: {}", preview(&text, 80)),

@@ -81,11 +81,7 @@ pub async fn scan(duration: Duration, own_port: u16) -> Result<Vec<DiscoveredDev
 }
 
 fn parse(info: &mdns_sd::ServiceInfo) -> Option<DiscoveredDevice> {
-    let addr: IpAddr = info
-        .get_addresses()
-        .iter()
-        .find(|a| a.is_ipv4())
-        .copied()?;
+    let addr: IpAddr = info.get_addresses().iter().find(|a| a.is_ipv4()).copied()?;
     let port = info.get_port();
 
     let txt = info.get_properties();

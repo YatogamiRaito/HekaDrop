@@ -183,10 +183,7 @@ pub async fn choose_device(labels: Vec<String>) -> Option<usize> {
 /// notify kullanıyoruz. Dönüş: kullanıcı iptal ederse false, gönderim başladıysa true.
 #[allow(dead_code)]
 pub fn send_progress_notify(device: &str, file: &str) {
-    notify(
-        "HekaDrop",
-        &format!("Gönderiliyor: {} → {}", file, device),
-    );
+    notify("HekaDrop", &format!("Gönderiliyor: {} → {}", file, device));
 }
 
 fn escape_applescript(s: &str) -> String {

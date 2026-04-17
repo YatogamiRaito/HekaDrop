@@ -11,9 +11,7 @@
 
 use crate::crypto;
 use crate::securegcm::{DeviceToDeviceMessage, GcmMetadata, Type as GcmType};
-use crate::securemessage::{
-    EncScheme, Header, HeaderAndBody, SecureMessage, SigScheme,
-};
+use crate::securemessage::{EncScheme, Header, HeaderAndBody, SecureMessage, SigScheme};
 use anyhow::{anyhow, bail, Result};
 use prost::Message;
 use rand::RngCore;
@@ -95,11 +93,8 @@ impl SecureCtx {
 
     pub fn decrypt(&mut self, frame_bytes: &[u8]) -> Result<Vec<u8>> {
         let smsg = SecureMessage::decode(frame_bytes)?;
-        if !crypto::hmac_sha256_verify(
-            &self.recv_hmac_key,
-            &smsg.header_and_body,
-            &smsg.signature,
-        ) {
+        if !crypto::hmac_sha256_verify(&self.recv_hmac_key, &smsg.header_and_body, &smsg.signature)
+        {
             bail!("HMAC eşleşmedi");
         }
         let hb = HeaderAndBody::decode(&smsg.header_and_body[..])?;

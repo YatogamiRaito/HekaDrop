@@ -28,11 +28,9 @@ use crate::location::nearby::connections::{
 use crate::payload::{CompletedPayload, PayloadAssembler};
 use crate::secure::SecureCtx;
 use crate::sharing::nearby::{
-    connection_response_frame::Status as ConsentStatus,
-    file_metadata::Type as FileKind,
-    frame::Version as ShVersion,
-    v1_frame as sh_v1, FileMetadata, Frame as SharingFrame, IntroductionFrame,
-    V1Frame as ShV1Frame,
+    connection_response_frame::Status as ConsentStatus, file_metadata::Type as FileKind,
+    frame::Version as ShVersion, v1_frame as sh_v1, FileMetadata, Frame as SharingFrame,
+    IntroductionFrame, V1Frame as ShV1Frame,
 };
 use crate::state::{self, ProgressState};
 use crate::ukey2;
@@ -119,8 +117,12 @@ pub async fn send(req: SendRequest) -> Result<()> {
     let mut assembler = PayloadAssembler::new();
 
     // 6) PairedKeyEncryption (biz başlatıyoruz)
-    connection::send_sharing_frame(&mut socket, &mut ctx, &connection::build_paired_key_encryption())
-        .await?;
+    connection::send_sharing_frame(
+        &mut socket,
+        &mut ctx,
+        &connection::build_paired_key_encryption(),
+    )
+    .await?;
     info!("[sender] PairedKeyEncryption gönderildi");
 
     // 7-11) Loop — peer sharing frame'lerini işle, duruma göre sıradaki adımı tetikle
@@ -133,8 +135,12 @@ pub async fn send(req: SendRequest) -> Result<()> {
         if state::is_cancelled() {
             info!("[sender] kullanıcı iptal etti");
             let cancel = connection::build_sharing_cancel();
-            connection::send_sharing_frame(&mut socket, &mut ctx, &cancel).await.ok();
-            connection::send_disconnection(&mut socket, &mut ctx).await.ok();
+            connection::send_sharing_frame(&mut socket, &mut ctx, &cancel)
+                .await
+                .ok();
+            connection::send_disconnection(&mut socket, &mut ctx)
+                .await
+                .ok();
             state::clear_cancel();
             state::set_progress(ProgressState::Idle);
             bail!("kullanıcı aktarımı iptal etti");
@@ -156,14 +162,17 @@ pub async fn send(req: SendRequest) -> Result<()> {
                 let Some(done) = assembler.ingest(&pt)? else {
                     continue;
                 };
-                let CompletedPayload::Bytes { data, .. } = done else { continue };
+                let CompletedPayload::Bytes { data, .. } = done else {
+                    continue;
+                };
                 let Ok(sharing) = SharingFrame::decode(&data[..]) else {
                     continue;
                 };
-                let shv1 = sharing.v1.as_ref().ok_or_else(|| anyhow!("sharing v1 yok"))?;
-                let stype = shv1
-                    .r#type
-                    .and_then(|t| sh_v1::FrameType::try_from(t).ok());
+                let shv1 = sharing
+                    .v1
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("sharing v1 yok"))?;
+                let stype = shv1.r#type.and_then(|t| sh_v1::FrameType::try_from(t).ok());
                 match stype {
                     Some(sh_v1::FrameType::PairedKeyEncryption) => {
                         if !sent_paired_result {
@@ -183,10 +192,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                             let intro = build_introduction_multi(&plans);
                             connection::send_sharing_frame(&mut socket, &mut ctx, &intro).await?;
                             introduction_sent = true;
-                            info!(
-                                "[sender] Introduction gönderildi — {} dosya",
-                                plans.len()
-                            );
+                            info!("[sender] Introduction gönderildi — {} dosya", plans.len());
                         }
                     }
                     Some(sh_v1::FrameType::Response) => {
@@ -201,7 +207,9 @@ pub async fn send(req: SendRequest) -> Result<()> {
                             status, accepted
                         );
                         if !accepted {
-                            connection::send_disconnection(&mut socket, &mut ctx).await.ok();
+                            connection::send_disconnection(&mut socket, &mut ctx)
+                                .await
+                                .ok();
                             bail!(
                                 "Peer aktarımı reddetti (status={}). PIN: {} — eşleşmedi mi?",
                                 status,
@@ -229,7 +237,9 @@ pub async fn send(req: SendRequest) -> Result<()> {
                             .await?;
                             bytes_sent += plan.size;
                         }
-                        connection::send_disconnection(&mut socket, &mut ctx).await.ok();
+                        connection::send_disconnection(&mut socket, &mut ctx)
+                            .await
+                            .ok();
                         let summary = if plans.len() == 1 {
                             plans[0].name.clone()
                         } else {

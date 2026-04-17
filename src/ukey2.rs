@@ -16,10 +16,7 @@ use crate::securegcm::{
 use crate::securemessage::{EcP256PublicKey, GenericPublicKey, PublicKeyType};
 use anyhow::{anyhow, bail, Result};
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use p256::{
-    ecdh::diffie_hellman,
-    EncodedPoint, PublicKey, SecretKey,
-};
+use p256::{ecdh::diffie_hellman, EncodedPoint, PublicKey, SecretKey};
 use prost::Message;
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -130,8 +127,8 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     let mut uncompressed = vec![0x04u8];
     uncompressed.extend_from_slice(&peer_x);
     uncompressed.extend_from_slice(&peer_y);
-    let encoded = EncodedPoint::from_bytes(&uncompressed)
-        .map_err(|e| anyhow!("peer pubkey parse: {}", e))?;
+    let encoded =
+        EncodedPoint::from_bytes(&uncompressed).map_err(|e| anyhow!("peer pubkey parse: {}", e))?;
     let peer_pk = PublicKey::from_encoded_point(&encoded);
     let peer_pk = Option::<PublicKey>::from(peer_pk)
         .ok_or_else(|| anyhow!("peer pubkey geçersiz eğri noktası"))?;
@@ -141,8 +138,7 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     let dhs_x = shared.raw_secret_bytes().to_vec();
     let derived_secret = crypto::sha256(&dhs_x);
 
-    let mut ukey_info =
-        Vec::with_capacity(client_init_bytes.len() + server_init_raw.len());
+    let mut ukey_info = Vec::with_capacity(client_init_bytes.len() + server_init_raw.len());
     ukey_info.extend_from_slice(&client_init_bytes);
     ukey_info.extend_from_slice(&server_init_raw);
 
@@ -240,12 +236,12 @@ pub struct ServerInitResult {
 }
 
 /// `Ukey2ClientInit` mesajını doğrular, `Ukey2ServerInit` üretir ve handshake state'i döner.
-pub fn process_client_init(
-    client_init_frame: &[u8],
-) -> Result<ServerInitResult> {
+pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult> {
     let msg = Ukey2Message::decode(client_init_frame)?;
     let message_type = msg.message_type.ok_or_else(|| anyhow!("mesaj tipi yok"))?;
-    let message_data = msg.message_data.ok_or_else(|| anyhow!("mesaj verisi yok"))?;
+    let message_data = msg
+        .message_data
+        .ok_or_else(|| anyhow!("mesaj verisi yok"))?;
 
     // 2 = CLIENT_INIT
     if message_type != 2 {
@@ -332,10 +328,7 @@ pub fn process_client_init(
 }
 
 /// İstemciden gelen `Ukey2ClientFinished`'i doğrular, ECDH + HKDF ile anahtarları türetir.
-pub fn process_client_finish(
-    raw_frame: &[u8],
-    state: &ServerInitResult,
-) -> Result<DerivedKeys> {
+pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Result<DerivedKeys> {
     // Önce mesaj tipini kontrol et (peer Alert gönderdiyse anlamsız bir byte dizisi
     // ClientFinished sanılmasın)
     let peek = Ukey2Message::decode(raw_frame).ok();
@@ -363,7 +356,9 @@ pub fn process_client_finish(
 
     let msg = Ukey2Message::decode(raw_frame)?;
     let message_type = msg.message_type.ok_or_else(|| anyhow!("mesaj tipi yok"))?;
-    let message_data = msg.message_data.ok_or_else(|| anyhow!("mesaj verisi yok"))?;
+    let message_data = msg
+        .message_data
+        .ok_or_else(|| anyhow!("mesaj verisi yok"))?;
     if message_type != 4 {
         bail!("beklenen CLIENT_FINISH, alınan {}", message_type);
     }
@@ -396,8 +391,8 @@ pub fn process_client_finish(
     let mut uncompressed = vec![0x04u8];
     uncompressed.extend_from_slice(&peer_x);
     uncompressed.extend_from_slice(&peer_y);
-    let encoded = EncodedPoint::from_bytes(&uncompressed)
-        .map_err(|e| anyhow!("peer pubkey parse: {}", e))?;
+    let encoded =
+        EncodedPoint::from_bytes(&uncompressed).map_err(|e| anyhow!("peer pubkey parse: {}", e))?;
     let peer_pk = PublicKey::from_encoded_point(&encoded);
     let peer_pk = Option::<PublicKey>::from(peer_pk)
         .ok_or_else(|| anyhow!("peer pubkey geçersiz eğri noktası"))?;
@@ -407,7 +402,8 @@ pub fn process_client_finish(
     let derived_secret = crypto::sha256(&dhs_x);
 
     // ukey_info = clientInit || serverInit (TAM çerçeveler, yani Ukey2Message'ın serialize edilmiş hali)
-    let mut ukey_info = Vec::with_capacity(state.client_init_bytes.len() + state.server_init_bytes.len());
+    let mut ukey_info =
+        Vec::with_capacity(state.client_init_bytes.len() + state.server_init_bytes.len());
     ukey_info.extend_from_slice(&state.client_init_bytes);
     ukey_info.extend_from_slice(&state.server_init_bytes);
 
@@ -415,21 +411,15 @@ pub fn process_client_finish(
     let next_secret = crypto::hkdf_sha256(&derived_secret, b"UKEY2 v1 next", &ukey_info, 32);
     let pin_code = crypto::pin_code_from_auth_key(&auth_key);
 
-    let d2d_client_key =
-        crypto::hkdf_sha256(&next_secret, &crypto::D2D_SALT, b"client", 32);
-    let d2d_server_key =
-        crypto::hkdf_sha256(&next_secret, &crypto::D2D_SALT, b"server", 32);
+    let d2d_client_key = crypto::hkdf_sha256(&next_secret, &crypto::D2D_SALT, b"client", 32);
+    let d2d_server_key = crypto::hkdf_sha256(&next_secret, &crypto::D2D_SALT, b"server", 32);
 
     let smsg_salt = crypto::secure_message_salt();
 
-    let client_aes =
-        crypto::hkdf_sha256(&d2d_client_key, &smsg_salt, b"ENC:2", 32);
-    let client_hmac =
-        crypto::hkdf_sha256(&d2d_client_key, &smsg_salt, b"SIG:1", 32);
-    let server_aes =
-        crypto::hkdf_sha256(&d2d_server_key, &smsg_salt, b"ENC:2", 32);
-    let server_hmac =
-        crypto::hkdf_sha256(&d2d_server_key, &smsg_salt, b"SIG:1", 32);
+    let client_aes = crypto::hkdf_sha256(&d2d_client_key, &smsg_salt, b"ENC:2", 32);
+    let client_hmac = crypto::hkdf_sha256(&d2d_client_key, &smsg_salt, b"SIG:1", 32);
+    let server_aes = crypto::hkdf_sha256(&d2d_server_key, &smsg_salt, b"ENC:2", 32);
+    let server_hmac = crypto::hkdf_sha256(&d2d_server_key, &smsg_salt, b"SIG:1", 32);
 
     let into_32 = |v: Vec<u8>| -> [u8; 32] {
         let mut a = [0u8; 32];
@@ -446,4 +436,3 @@ pub fn process_client_finish(
         pin_code,
     })
 }
-

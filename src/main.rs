@@ -43,10 +43,7 @@ pub mod securemessage {
 pub mod location {
     pub mod nearby {
         pub mod connections {
-            include!(concat!(
-                env!("OUT_DIR"),
-                "/location.nearby.connections.rs"
-            ));
+            include!(concat!(env!("OUT_DIR"), "/location.nearby.connections.rs"));
         }
         pub mod proto {
             pub mod sharing {
@@ -127,8 +124,8 @@ fn setup_logging() {
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("hekadrop=info"));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("hekadrop=info"));
 
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let log_dir = std::path::PathBuf::from(home).join("Library/Logs/HekaDrop");
@@ -150,9 +147,7 @@ fn setup_logging() {
     Box::leak(Box::new(guard));
 
     let stdout_layer = fmt::layer().with_writer(std::io::stdout);
-    let file_layer = fmt::layer()
-        .with_writer(file_writer)
-        .with_ansi(false);
+    let file_layer = fmt::layer().with_writer(file_writer).with_ansi(false);
 
     tracing_subscriber::registry()
         .with(filter)
@@ -162,8 +157,8 @@ fn setup_logging() {
 }
 
 fn cleanup_old_logs(dir: &std::path::Path, keep_days: u64) {
-    let threshold = std::time::SystemTime::now()
-        .checked_sub(Duration::from_secs(keep_days * 86400));
+    let threshold =
+        std::time::SystemTime::now().checked_sub(Duration::from_secs(keep_days * 86400));
     let Some(threshold) = threshold else { return };
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -202,14 +197,12 @@ fn run_app() -> ! {
 
     // Menü (tray)
     let tray_menu = Menu::new();
-    let title_item =
-        MenuItem::new(format!("HekaDrop — {}", device_name), false, None);
+    let title_item = MenuItem::new(format!("HekaDrop — {}", device_name), false, None);
     let status_item = MenuItem::new("Hazır", false, None);
     let show_window_item = MenuItem::new("Pencereyi göster", true, None);
     let send_item = MenuItem::new("Dosya gönder…", true, None);
     let cancel_item = MenuItem::new("Aktarımı iptal et", false, None);
-    let auto_accept_item =
-        CheckMenuItem::new("Otomatik kabul", true, auto_accept_initial, None);
+    let auto_accept_item = CheckMenuItem::new("Otomatik kabul", true, auto_accept_initial, None);
     let history_item = MenuItem::new("Son aktarımları göster", true, None);
     let open_downloads = MenuItem::new("İndirme klasörünü aç", true, None);
     let open_config = MenuItem::new("Yapılandırma dosyasını göster", true, None);
@@ -287,9 +280,8 @@ fn run_app() -> ! {
     let mut last_ui_progress_signature = String::new();
 
     event_loop.run(move |event, _target, control_flow| {
-        *control_flow = ControlFlow::WaitUntil(
-            std::time::Instant::now() + Duration::from_millis(250),
-        );
+        *control_flow =
+            ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_millis(250));
 
         // Pencere olayları
         if let Event::WindowEvent {
@@ -356,7 +348,10 @@ fn run_app() -> ! {
                 }
             } else if ev.id == cancel_item_id {
                 state::request_cancel();
-                ui::notify("HekaDrop", "İptal istendi, aktif transferler sonlandırılıyor…");
+                ui::notify(
+                    "HekaDrop",
+                    "İptal istendi, aktif transferler sonlandırılıyor…",
+                );
             } else if ev.id == open_downloads_id {
                 open_downloads_folder();
             } else if ev.id == open_config_id {
@@ -383,10 +378,7 @@ fn run_app() -> ! {
             } else if ev.id == history_item_id {
                 show_history();
             } else if ev.id == about_item_id {
-                ui::notify(
-                    "HekaDrop",
-                    "Quick Share alıcısı/göndericisi — Rust/macOS",
-                );
+                ui::notify("HekaDrop", "Quick Share alıcısı/göndericisi — Rust/macOS");
             }
         }
     });
@@ -519,7 +511,10 @@ fn open_config_file() {
     if !path.exists() {
         let _ = state::get().settings.read().save();
     }
-    let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+    let _ = std::process::Command::new("open")
+        .arg("-R")
+        .arg(&path)
+        .spawn();
 }
 
 fn progress_signature(p: &state::ProgressState) -> String {
@@ -535,7 +530,10 @@ fn progress_signature(p: &state::ProgressState) -> String {
 }
 
 fn js_string(s: &str) -> String {
-    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+    let escaped = s
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
     format!("\"{}\"", escaped)
 }
 
@@ -634,7 +632,10 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
     };
     match sender::send(req).await {
         Ok(_) => {
-            ui::notify("HekaDrop", &format!("Gönderim tamamlandı → {}", device.name));
+            ui::notify(
+                "HekaDrop",
+                &format!("Gönderim tamamlandı → {}", device.name),
+            );
         }
         Err(e) => {
             tracing::warn!("send hatası: {:#}", e);

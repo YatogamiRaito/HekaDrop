@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build + Release DMG
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install tools
+        run: brew install protobuf pngquant
+
+      - name: Build .app
+        run: ./scripts/bundle.sh
+
+      - name: Build DMG
+        run: ./scripts/make-dmg.sh
+
+      - name: Locate DMG
+        id: dmg
+        run: echo "path=$(ls target/HekaDrop-*.dmg | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.dmg.outputs.path }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false

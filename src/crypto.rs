@@ -16,7 +16,8 @@ type Aes256CbcDec = Decryptor<Aes256>;
 pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
     let hk = Hkdf::<Sha256>::new(Some(salt), ikm);
     let mut out = vec![0u8; len];
-    hk.expand(info, &mut out).expect("HKDF genişletme başarısız");
+    hk.expand(info, &mut out)
+        .expect("HKDF genişletme başarısız");
     out
 }
 

@@ -1,5 +1,5 @@
-use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use rand::Rng;
 use sha2::{Digest, Sha256};
 
@@ -27,8 +27,7 @@ pub fn device_name() -> String {
 }
 
 pub fn random_endpoint_id() -> [u8; 4] {
-    const ALPHABET: &[u8] =
-        b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let mut rng = rand::thread_rng();
     let mut id = [0u8; 4];
     for b in &mut id {

@@ -76,12 +76,11 @@ impl PayloadAssembler {
             .ok_or_else(|| anyhow!("payload_chunk yok"))?;
 
         let id = header.id.unwrap_or(0);
-        let ptype = header.r#type.unwrap_or(PayloadType::UnknownPayloadType as i32);
+        let ptype = header
+            .r#type
+            .unwrap_or(PayloadType::UnknownPayloadType as i32);
         let total_size = header.total_size.unwrap_or(0);
-        let body: &[u8] = chunk
-            .body
-            .as_deref()
-            .unwrap_or_default();
+        let body: &[u8] = chunk.body.as_deref().unwrap_or_default();
         let flags = chunk.flags.unwrap_or(0);
         let last_chunk = (flags & 1) == 1;
 
