@@ -4,6 +4,7 @@
 //! Connection handler'ları progress ve history'yi günceller, tray thread'i okur.
 
 use crate::settings::Settings;
+use crate::stats::Stats;
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
@@ -53,6 +54,8 @@ pub struct AppState {
     pub pending_js: RwLock<Vec<String>>,
     /// Gelen bağlantıların IP bazında rate limit takibi.
     pub rate_limiter: RateLimiter,
+    /// Kalıcı kullanım istatistikleri.
+    pub stats: RwLock<Stats>,
 }
 
 /// Sliding-window IP-bazlı rate limiter.
@@ -109,6 +112,7 @@ pub fn init(settings: Settings) {
         show_window_flag: AtomicBool::new(false),
         pending_js: RwLock::new(Vec::new()),
         rate_limiter: RateLimiter::new(),
+        stats: RwLock::new(Stats::load()),
     }));
 }
 

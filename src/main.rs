@@ -24,6 +24,7 @@ mod sender;
 mod server;
 mod settings;
 mod state;
+mod stats;
 mod ui;
 mod ukey2;
 
@@ -415,6 +416,21 @@ fn handle_ipc(cmd: &str) {
             push_trusted_to_ui();
         }
         "trusted_refresh" => push_trusted_to_ui(),
+        "stats_refresh" => push_stats_to_ui(),
+        "stats_reset" => {
+            let st = state::get();
+            let mut s = st.stats.write();
+            *s = stats::Stats::default();
+            let _ = s.save();
+            drop(s);
+            push_stats_to_ui();
+            ui::notify("HekaDrop", "İstatistikler sıfırlandı");
+        }
+        "open_logs" => {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            let log_dir = std::path::PathBuf::from(home).join("Library/Logs/HekaDrop");
+            let _ = std::process::Command::new("open").arg(&log_dir).spawn();
+        }
         "trusted_clear" => {
             let st = state::get();
             let mut s = st.settings.write();
@@ -489,6 +505,64 @@ fn push_settings_to_ui() {
     drop(s);
     let js = format!("window.applySettings && window.applySettings({})", payload);
     state::enqueue_js(js);
+}
+
+fn push_stats_to_ui() {
+    let st = state::get();
+    let s = st.stats.read().clone();
+    drop(st);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let first_use_human = if s.first_use_epoch > 0 {
+        relative_time(now.saturating_sub(s.first_use_epoch))
+    } else {
+        "henüz yok".to_string()
+    };
+    let last_use_human = if s.last_use_epoch > 0 {
+        relative_time(now.saturating_sub(s.last_use_epoch))
+    } else {
+        "henüz yok".to_string()
+    };
+
+    let top_rx = s
+        .top_rx_device()
+        .map(|(n, b)| format!("{} ({})", n, human_size(b as i64)))
+        .unwrap_or_else(|| "—".to_string());
+    let top_tx = s
+        .top_tx_device()
+        .map(|(n, b)| format!("{} ({})", n, human_size(b as i64)))
+        .unwrap_or_else(|| "—".to_string());
+
+    let home = std::env::var("HOME").unwrap_or_default();
+
+    let payload = serde_json::json!({
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "device_name": st_settings_resolved_name(),
+        "service_type": crate::config::service_type(),
+        "port": state::listen_port(),
+        "log_dir": format!("{}/Library/Logs/HekaDrop", home),
+        "config_path": settings::config_path().to_string_lossy(),
+        "bytes_received": human_size(s.bytes_received as i64),
+        "bytes_sent": human_size(s.bytes_sent as i64),
+        "files_received": s.files_received,
+        "files_sent": s.files_sent,
+        "first_use": first_use_human,
+        "last_use": last_use_human,
+        "top_rx": top_rx,
+        "top_tx": top_tx,
+    });
+    state::enqueue_js(format!(
+        "window.applyStats && window.applyStats({})",
+        payload
+    ));
+}
+
+fn st_settings_resolved_name() -> String {
+    state::get().settings.read().resolved_device_name()
 }
 
 fn push_trusted_to_ui() {

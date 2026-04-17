@@ -246,6 +246,14 @@ pub async fn send(req: SendRequest) -> Result<()> {
                             format!("{} dosya", plans.len())
                         };
                         state::set_progress(ProgressState::Completed { file: summary });
+                        {
+                            let st = state::get();
+                            let mut s = st.stats.write();
+                            for plan in &plans {
+                                s.record_sent(&peer_label, plan.size as u64);
+                            }
+                            let _ = s.save();
+                        }
                         info!("[sender] ✓ gönderim tamamlandı");
                         return Ok(());
                     }

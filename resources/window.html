@@ -259,6 +259,37 @@
     margin-top: 4px;
   }
   .save-note.show { opacity: 1; }
+
+  .diag-section {
+    background: #2c2c2e;
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .diag-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #8e8e93;
+    margin-bottom: 6px;
+  }
+  .diag-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .diag-row:last-child { border-bottom: 0; }
+  .diag-row span:first-child { color: #8e8e93; }
+  .diag-row span:last-child {
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    max-width: 55%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 </style>
 </head>
 <body>
@@ -271,6 +302,7 @@
     <div class="tab active" data-tab="home" onclick="switchTab('home')">Ana</div>
     <div class="tab" data-tab="history" onclick="switchTab('history')">Geçmiş</div>
     <div class="tab" data-tab="settings" onclick="switchTab('settings')">Ayarlar</div>
+    <div class="tab" data-tab="diag" onclick="switchTab('diag')">Tanı</div>
   </nav>
 
   <section class="panel active" id="home">
@@ -337,6 +369,36 @@
     <div class="save-note" id="save-note">✓ Kaydedildi</div>
   </section>
 
+  <section class="panel" id="diag">
+    <div class="diag-section">
+      <div class="diag-title">Uygulama</div>
+      <div class="diag-row"><span>Sürüm</span><span id="diag-version">—</span></div>
+      <div class="diag-row"><span>Cihaz adı</span><span id="diag-device">—</span></div>
+      <div class="diag-row"><span>mDNS</span><span id="diag-service">—</span></div>
+      <div class="diag-row"><span>TCP port</span><span id="diag-port">—</span></div>
+    </div>
+
+    <div class="diag-section">
+      <div class="diag-title">İstatistikler</div>
+      <div class="diag-row"><span>İlk kullanım</span><span id="diag-first">—</span></div>
+      <div class="diag-row"><span>Son aktarım</span><span id="diag-last">—</span></div>
+      <div class="diag-row"><span>Alınan</span><span id="diag-rx">—</span></div>
+      <div class="diag-row"><span>Gönderilen</span><span id="diag-tx">—</span></div>
+      <div class="diag-row"><span>En aktif (alıcı)</span><span id="diag-top-rx">—</span></div>
+      <div class="diag-row"><span>En aktif (gönderen)</span><span id="diag-top-tx">—</span></div>
+    </div>
+
+    <button onclick="act('stats_refresh')">
+      <span class="icon">↻</span>Yenile
+    </button>
+    <button onclick="act('open_logs')">
+      <span class="icon">📄</span>Log klasörünü aç
+    </button>
+    <button class="danger" onclick="if(confirm('İstatistikler sıfırlansın mı?')) act('stats_reset')">
+      <span class="icon">✕</span>İstatistikleri sıfırla
+    </button>
+  </section>
+
   <div class="footer">Arkaplanda çalışır — Android'den dosya bekler</div>
 
   <script>
@@ -349,6 +411,7 @@
       document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === tab));
       if (tab === 'history') act('history_refresh');
       if (tab === 'settings') act('trusted_refresh');
+      if (tab === 'diag') act('stats_refresh');
     }
 
     function toggleAuto() {
@@ -441,6 +504,20 @@
 
     window.updateStatus = function(text) {
       document.getElementById('status').textContent = text;
+    };
+
+    window.applyStats = function(s) {
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      set('diag-version', s.app_version);
+      set('diag-device', s.device_name);
+      set('diag-service', s.service_type);
+      set('diag-port', s.port);
+      set('diag-first', s.first_use);
+      set('diag-last', s.last_use);
+      set('diag-rx', `${s.bytes_received} (${s.files_received} dosya)`);
+      set('diag-tx', `${s.bytes_sent} (${s.files_sent} dosya)`);
+      set('diag-top-rx', s.top_rx);
+      set('diag-top-tx', s.top_tx);
     };
 
     if (window.ipc) {

@@ -230,6 +230,12 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                             total_size,
                         } => {
                             pending_names.remove(&id);
+                            {
+                                let st = state::get();
+                                let mut s = st.stats.write();
+                                s.record_received(&remote_name_shared, total_size as u64);
+                                let _ = s.save();
+                            }
                             let file_name = path
                                 .file_name()
                                 .and_then(|n| n.to_str())
