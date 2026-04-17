@@ -244,8 +244,8 @@ fn run_app() -> ! {
     // Ana pencere + WebView
     let window = WindowBuilder::new()
         .with_title("HekaDrop")
-        .with_inner_size(tao::dpi::LogicalSize::new(320.0, 380.0))
-        .with_min_inner_size(tao::dpi::LogicalSize::new(280.0, 320.0))
+        .with_inner_size(tao::dpi::LogicalSize::new(340.0, 460.0))
+        .with_min_inner_size(tao::dpi::LogicalSize::new(320.0, 400.0))
         .with_resizable(false)
         .with_visible(true)
         .build(&event_loop)
@@ -313,6 +313,11 @@ fn run_app() -> ! {
         if state::consume_show_window() {
             window.set_visible(true);
             window.set_focus();
+        }
+
+        // IPC'den gelen JS kuyruğunu boşalt
+        for js in state::drain_js() {
+            let _ = webview.evaluate_script(&js);
         }
 
         // Canlı durum
@@ -389,13 +394,35 @@ fn run_app() -> ! {
 
 fn handle_ipc(cmd: &str) {
     info!("[ui] ipc: {}", cmd);
+    if let Some(rest) = cmd.strip_prefix("settings_save::") {
+        handle_settings_save(rest);
+        return;
+    }
+    if let Some(path) = cmd.strip_prefix("reveal::") {
+        reveal_in_finder(path);
+        return;
+    }
     match cmd {
         "send" => {
             if let Some(rt) = RUNTIME.get() {
                 rt.spawn(initiate_send_flow());
             }
         }
-        "history" => show_history(),
+        "settings_get" => push_settings_to_ui(),
+        "history_refresh" => push_history_to_ui(),
+        "pick_downloads" => {
+            if let Some(rt) = RUNTIME.get() {
+                rt.spawn(async {
+                    if let Some(path) = ui::choose_folder().await {
+                        let path_str = path.to_string_lossy().to_string();
+                        state::enqueue_js(format!(
+                            "document.getElementById('set-downloads').value = {}",
+                            js_string(&path_str)
+                        ));
+                    }
+                });
+            }
+        }
         "downloads" => open_downloads_folder(),
         "config" => open_config_file(),
         "hide" => {
@@ -405,6 +432,81 @@ fn handle_ipc(cmd: &str) {
         "quit" => std::process::exit(0),
         other => tracing::warn!("bilinmeyen ipc: {}", other),
     }
+}
+
+fn handle_settings_save(json: &str) {
+    #[derive(serde::Deserialize, Debug)]
+    struct Incoming {
+        device_name: Option<String>,
+        download_dir: Option<String>,
+        auto_accept: bool,
+    }
+    let parsed: Incoming = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("settings_save parse: {}", e);
+            return;
+        }
+    };
+    {
+        let st = state::get();
+        let mut s = st.settings.write();
+        s.device_name = parsed.device_name.filter(|x| !x.is_empty());
+        s.download_dir = parsed.download_dir.map(std::path::PathBuf::from);
+        s.auto_accept = parsed.auto_accept;
+        let _ = s.save();
+    }
+    info!("[ui] ayarlar güncellendi");
+    state::enqueue_js("window.showSaved && window.showSaved()".into());
+    ui::notify("HekaDrop", "Ayarlar kaydedildi");
+}
+
+fn push_settings_to_ui() {
+    let st = state::get();
+    let s = st.settings.read();
+    let resolved_name = s.resolved_device_name();
+    let resolved_dl = s.resolved_download_dir().to_string_lossy().to_string();
+    let payload = serde_json::json!({
+        "device_name": s.device_name.clone().unwrap_or(resolved_name),
+        "download_dir": s.download_dir.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or(resolved_dl),
+        "auto_accept": s.auto_accept,
+    });
+    drop(s);
+    let js = format!("window.applySettings && window.applySettings({})", payload);
+    state::enqueue_js(js);
+}
+
+fn push_history_to_ui() {
+    let items = state::read_history();
+    let now = std::time::SystemTime::now();
+    let json_items: Vec<serde_json::Value> = items
+        .iter()
+        .map(|h| {
+            let age = now
+                .duration_since(h.when)
+                .map(|d| relative_time(d.as_secs()))
+                .unwrap_or_else(|_| "az önce".into());
+            serde_json::json!({
+                "file_name": h.file_name,
+                "path": h.path.to_string_lossy(),
+                "size_human": human_size(h.size),
+                "device": h.device,
+                "age": age,
+            })
+        })
+        .collect();
+    let js = format!(
+        "window.applyHistory && window.applyHistory({})",
+        serde_json::Value::Array(json_items)
+    );
+    state::enqueue_js(js);
+}
+
+fn reveal_in_finder(path: &str) {
+    let _ = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn();
 }
 
 fn open_downloads_folder() {

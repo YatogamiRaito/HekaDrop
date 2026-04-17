@@ -9,16 +9,17 @@
   body {
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
     margin: 0;
-    padding: 16px 14px 14px;
+    padding: 0;
     background: #1c1c1e;
     color: #fff;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    gap: 10px;
     -webkit-user-select: none;
   }
-  header { margin-bottom: 2px; }
+  header {
+    padding: 14px 14px 8px;
+  }
   h1 {
     font-size: 14px;
     font-weight: 600;
@@ -29,6 +30,36 @@
     font-size: 11.5px;
     color: #8e8e93;
   }
+
+  /* Tab bar */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    margin-bottom: 12px;
+  }
+  .tab {
+    padding: 6px 12px;
+    font-size: 12px;
+    color: #8e8e93;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  .tab:hover { color: #fff; }
+  .tab.active {
+    color: #0a84ff;
+    border-bottom-color: #0a84ff;
+  }
+
+  .panel {
+    display: none;
+    padding: 0 14px 14px;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .panel.active { display: flex; }
 
   /* Drop bölgesi */
   .drop-zone {
@@ -107,6 +138,8 @@
     background: #0a84ff;
     border-color: transparent;
     font-weight: 500;
+    justify-content: center;
+    text-align: center;
   }
   button.primary:hover { background: #006fcf; }
   .icon {
@@ -119,13 +152,123 @@
     border-top: 1px solid rgba(255,255,255,0.06);
     margin: 2px 0;
   }
+
+  /* Ayarlar */
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .field label {
+    font-size: 11.5px;
+    color: #8e8e93;
+    font-weight: 500;
+  }
+  .field input[type="text"] {
+    background: #2c2c2e;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: #fff;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .field input[type="text"]:focus {
+    outline: none;
+    border-color: #0a84ff;
+  }
+  .row {
+    display: flex;
+    gap: 6px;
+    align-items: stretch;
+  }
+  .row input { flex: 1; }
+  .row button {
+    width: auto;
+    flex-shrink: 0;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .toggle {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 13px;
+    background: #2c2c2e;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .toggle span { font-size: 13px; }
+  .switch {
+    position: relative;
+    width: 40px;
+    height: 24px;
+    background: #48484a;
+    border-radius: 12px;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .switch::before {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background: #fff;
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.2s;
+  }
+  .toggle.on .switch {
+    background: #30d158;
+  }
+  .toggle.on .switch::before {
+    transform: translateX(16px);
+  }
+
+  /* Geçmiş */
+  .history-empty {
+    text-align: center;
+    color: #636366;
+    font-size: 12px;
+    padding: 30px 0;
+  }
+  .hitem {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 12px;
+    background: #2c2c2e;
+    border-radius: 8px;
+    gap: 2px;
+  }
+  .hitem .hname {
+    font-size: 12.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hitem .hmeta {
+    font-size: 11px;
+    color: #8e8e93;
+  }
+
   .footer {
     margin-top: auto;
-    padding-top: 6px;
+    padding: 8px 14px 10px;
     font-size: 10.5px;
     color: #636366;
     text-align: center;
   }
+  .save-note {
+    font-size: 11px;
+    color: #30d158;
+    opacity: 0;
+    transition: opacity 0.3s;
+    text-align: center;
+    margin-top: 4px;
+  }
+  .save-note.show { opacity: 1; }
 </style>
 </head>
 <body>
@@ -134,34 +277,68 @@
     <div class="sub" id="status">Hazır — menü çubuğunda ⇄</div>
   </header>
 
-  <div class="drop-zone" id="drop" onclick="act('send')">
-    <span class="big">⤓</span>
-    Dosyaları buraya sürükle<br/>veya tıkla
-  </div>
+  <nav class="tabs">
+    <div class="tab active" data-tab="home" onclick="switchTab('home')">Ana</div>
+    <div class="tab" data-tab="history" onclick="switchTab('history')">Geçmiş</div>
+    <div class="tab" data-tab="settings" onclick="switchTab('settings')">Ayarlar</div>
+  </nav>
 
-  <div class="progress" id="progress">
-    <div class="progress-label" id="progress-text">Hazırlanıyor…</div>
-    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-  </div>
+  <!-- ANA -->
+  <section class="panel active" id="home">
+    <div class="drop-zone" id="drop" onclick="act('send')">
+      <span class="big">⤓</span>
+      Dosyaları buraya sürükle<br/>veya tıkla
+    </div>
 
-  <button onclick="act('history')">
-    <span class="icon">🕓</span>Son aktarımlar
-  </button>
-  <button onclick="act('downloads')">
-    <span class="icon">📁</span>İndirme klasörünü aç
-  </button>
-  <button onclick="act('config')">
-    <span class="icon">⚙️</span>Yapılandırma dosyası
-  </button>
+    <div class="progress" id="progress">
+      <div class="progress-label" id="progress-text">Hazırlanıyor…</div>
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    </div>
 
-  <hr/>
+    <button onclick="act('downloads')">
+      <span class="icon">📁</span>İndirme klasörünü aç
+    </button>
+    <button onclick="act('hide')">
+      <span class="icon">↘</span>Menü çubuğuna gizle
+    </button>
+    <button onclick="act('quit')">
+      <span class="icon">⏻</span>HekaDrop'u kapat
+    </button>
+  </section>
 
-  <button onclick="act('hide')">
-    <span class="icon">↘</span>Menü çubuğuna gizle
-  </button>
-  <button onclick="act('quit')">
-    <span class="icon">⏻</span>HekaDrop'u kapat
-  </button>
+  <!-- GEÇMİŞ -->
+  <section class="panel" id="history">
+    <div id="history-list">
+      <div class="history-empty">Henüz aktarım yok.</div>
+    </div>
+    <button onclick="act('history_refresh')">
+      <span class="icon">↻</span>Yenile
+    </button>
+  </section>
+
+  <!-- AYARLAR -->
+  <section class="panel" id="settings">
+    <div class="field">
+      <label>Cihaz adı (Android'de görünür)</label>
+      <input type="text" id="set-device" placeholder="Bu Mac">
+    </div>
+
+    <div class="field">
+      <label>İndirme klasörü</label>
+      <div class="row">
+        <input type="text" id="set-downloads" readonly>
+        <button onclick="act('pick_downloads')">Değiştir</button>
+      </div>
+    </div>
+
+    <div class="toggle" id="set-auto" onclick="toggleAuto()">
+      <span>Otomatik kabul<br/><span style="color:#8e8e93;font-size:11px">Her aktarımda onay sorma</span></span>
+      <div class="switch"></div>
+    </div>
+
+    <button class="primary" onclick="saveSettings()">Kaydet</button>
+    <div class="save-note" id="save-note">✓ Kaydedildi</div>
+  </section>
 
   <div class="footer">Arkaplanda çalışır — Android'den dosya bekler</div>
 
@@ -170,28 +347,70 @@
       if (window.ipc) window.ipc.postMessage(cmd);
     }
 
-    // wry native drag-drop handler dosyaları işler; biz sadece görsel geribildirim veriyoruz.
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+      document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === tab));
+      if (tab === 'history') act('history_refresh');
+    }
+
+    function toggleAuto() {
+      const el = document.getElementById('set-auto');
+      el.classList.toggle('on');
+    }
+
+    function saveSettings() {
+      const payload = {
+        device_name: document.getElementById('set-device').value.trim() || null,
+        download_dir: document.getElementById('set-downloads').value.trim() || null,
+        auto_accept: document.getElementById('set-auto').classList.contains('on'),
+      };
+      act('settings_save::' + JSON.stringify(payload));
+    }
+
+    // Drag-drop geribildirim
     const drop = document.getElementById('drop');
-    document.body.addEventListener('dragenter', e => {
-      e.preventDefault();
-      drop.classList.add('active');
-    });
-    document.body.addEventListener('dragover', e => {
-      e.preventDefault();
-      drop.classList.add('active');
-    });
+    document.body.addEventListener('dragenter', e => { e.preventDefault(); drop.classList.add('active'); });
+    document.body.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('active'); });
     document.body.addEventListener('dragleave', e => {
-      if (e.clientX <= 0 || e.clientY <= 0 ||
-          e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+      if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
         drop.classList.remove('active');
       }
     });
-    document.body.addEventListener('drop', e => {
-      e.preventDefault();
-      drop.classList.remove('active');
-    });
+    document.body.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('active'); });
 
-    // Rust tarafından çağrılacak
+    // Rust callback'leri
+    window.applySettings = function(cfg) {
+      document.getElementById('set-device').value = cfg.device_name || '';
+      document.getElementById('set-downloads').value = cfg.download_dir || '';
+      document.getElementById('set-auto').classList.toggle('on', !!cfg.auto_accept);
+    };
+
+    window.showSaved = function() {
+      const n = document.getElementById('save-note');
+      n.classList.add('show');
+      setTimeout(() => n.classList.remove('show'), 1500);
+    };
+
+    window.applyHistory = function(items) {
+      const list = document.getElementById('history-list');
+      if (!items || items.length === 0) {
+        list.innerHTML = '<div class="history-empty">Henüz aktarım yok.</div>';
+        return;
+      }
+      list.innerHTML = items.map(h => `
+        <div class="hitem" onclick="window.ipc && window.ipc.postMessage('reveal::${h.path.replace(/'/g, "\\'")}')">
+          <div class="hname">${escapeHtml(h.file_name)}</div>
+          <div class="hmeta">${escapeHtml(h.size_human)} • ${escapeHtml(h.device)} • ${escapeHtml(h.age)}</div>
+        </div>
+      `).join('');
+    };
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
+
     window.updateProgress = function(percent, label) {
       const p = document.getElementById('progress');
       const fill = document.getElementById('progress-fill');
@@ -209,6 +428,12 @@
     window.updateStatus = function(text) {
       document.getElementById('status').textContent = text;
     };
+
+    // Açılışta ayarları iste
+    if (window.ipc) {
+      window.ipc.postMessage('settings_get');
+      window.ipc.postMessage('history_refresh');
+    }
   </script>
 </body>
 </html>

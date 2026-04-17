@@ -123,6 +123,31 @@ pathList
     .flatten()
 }
 
+/// `choose folder` dialog → seçilen klasörün POSIX path'i.
+pub async fn choose_folder() -> Option<std::path::PathBuf> {
+    task::spawn_blocking(|| {
+        let out = Command::new("osascript")
+            .args([
+                "-e",
+                r#"POSIX path of (choose folder with prompt "İndirme klasörünü seçin")"#,
+            ])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if path.is_empty() {
+            None
+        } else {
+            Some(std::path::PathBuf::from(path))
+        }
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Listeden cihaz seçim dialog'u. `labels` içindeki etiket indeks'i döner.
 pub async fn choose_device(labels: Vec<String>) -> Option<usize> {
     if labels.is_empty() {

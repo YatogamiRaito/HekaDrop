@@ -47,6 +47,9 @@ pub struct AppState {
     pub hide_window_flag: AtomicBool,
     /// IPC thread'inden pencereyi göstermek için event loop'a istek.
     pub show_window_flag: AtomicBool,
+    /// IPC thread'inden UI'ya mesaj göndermek için kuyruk.
+    /// Her eleman yürütülecek bir JS ifadesi.
+    pub pending_js: RwLock<Vec<String>>,
 }
 
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
@@ -60,7 +63,19 @@ pub fn init(settings: Settings) {
         cancel_flag: AtomicBool::new(false),
         hide_window_flag: AtomicBool::new(false),
         show_window_flag: AtomicBool::new(false),
+        pending_js: RwLock::new(Vec::new()),
     }));
+}
+
+/// Event loop, her tick'te bu kuyruktaki JS ifadelerini çalıştırır.
+pub fn enqueue_js(js: String) {
+    get().pending_js.write().push(js);
+}
+
+pub fn drain_js() -> Vec<String> {
+    let st = get();
+    let mut q = st.pending_js.write();
+    std::mem::take(&mut *q)
 }
 
 pub fn request_hide_window() {
