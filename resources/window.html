@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>HekaDrop</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+    margin: 0;
+    padding: 16px 14px 14px;
+    background: #1c1c1e;
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    -webkit-user-select: none;
+  }
+  header { margin-bottom: 2px; }
+  h1 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 2px 0;
+    letter-spacing: -0.01em;
+  }
+  .sub {
+    font-size: 11.5px;
+    color: #8e8e93;
+  }
+
+  /* Drop bölgesi */
+  .drop-zone {
+    border: 2px dashed rgba(255,255,255,0.12);
+    border-radius: 12px;
+    padding: 22px 16px;
+    text-align: center;
+    transition: all 0.15s;
+    font-size: 12.5px;
+    color: #8e8e93;
+    cursor: pointer;
+  }
+  .drop-zone:hover {
+    border-color: rgba(255,255,255,0.2);
+    color: #aaa;
+  }
+  .drop-zone.active {
+    border-color: #0a84ff;
+    background: rgba(10, 132, 255, 0.08);
+    color: #0a84ff;
+  }
+  .drop-zone .big {
+    font-size: 22px;
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  /* Progress */
+  .progress {
+    display: none;
+    padding: 10px 12px;
+    background: #2c2c2e;
+    border-radius: 10px;
+  }
+  .progress.active { display: block; }
+  .progress-label {
+    font-size: 12px;
+    color: #d0d0d0;
+    margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .progress-bar {
+    height: 5px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #0a84ff, #3ea2ff);
+    width: 0%;
+    transition: width 0.25s ease;
+  }
+
+  button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 13px;
+    background: #2c2c2e;
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
+    color: #fff;
+    font-size: 13px;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  button:hover { background: #3a3a3c; }
+  button:active { background: #48484a; }
+  button.primary {
+    background: #0a84ff;
+    border-color: transparent;
+    font-weight: 500;
+  }
+  button.primary:hover { background: #006fcf; }
+  .icon {
+    font-size: 15px;
+    width: 18px;
+    text-align: center;
+  }
+  hr {
+    border: 0;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    margin: 2px 0;
+  }
+  .footer {
+    margin-top: auto;
+    padding-top: 6px;
+    font-size: 10.5px;
+    color: #636366;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>HekaDrop</h1>
+    <div class="sub" id="status">Hazır — menü çubuğunda ⇄</div>
+  </header>
+
+  <div class="drop-zone" id="drop" onclick="act('send')">
+    <span class="big">⤓</span>
+    Dosyaları buraya sürükle<br/>veya tıkla
+  </div>
+
+  <div class="progress" id="progress">
+    <div class="progress-label" id="progress-text">Hazırlanıyor…</div>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+  </div>
+
+  <button onclick="act('history')">
+    <span class="icon">🕓</span>Son aktarımlar
+  </button>
+  <button onclick="act('downloads')">
+    <span class="icon">📁</span>İndirme klasörünü aç
+  </button>
+  <button onclick="act('config')">
+    <span class="icon">⚙️</span>Yapılandırma dosyası
+  </button>
+
+  <hr/>
+
+  <button onclick="act('hide')">
+    <span class="icon">↘</span>Menü çubuğuna gizle
+  </button>
+  <button onclick="act('quit')">
+    <span class="icon">⏻</span>HekaDrop'u kapat
+  </button>
+
+  <div class="footer">Arkaplanda çalışır — Android'den dosya bekler</div>
+
+  <script>
+    function act(cmd) {
+      if (window.ipc) window.ipc.postMessage(cmd);
+    }
+
+    // wry native drag-drop handler dosyaları işler; biz sadece görsel geribildirim veriyoruz.
+    const drop = document.getElementById('drop');
+    document.body.addEventListener('dragenter', e => {
+      e.preventDefault();
+      drop.classList.add('active');
+    });
+    document.body.addEventListener('dragover', e => {
+      e.preventDefault();
+      drop.classList.add('active');
+    });
+    document.body.addEventListener('dragleave', e => {
+      if (e.clientX <= 0 || e.clientY <= 0 ||
+          e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+        drop.classList.remove('active');
+      }
+    });
+    document.body.addEventListener('drop', e => {
+      e.preventDefault();
+      drop.classList.remove('active');
+    });
+
+    // Rust tarafından çağrılacak
+    window.updateProgress = function(percent, label) {
+      const p = document.getElementById('progress');
+      const fill = document.getElementById('progress-fill');
+      const txt = document.getElementById('progress-text');
+      if (percent < 0) {
+        p.classList.remove('active');
+        fill.style.width = '0%';
+        return;
+      }
+      p.classList.add('active');
+      fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+      txt.textContent = label || 'Aktarım…';
+    };
+
+    window.updateStatus = function(text) {
+      document.getElementById('status').textContent = text;
+    };
+  </script>
+</body>
+</html>

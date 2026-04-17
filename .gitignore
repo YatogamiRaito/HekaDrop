@@ -1,0 +1,18 @@
+# Rust
+/target
+
+# macOS
+.DS_Store
+
+# Üretilen ikon dosyaları (kaynak resources/icon.png repo'da; derlenenler değil)
+/resources/AppIcon.icns
+/resources/AppIcon.iconset
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Çalışma zamanı logları
+*.log

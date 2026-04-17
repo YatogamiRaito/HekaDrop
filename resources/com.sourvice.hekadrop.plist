@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sourvice.hekadrop</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/HekaDrop.app/Contents/MacOS/hekadrop</string>
+    </array>
+
+    <!-- Kullanıcı oturum açtığında otomatik yükle -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Çöker veya kapanırsa otomatik yeniden başlat -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- UI olayları alabilmek için interaktif mod -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <!-- Hata/stdout logları -->
+    <key>StandardOutPath</key>
+    <string>/tmp/hekadrop.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/hekadrop.stderr.log</string>
+
+    <!-- Çöktükten sonra en az 10 saniye geçmeden yeniden başlatma -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

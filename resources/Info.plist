@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>hekadrop</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.sourvice.hekadrop</string>
+    <key>CFBundleName</key>
+    <string>HekaDrop</string>
+    <key>CFBundleDisplayName</key>
+    <string>HekaDrop</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_FC9F5ED42C8A._tcp</string>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>HekaDrop yerel ağda Quick Share cihazlarını keşfetmek için ağ erişimi kullanır.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Dosya aktarım onayı için sistem diyaloğu göstermekte kullanılır.</string>
+</dict>
+</plist>
