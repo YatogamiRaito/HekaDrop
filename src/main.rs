@@ -394,13 +394,36 @@ fn handle_ipc(cmd: &str) {
         reveal_in_finder(path);
         return;
     }
+    if let Some(name) = cmd.strip_prefix("trust_remove::") {
+        let st = state::get();
+        let mut s = st.settings.write();
+        s.remove_trusted(name);
+        let _ = s.save();
+        drop(s);
+        push_trusted_to_ui();
+        ui::notify("HekaDrop", &format!("Güven kaldırıldı: {}", name));
+        return;
+    }
     match cmd {
         "send" => {
             if let Some(rt) = RUNTIME.get() {
                 rt.spawn(initiate_send_flow());
             }
         }
-        "settings_get" => push_settings_to_ui(),
+        "settings_get" => {
+            push_settings_to_ui();
+            push_trusted_to_ui();
+        }
+        "trusted_refresh" => push_trusted_to_ui(),
+        "trusted_clear" => {
+            let st = state::get();
+            let mut s = st.settings.write();
+            s.trusted_devices.clear();
+            let _ = s.save();
+            drop(s);
+            push_trusted_to_ui();
+            ui::notify("HekaDrop", "Tüm güvenilen cihazlar temizlendi");
+        }
         "history_refresh" => push_history_to_ui(),
         "pick_downloads" => {
             if let Some(rt) = RUNTIME.get() {
@@ -465,6 +488,15 @@ fn push_settings_to_ui() {
     });
     drop(s);
     let js = format!("window.applySettings && window.applySettings({})", payload);
+    state::enqueue_js(js);
+}
+
+fn push_trusted_to_ui() {
+    let st = state::get();
+    let names: Vec<String> = st.settings.read().trusted_devices.clone();
+    let payload =
+        serde_json::Value::Array(names.into_iter().map(serde_json::Value::String).collect());
+    let js = format!("window.applyTrusted && window.applyTrusted({})", payload);
     state::enqueue_js(js);
 }
 

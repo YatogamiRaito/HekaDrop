@@ -5,11 +5,12 @@
 
 use crate::settings::Settings;
 use parking_lot::RwLock;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 const HISTORY_CAP: usize = 10;
 
@@ -50,6 +51,49 @@ pub struct AppState {
     /// IPC thread'inden UI'ya mesaj göndermek için kuyruk.
     /// Her eleman yürütülecek bir JS ifadesi.
     pub pending_js: RwLock<Vec<String>>,
+    /// Gelen bağlantıların IP bazında rate limit takibi.
+    pub rate_limiter: RateLimiter,
+}
+
+/// Sliding-window IP-bazlı rate limiter.
+///
+/// Trusted cihazlar bu limit'ten MUAFTIR (memory kuralı). Üst seviye çağrı önce
+/// `Settings::is_trusted()` kontrol eder; trusted ise `check_and_record` hiç çağrılmaz.
+pub struct RateLimiter {
+    windows: RwLock<HashMap<IpAddr, VecDeque<Instant>>>,
+}
+
+impl RateLimiter {
+    const WINDOW: Duration = Duration::from_secs(60);
+    const MAX_PER_WINDOW: usize = 10;
+
+    pub fn new() -> Self {
+        Self {
+            windows: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Son 60 saniyede bu IP'den 10+ bağlantı varsa true döner (limit aşıldı).
+    /// Aksi halde false döner ve bu bağlantıyı timestamp olarak kaydeder.
+    pub fn check_and_record(&self, ip: IpAddr) -> bool {
+        let now = Instant::now();
+        let mut windows = self.windows.write();
+        let q = windows.entry(ip).or_default();
+
+        while let Some(&front) = q.front() {
+            if now.duration_since(front) > Self::WINDOW {
+                q.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        if q.len() >= Self::MAX_PER_WINDOW {
+            return true;
+        }
+        q.push_back(now);
+        false
+    }
 }
 
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
@@ -64,6 +108,7 @@ pub fn init(settings: Settings) {
         hide_window_flag: AtomicBool::new(false),
         show_window_flag: AtomicBool::new(false),
         pending_js: RwLock::new(Vec::new()),
+        rate_limiter: RateLimiter::new(),
     }));
 }
 

@@ -15,13 +15,23 @@ pub struct FileSummary {
     pub size: i64,
 }
 
-/// Kullanıcıya PIN + dosya listesi gösterir, kabul edilirse true döner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcceptResult {
+    Reject,
+    Accept,
+    AcceptAndTrust,
+}
+
+/// Kullanıcıya PIN + dosya listesi gösterir. 3 seçenek döner:
+///   - Reddet
+///   - Kabul et
+///   - Kabul + güven (device_name ileride otomatik kabul edilir)
 pub async fn prompt_accept(
     device_name: &str,
     pin_code: &str,
     files: &[FileSummary],
     text_count: usize,
-) -> Result<bool> {
+) -> Result<AcceptResult> {
     let device = device_name.to_string();
     let pin = pin_code.to_string();
     let files: Vec<(String, i64)> = files.iter().map(|f| (f.name.clone(), f.size)).collect();
@@ -46,8 +56,9 @@ pub async fn prompt_accept(
             device, pin, files_str
         );
 
+        // osascript 3 buton destekler. En sağdaki default.
         let script = format!(
-            r#"display dialog "{}" buttons {{"Reddet", "Kabul et"}} default button "Kabul et" cancel button "Reddet" with title "HekaDrop" with icon note"#,
+            r#"display dialog "{}" buttons {{"Reddet", "Kabul et", "Kabul + güven"}} default button "Kabul et" cancel button "Reddet" with title "HekaDrop" with icon note"#,
             escape_applescript(&message)
         );
 
@@ -55,9 +66,15 @@ pub async fn prompt_accept(
         match out {
             Ok(o) => {
                 let s = String::from_utf8_lossy(&o.stdout);
-                s.contains("Kabul et")
+                if s.contains("Kabul + güven") {
+                    AcceptResult::AcceptAndTrust
+                } else if s.contains("Kabul et") {
+                    AcceptResult::Accept
+                } else {
+                    AcceptResult::Reject
+                }
             }
-            Err(_) => false,
+            Err(_) => AcceptResult::Reject,
         }
     })
     .await

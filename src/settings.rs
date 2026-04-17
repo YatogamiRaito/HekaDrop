@@ -21,6 +21,12 @@ pub struct Settings {
     /// Güvenliği zayıflatır; varsayılan false.
     #[serde(default)]
     pub auto_accept: bool,
+
+    /// Kullanıcının "Kabul + güven" ile onayladığı cihaz adları. Bu listedeki
+    /// isimlerden gelen aktarımlar dialog göstermeden kabul edilir ve rate limiting
+    /// uygulanmaz (memory kuralı: trusted cihazlar rate limit dışıdır).
+    #[serde(default)]
+    pub trusted_devices: Vec<String>,
 }
 
 impl Default for Settings {
@@ -29,7 +35,24 @@ impl Default for Settings {
             device_name: None,
             download_dir: None,
             auto_accept: false,
+            trusted_devices: Vec::new(),
         }
+    }
+}
+
+impl Settings {
+    pub fn is_trusted(&self, device_name: &str) -> bool {
+        self.trusted_devices.iter().any(|n| n == device_name)
+    }
+
+    pub fn add_trusted(&mut self, device_name: &str) {
+        if !self.is_trusted(device_name) && !device_name.is_empty() {
+            self.trusted_devices.push(device_name.to_string());
+        }
+    }
+
+    pub fn remove_trusted(&mut self, device_name: &str) {
+        self.trusted_devices.retain(|n| n != device_name);
     }
 }
 

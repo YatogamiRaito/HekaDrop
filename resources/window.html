@@ -61,7 +61,6 @@
   }
   .panel.active { display: flex; }
 
-  /* Drop bölgesi */
   .drop-zone {
     border: 2px dashed rgba(255,255,255,0.12);
     border-radius: 12px;
@@ -72,22 +71,10 @@
     color: #8e8e93;
     cursor: pointer;
   }
-  .drop-zone:hover {
-    border-color: rgba(255,255,255,0.2);
-    color: #aaa;
-  }
-  .drop-zone.active {
-    border-color: #0a84ff;
-    background: rgba(10, 132, 255, 0.08);
-    color: #0a84ff;
-  }
-  .drop-zone .big {
-    font-size: 22px;
-    display: block;
-    margin-bottom: 4px;
-  }
+  .drop-zone:hover { border-color: rgba(255,255,255,0.2); color: #aaa; }
+  .drop-zone.active { border-color: #0a84ff; background: rgba(10, 132, 255, 0.08); color: #0a84ff; }
+  .drop-zone .big { font-size: 22px; display: block; margin-bottom: 4px; }
 
-  /* Progress */
   .progress {
     display: none;
     padding: 10px 12px;
@@ -142,6 +129,15 @@
     text-align: center;
   }
   button.primary:hover { background: #006fcf; }
+  button.danger {
+    color: #ff453a;
+  }
+  button.small {
+    width: auto;
+    padding: 4px 8px;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
   .icon {
     font-size: 15px;
     width: 18px;
@@ -153,7 +149,6 @@
     margin: 2px 0;
   }
 
-  /* Ayarlar */
   .field {
     display: flex;
     flex-direction: column;
@@ -173,22 +168,10 @@
     font-size: 13px;
     font-family: inherit;
   }
-  .field input[type="text"]:focus {
-    outline: none;
-    border-color: #0a84ff;
-  }
-  .row {
-    display: flex;
-    gap: 6px;
-    align-items: stretch;
-  }
+  .field input[type="text"]:focus { outline: none; border-color: #0a84ff; }
+  .row { display: flex; gap: 6px; align-items: stretch; }
   .row input { flex: 1; }
-  .row button {
-    width: auto;
-    flex-shrink: 0;
-    padding: 8px 12px;
-    font-size: 12px;
-  }
+  .row button { width: auto; flex-shrink: 0; padding: 8px 12px; font-size: 12px; }
   .toggle {
     display: flex;
     justify-content: space-between;
@@ -219,19 +202,24 @@
     left: 2px;
     transition: transform 0.2s;
   }
-  .toggle.on .switch {
-    background: #30d158;
-  }
-  .toggle.on .switch::before {
-    transform: translateX(16px);
-  }
+  .toggle.on .switch { background: #30d158; }
+  .toggle.on .switch::before { transform: translateX(16px); }
 
-  /* Geçmiş */
-  .history-empty {
+  /* Trusted list */
+  .trusted-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 10px 7px 12px;
+    background: #2c2c2e;
+    border-radius: 8px;
+    font-size: 12.5px;
+  }
+  .trusted-empty, .history-empty {
     text-align: center;
     color: #636366;
     font-size: 12px;
-    padding: 30px 0;
+    padding: 18px 0;
   }
   .hitem {
     display: flex;
@@ -240,7 +228,9 @@
     background: #2c2c2e;
     border-radius: 8px;
     gap: 2px;
+    cursor: pointer;
   }
+  .hitem:hover { background: #3a3a3c; }
   .hitem .hname {
     font-size: 12.5px;
     font-weight: 500;
@@ -283,7 +273,6 @@
     <div class="tab" data-tab="settings" onclick="switchTab('settings')">Ayarlar</div>
   </nav>
 
-  <!-- ANA -->
   <section class="panel active" id="home">
     <div class="drop-zone" id="drop" onclick="act('send')">
       <span class="big">⤓</span>
@@ -306,7 +295,6 @@
     </button>
   </section>
 
-  <!-- GEÇMİŞ -->
   <section class="panel" id="history">
     <div id="history-list">
       <div class="history-empty">Henüz aktarım yok.</div>
@@ -316,7 +304,6 @@
     </button>
   </section>
 
-  <!-- AYARLAR -->
   <section class="panel" id="settings">
     <div class="field">
       <label>Cihaz adı (Android'de görünür)</label>
@@ -336,6 +323,16 @@
       <div class="switch"></div>
     </div>
 
+    <div class="field">
+      <label>Güvenilen cihazlar <span style="color:#636366;font-weight:normal">(rate limit dışı)</span></label>
+      <div id="trusted-list">
+        <div class="trusted-empty">Henüz güvenilen cihaz yok</div>
+      </div>
+      <button class="danger" onclick="act('trusted_clear')" style="margin-top:6px">
+        <span class="icon">✕</span>Tümünü temizle
+      </button>
+    </div>
+
     <button class="primary" onclick="saveSettings()">Kaydet</button>
     <div class="save-note" id="save-note">✓ Kaydedildi</div>
   </section>
@@ -351,11 +348,11 @@
       document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
       document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === tab));
       if (tab === 'history') act('history_refresh');
+      if (tab === 'settings') act('trusted_refresh');
     }
 
     function toggleAuto() {
-      const el = document.getElementById('set-auto');
-      el.classList.toggle('on');
+      document.getElementById('set-auto').classList.toggle('on');
     }
 
     function saveSettings() {
@@ -378,7 +375,7 @@
     });
     document.body.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('active'); });
 
-    // Rust callback'leri
+    // Rust → JS çağrıları
     window.applySettings = function(cfg) {
       document.getElementById('set-device').value = cfg.device_name || '';
       document.getElementById('set-downloads').value = cfg.download_dir || '';
@@ -391,6 +388,20 @@
       setTimeout(() => n.classList.remove('show'), 1500);
     };
 
+    window.applyTrusted = function(names) {
+      const el = document.getElementById('trusted-list');
+      if (!names || names.length === 0) {
+        el.innerHTML = '<div class="trusted-empty">Henüz güvenilen cihaz yok</div>';
+        return;
+      }
+      el.innerHTML = names.map(n => `
+        <div class="trusted-item">
+          <span>${escapeHtml(n)}</span>
+          <button class="small danger" onclick="act('trust_remove::${escapeAttr(n)}')">Kaldır</button>
+        </div>
+      `).join('');
+    };
+
     window.applyHistory = function(items) {
       const list = document.getElementById('history-list');
       if (!items || items.length === 0) {
@@ -398,7 +409,7 @@
         return;
       }
       list.innerHTML = items.map(h => `
-        <div class="hitem" onclick="window.ipc && window.ipc.postMessage('reveal::${h.path.replace(/'/g, "\\'")}')">
+        <div class="hitem" onclick="act('reveal::${escapeAttr(h.path)}')">
           <div class="hname">${escapeHtml(h.file_name)}</div>
           <div class="hmeta">${escapeHtml(h.size_human)} • ${escapeHtml(h.device)} • ${escapeHtml(h.age)}</div>
         </div>
@@ -409,6 +420,9 @@
       return String(s).replace(/[&<>"']/g, c => ({
         '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
       }[c]));
+    }
+    function escapeAttr(s) {
+      return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;');
     }
 
     window.updateProgress = function(percent, label) {
@@ -429,7 +443,6 @@
       document.getElementById('status').textContent = text;
     };
 
-    // Açılışta ayarları iste
     if (window.ipc) {
       window.ipc.postMessage('settings_get');
       window.ipc.postMessage('history_refresh');

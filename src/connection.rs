@@ -51,6 +51,23 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     let remote_name = parse_remote_name(&endpoint_info).unwrap_or_else(|| "bilinmeyen".into());
     info!("[{}] uzak cihaz: {}", peer, remote_name);
 
+    // Rate limiting — trusted cihazlar BU KONTROLDEN MUAFTIR (memory kuralı).
+    let trusted_early = state::get().settings.read().is_trusted(&remote_name);
+    if !trusted_early {
+        let st = state::get();
+        if st.rate_limiter.check_and_record(peer.ip()) {
+            warn!(
+                "[{}] rate limit aşıldı (60 sn pencerede >10 bağlantı), reddediliyor",
+                peer
+            );
+            return Err(anyhow!(
+                "rate limit: aynı IP'den çok fazla bağlantı denemesi"
+            ));
+        }
+    } else {
+        info!("[{}] trusted cihaz — rate limit uygulanmadı", peer);
+    }
+
     // 2) UKEY2 ClientInit
     let ci = frame::read_frame(&mut socket)
         .await
@@ -335,17 +352,39 @@ async fn handle_sharing_frame(
                 }
             }
 
-            // Otomatik kabul ayarı varsa dialog göstermeden accept.
+            // Karar mantığı:
+            //   1) Trusted device → dialog atla, otomatik kabul
+            //   2) Settings.auto_accept → dialog atla, otomatik kabul
+            //   3) Aksi halde dialog göster (3 seçenek: reddet/kabul/kabul+güven)
+            let trusted = state::get().settings.read().is_trusted(remote_name);
             let auto_accept = state::get().settings.read().auto_accept;
-            let ok = if auto_accept {
+
+            let decision = if trusted {
+                info!("[{}] trusted cihaz → otomatik kabul", peer);
+                ui::AcceptResult::Accept
+            } else if auto_accept {
                 info!("[{}] settings.auto_accept=true → otomatik kabul", peer);
-                true
+                ui::AcceptResult::Accept
             } else {
                 ui::prompt_accept(remote_name, pin_code, &summaries, text_count)
                     .await
-                    .unwrap_or(false)
+                    .unwrap_or(ui::AcceptResult::Reject)
             };
+
+            let ok = !matches!(decision, ui::AcceptResult::Reject);
             *accepted_flag = ok;
+
+            if matches!(decision, ui::AcceptResult::AcceptAndTrust) {
+                let st = state::get();
+                let mut s = st.settings.write();
+                s.add_trusted(remote_name);
+                let _ = s.save();
+                info!("[{}] cihaz trusted listeye eklendi: {}", peer, remote_name);
+                ui::notify(
+                    "HekaDrop",
+                    &format!("{} artık güvenilir cihaz", remote_name),
+                );
+            }
 
             if ok {
                 for (pid, path, display_name) in planned_files {
