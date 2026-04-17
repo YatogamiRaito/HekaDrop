@@ -1,94 +1,137 @@
 # HekaDrop
 
-macOS için Google Quick Share (eski adıyla Nearby Share) alıcısı. Android cihazlardan
-Mac'e dosya, URL ve metin aktarımını; paywall'sız, bulutsuz ve E2E şifreli bir şekilde
-sağlar.
+Google Quick Share (eski adıyla Nearby Share) protokolünün **Rust ile yazılmış cross-platform**
+istemcisi. Android, macOS, Linux ve Windows arasında dosya, URL ve metin aktarımı;
+paywall'sız, bulutsuz ve E2E şifreli.
 
-Menü çubuğu arka plan uygulaması — Dock'ta görünmez. Tüm trafik yerel Wi-Fi üzerinden
-P-256 ECDH + AES-256-CBC + HMAC-SHA256 ile şifrelenir.
+Mimari tek tek crate'lere ayrıştırılmıştır; platforma özgü katman (tray, pencere, dialog)
+değiştirilerek çekirdek protokol (UKEY2, secure message, payload) yeniden kullanılır.
+
+## Platform Desteği
+
+| Platform | Durum | Notlar |
+|---|---|---|
+| macOS    | ✅ Referans implementasyon | menü çubuğu, native dialog, `.app` paketleme |
+| Linux    | 🚧 Planlanıyor | systemd user service, libappindicator/zbus menü |
+| Windows  | 🚧 Planlanıyor | tray-icon + webview2, MSIX paketleme |
+| Android/iOS | ❌ Odak dışı | hedef cihazlar olarak kullanılır (karşı taraf) |
 
 ## Özellikler
 
-- Menü çubuğu ikonu (`⇄`) — Dock'tan bağımsız, LSUIElement arka plan modu
-- mDNS/Bonjour keşfi: `_FC9F5ED42C8A._tcp.local.`
-- Google Quick Share protokolü:
-  - UKEY2 handshake (P-256 ECDH + HKDF-SHA256)
-  - AES-256-CBC + HMAC-SHA256 secure messages
-  - PayloadTransfer chunk reassembly
-- Aktarım öncesi kullanıcı onayı: PIN + dosya listesi gösteren native dialog
-- Büyük dosyalar için **disk stream** (bellekte toplamaz)
-- URL paylaşımı → `open` ile tarayıcıda açar
-- Metin paylaşımı → sistem panosuna kopyalar
-- macOS Notification Center bildirimleri
+### Protokol (tüm platformlarda ortak)
+- **mDNS/Bonjour keşfi** — `_FC9F5ED42C8A._tcp.local.`
+- **UKEY2 handshake** — P-256 ECDH + HKDF-SHA256 + 4 haneli PIN
+- **AES-256-CBC + HMAC-SHA256** secure messages (sequence + replay koruması)
+- **PayloadTransfer** chunk reassembly (BYTES + FILE streaming)
+- **Çoklu dosya / URL / text** aktarımı
+- **İki yönlü**: alıcı + gönderici
 
-## Gereksinimler
+### Kullanıcı arayüzü
+- Arka plan servisi (Dock/taskbar'da görünmez, yalnız sistem tepsisinde)
+- Native onay dialog'u (PIN + dosya listesi + kabul/ret)
+- Canlı aktarım ilerleme barı
+- Drag-and-drop gönderim (pencereye dosya sürükle)
+- Son aktarımlar geçmişi
+- Aktarım iptal edilebilir
 
-- macOS 11+
+### Operasyonel
+- Disk-stream kaydetme (büyük dosya ≠ bellek sorunu)
+- JSON config: `~/.../HekaDrop/config.json`
+- Log dosyası rotation (günlük, max 3 gün, 10 MB üst sınır)
+- 14 unit test (UKEY2 + secure roundtrip + PIN determinism)
+
+## Gereksinimler (Geliştirici)
+
 - Rust 1.90+ (stabil)
-- protoc (Protobuf derleyicisi) — `brew install protobuf`
+- `protoc` (Protobuf derleyicisi)
+- macOS için: `iconutil` (Xcode CLT), `hdiutil` (dahili)
+- İsteğe bağlı: `pngquant` — ikon optimize
+
+```bash
+# macOS
+brew install protobuf pngquant
+```
 
 ## Derleme
 
 ```bash
 cargo build --release
-./scripts/bundle.sh      # HekaDrop.app paketler
-```
+cargo test             # 14 test
 
-Çalıştırma:
-
-```bash
-open target/release/HekaDrop.app
-# veya terminalden:
-cargo run
+# Platform-özgü paketleme (macOS):
+make bundle            # HekaDrop.app
+make dmg               # HekaDrop-<version>.dmg
+make install           # /Applications'a kur
+make install-service   # oturum açılışında otomatik başlat
 ```
 
 ## Kullanım
 
-1. HekaDrop'u aç → menü çubuğunda `⇄` simgesi çıkar.
-2. Android'de **Paylaş → Quick Share** → Mac'iniz listede görünür.
-3. Dosya gönderince Mac'te PIN'li onay dialog'u açılır.
-4. **Kabul et** → dosya `~/Downloads/` altına iner + bildirim gelir.
-5. **Reddet** → aktarım iptal, karşı taraf haberdar edilir.
+1. HekaDrop'u başlat → sistem tepsisinde `⇄` simgesi çıkar.
+2. **Alma:** Android'den *Paylaş → Quick Share* → cihazı seç.
+3. **Gönderme:** tepsi menüsünde **Dosya gönder…** ya da pencereye dosya sürükle.
+4. Her aktarım PIN'li dialog ile onaylanır.
+5. Alınan dosyalar `~/Downloads/` altına iner.
 
 ## Mimari
 
 ```
 src/
-├── main.rs         — tokio background runtime + tao event loop + tray menü
-├── config.rs       — mDNS service type, instance name, EndpointInfo
-├── mdns.rs         — Bonjour servis yayını
-├── server.rs       — TCP accept loop
-├── frame.rs        — 4-byte BE length-prefix framing
-├── ukey2.rs        — P-256 handshake + HKDF key derivation + PIN
-├── crypto.rs       — HKDF, AES-256-CBC, HMAC-SHA256, PIN türetme
-├── secure.rs       — DeviceToDeviceMessage şifre/deşifre + sequence
-├── payload.rs      — chunk reassembly + FILE stream + BYTES buffer
-├── connection.rs   — state machine + sharing frame akışı
-├── ui.rs           — osascript dialog + Notification Center
+├── main.rs         — platform UI orkestrasyonu (tray + window + event loop)
+├── server.rs       — TCP accept
+├── connection.rs   — receiver state machine
+├── sender.rs       — sender state machine
+├── discovery.rs    — mDNS browse (outbound keşif)
+├── mdns.rs         — mDNS advertise (inbound görünürlük)
+├── ukey2.rs        — client + server handshake
+├── secure.rs       — AES-CBC + HMAC D2D mesajları
+├── payload.rs      — chunk reassembly + file stream
+├── crypto.rs       — HKDF, HMAC, AES, PIN, D2D salt
+├── frame.rs        — 4-byte BE length-prefix
+├── config.rs       — service type, instance name, endpoint info
+├── state.rs        — global state (settings + progress + history + flags)
+├── settings.rs     — JSON config persistence
+├── ui.rs           — platform UI helper (dialog, notify, clipboard)
 └── error.rs
 ```
 
-## Güvenlik Notları
+Platform-özgü modüller (`main.rs`, `ui.rs`) değiştirilerek çekirdek protokol katmanı
+(ukey2, secure, payload, connection, sender, discovery, mdns, crypto, frame) yeniden
+kullanılır. Linux ve Windows portları bu stratejiyi izler.
+
+## Güvenlik
 
 - Her oturum için yeni ephemeral P-256 anahtar çifti
-- Commitment doğrulama: `SHA512(ClientFinished) == cipher_commitment`
-- MITM koruması: 4-haneli PIN her iki cihazda aynı olmalı (auth string)
-- Trafik UKEY2 sonrası tamamen şifreli + HMAC imzalı
-- Dosyalar doğrudan yerel ağ üzerinden gelir, hiçbir sunucuya uğramaz
+- `SHA512(ClientFinished) == cipher_commitment` doğrulama
+- MITM koruması: 4 haneli PIN iki cihazda aynı olmalıdır
+- UKEY2 sonrası tüm trafik AES-256-CBC + HMAC-SHA256 imzalı
+- Sequence number tabanlı replay koruması
+- Dosyalar doğrudan yerel ağ üzerinden; hiçbir sunucuya uğramaz
+
+## Yol Haritası
+
+- [x] Alıcı (Android → macOS)
+- [x] Gönderici (macOS → Android)
+- [x] Çoklu dosya / URL / text
+- [x] Stream kaydetme
+- [x] Aktarım iptali
+- [x] Menü çubuğu + basit pencere
+- [x] `.app` + DMG + launchd agent
+- [ ] Linux portu (zbus menu, systemd user service)
+- [ ] Windows portu (tray + webview2, MSIX)
+- [ ] Trusted devices (whitelist, PIN'siz otomatik kabul)
+- [ ] SHA-256 integrity check
+- [ ] Partial transfer resume
+- [ ] Homebrew / winget / Flatpak paketleri
+- [ ] GitHub Actions CI (otomatik release)
+- [ ] i18n (şu an TR + EN planlı)
 
 ## Teşekkürler
 
 Protokol referansı için:
-- [grishka/NearDrop](https://github.com/grishka/NearDrop) — Swift ile yazılmış Quick Share receiver
-- [teaishealthy/pyquickshare](https://github.com/teaishealthy/pyquickshare) — Python implementasyonu
+- [grishka/NearDrop](https://github.com/grishka/NearDrop) — Swift/macOS receiver
+- [teaishealthy/pyquickshare](https://github.com/teaishealthy/pyquickshare) — Python/Linux
 - Google'ın resmi [Nearby Connections SDK](https://developers.google.com/nearby/connections/overview) proto tanımları
-
-## Bilinen Sınırlamalar
-
-- Yalnız **alıcı** (receiver) — Mac → Android yönünde gönderim yok
-- Wi-Fi LAN üzerinden, Wi-Fi Direct fallback'i desteklenmez
-- macOS'a özel (Linux/Windows için ayrı UI katmanı gerekir)
-- Code signing yok (Gatekeeper ilk açılışta "Geliştirici doğrulanamadı" uyarısı verebilir — sağ tık → Aç)
 
 ## Lisans
 
