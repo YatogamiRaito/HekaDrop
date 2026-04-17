@@ -12,7 +12,11 @@ MACOS="${CONTENTS}/MacOS"
 RESOURCES="${CONTENTS}/Resources"
 
 echo "==> cargo build --${PROFILE}"
-if [ "$PROFILE" = "release" ]; then
+# Eğer universal binary zaten üretilmişse (make universal sonrası) yeniden build etme.
+if [ "$PROFILE" = "release" ] && [ -f target/release/hekadrop ] \
+        && file target/release/hekadrop 2>/dev/null | grep -q "universal binary"; then
+    echo "   (universal2 binary mevcut, yeniden build atlandı)"
+elif [ "$PROFILE" = "release" ]; then
     cargo build --release
 else
     cargo build

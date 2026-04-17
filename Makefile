@@ -1,4 +1,4 @@
-.PHONY: help build release test check clean icon bundle dmg install uninstall install-service uninstall-service run dev all
+.PHONY: help build release universal test check clean icon bundle dmg install uninstall install-service uninstall-service run dev all
 
 PROFILE ?= release
 APP = target/$(PROFILE)/HekaDrop.app
@@ -7,7 +7,8 @@ INSTALL_PATH = /Applications/HekaDrop.app
 help:
 	@echo "HekaDrop — make hedefleri:"
 	@echo "  make build              — debug binary"
-	@echo "  make release            — release binary"
+	@echo "  make release            — release binary (host mimari)"
+	@echo "  make universal          — universal2 binary (Intel + ARM64)"
 	@echo "  make test               — tüm cargo testleri"
 	@echo "  make check              — cargo clippy + fmt kontrol"
 	@echo "  make icon               — resources/icon.png → AppIcon.icns"
@@ -27,6 +28,9 @@ build:
 
 release:
 	cargo build --release
+
+universal:
+	./scripts/build-universal.sh
 
 test:
 	cargo test

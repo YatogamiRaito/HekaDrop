@@ -29,6 +29,9 @@ jobs:
       - name: Install tools
         run: brew install protobuf pngquant
 
+      - name: Universal2 binary (Intel + ARM64)
+        run: ./scripts/build-universal.sh
+
       - name: Build .app
         run: ./scripts/bundle.sh
 

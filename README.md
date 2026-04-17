@@ -52,17 +52,29 @@ değiştirilerek çekirdek protokol (UKEY2, secure message, payload) yeniden kul
 brew install protobuf pngquant
 ```
 
-## Derleme
+## Kurulum
+
+### Homebrew (önerilen — yakında)
 
 ```bash
-cargo build --release
-cargo test             # 14 test
+brew install --cask YatogamiRaito/hekadrop/hekadrop
+```
 
-# Platform-özgü paketleme (macOS):
-make bundle            # HekaDrop.app
-make dmg               # HekaDrop-<version>.dmg
-make install           # /Applications'a kur
-make install-service   # oturum açılışında otomatik başlat
+Tap kurulana kadar [Releases](https://github.com/YatogamiRaito/HekaDrop/releases)
+sayfasından DMG'yi indirip Applications'a sürükleyin.
+
+### Kaynaktan derleme
+
+```bash
+brew install protobuf pngquant        # protoc + icon optimize
+
+cargo test                            # 14 test
+make universal                        # Intel + ARM64 universal2 binary
+make bundle                           # HekaDrop.app
+make dmg                              # HekaDrop-<version>.dmg
+
+make install                          # /Applications'a kur
+make install-service                  # oturum açılışında otomatik başlat
 ```
 
 ## Kullanım
