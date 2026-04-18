@@ -197,37 +197,6 @@ fn to_signed_bytes(v: &[u8]) -> Vec<u8> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::to_signed_bytes;
-
-    #[test]
-    fn signed_bytes_msb_yuksekken_00_eklenir() {
-        let v = [0x80, 0xAB, 0xCD];
-        assert_eq!(to_signed_bytes(&v), vec![0x00, 0x80, 0xAB, 0xCD]);
-    }
-
-    #[test]
-    fn signed_bytes_msb_dusukken_degismez() {
-        let v = [0x7F, 0xAB, 0xCD];
-        assert_eq!(to_signed_bytes(&v), vec![0x7F, 0xAB, 0xCD]);
-    }
-
-    #[test]
-    fn signed_bytes_bos_slice_bos_donmeli() {
-        let v: [u8; 0] = [];
-        assert!(to_signed_bytes(&v).is_empty());
-    }
-
-    #[test]
-    fn signed_bytes_tam_sinir() {
-        // 0x80 sınır değer — pozitif görünmesi için 0x00 eklenmeli
-        assert_eq!(to_signed_bytes(&[0x80]), vec![0x00, 0x80]);
-        // 0x7F en yüksek pozitif — dokunulmaz
-        assert_eq!(to_signed_bytes(&[0x7F]), vec![0x7F]);
-    }
-}
-
 pub struct ServerInitResult {
     pub server_init_bytes: Vec<u8>,
     pub secret_key: SecretKey,
@@ -435,4 +404,35 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
         auth_key: into_32(auth_key),
         pin_code,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::to_signed_bytes;
+
+    #[test]
+    fn signed_bytes_msb_yuksekken_00_eklenir() {
+        let v = [0x80, 0xAB, 0xCD];
+        assert_eq!(to_signed_bytes(&v), vec![0x00, 0x80, 0xAB, 0xCD]);
+    }
+
+    #[test]
+    fn signed_bytes_msb_dusukken_degismez() {
+        let v = [0x7F, 0xAB, 0xCD];
+        assert_eq!(to_signed_bytes(&v), vec![0x7F, 0xAB, 0xCD]);
+    }
+
+    #[test]
+    fn signed_bytes_bos_slice_bos_donmeli() {
+        let v: [u8; 0] = [];
+        assert!(to_signed_bytes(&v).is_empty());
+    }
+
+    #[test]
+    fn signed_bytes_tam_sinir() {
+        // 0x80 sınır değer — pozitif görünmesi için 0x00 eklenmeli
+        assert_eq!(to_signed_bytes(&[0x80]), vec![0x00, 0x80]);
+        // 0x7F en yüksek pozitif — dokunulmaz
+        assert_eq!(to_signed_bytes(&[0x7F]), vec![0x7F]);
+    }
 }
