@@ -36,6 +36,8 @@ pub struct HistoryItem {
     pub size: i64,
     pub device: String,
     pub when: SystemTime,
+    /// İlk 16 hex karakter (kısaltılmış SHA-256) — UI'da gösterilir.
+    pub sha256_short: String,
 }
 
 pub struct AppState {

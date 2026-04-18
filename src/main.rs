@@ -431,6 +431,11 @@ fn handle_ipc(cmd: &str) {
             let log_dir = std::path::PathBuf::from(home).join("Library/Logs/HekaDrop");
             let _ = std::process::Command::new("open").arg(&log_dir).spawn();
         }
+        "check_update" => {
+            if let Some(rt) = RUNTIME.get() {
+                rt.spawn(check_update_async());
+            }
+        }
         "trusted_clear" => {
             let st = state::get();
             let mut s = st.settings.write();
@@ -590,6 +595,7 @@ fn push_history_to_ui() {
                 "size_human": human_size(h.size),
                 "device": h.device,
                 "age": age,
+                "sha256": h.sha256_short,
             })
         })
         .collect();
@@ -777,6 +783,66 @@ fn show_history() {
         .collect::<Vec<_>>()
         .join("\n");
     ui::show_info("Son aktarımlar", &body);
+}
+
+async fn check_update_async() {
+    let current = env!("CARGO_PKG_VERSION");
+    let fetched = tokio::task::spawn_blocking(|| -> Option<(String, String)> {
+        let out = std::process::Command::new("curl")
+            .args([
+                "-sL",
+                "-H",
+                "Accept: application/vnd.github+json",
+                "-H",
+                "User-Agent: HekaDrop-UpdateCheck",
+                "--max-time",
+                "10",
+                "https://api.github.com/repos/YatogamiRaito/HekaDrop/releases/latest",
+            ])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+        let tag = json.get("tag_name")?.as_str()?.to_string();
+        let url = json.get("html_url")?.as_str()?.to_string();
+        Some((tag, url))
+    })
+    .await
+    .ok()
+    .flatten();
+
+    match fetched {
+        Some((tag, url)) => {
+            let latest = tag.trim_start_matches('v');
+            if semver_less(current, latest) {
+                ui::show_info(
+                    "HekaDrop — Güncelleme var",
+                    &format!("Mevcut: v{}\nYeni sürüm: {}\n\n{}", current, tag, url),
+                );
+            } else {
+                ui::show_info(
+                    "HekaDrop",
+                    &format!("En güncel sürümü kullanıyorsun (v{}).", current),
+                );
+            }
+        }
+        None => {
+            ui::show_info(
+                "HekaDrop",
+                "Güncelleme kontrolü başarısız.\n\n\
+                 Henüz yayınlanmış bir release yoksa (repo özel ise) bu normal.\n\
+                 İnternet bağlantını kontrol edip tekrar dene.",
+            );
+        }
+    }
+}
+
+/// Basit nokta-ayrılmış sayısal sürüm karşılaştırması: "0.1.0" < "0.2.0" < "1.0.0".
+fn semver_less(current: &str, latest: &str) -> bool {
+    let parse = |s: &str| -> Vec<u32> { s.split('.').filter_map(|p| p.parse().ok()).collect() };
+    parse(current) < parse(latest)
 }
 
 fn relative_time(secs: u64) -> String {

@@ -9,6 +9,7 @@ use crate::location::nearby::connections::{
     payload_transfer_frame::payload_header::PayloadType, PayloadTransferFrame,
 };
 use anyhow::{anyhow, Context, Result};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
@@ -26,6 +27,8 @@ pub enum CompletedPayload {
         id: i64,
         path: PathBuf,
         total_size: i64,
+        /// Streaming hesaplanmış SHA-256 (self-verification için).
+        sha256: [u8; 32],
     },
 }
 
@@ -34,6 +37,7 @@ struct FileSink {
     path: PathBuf,
     total_size: i64,
     written: i64,
+    hasher: Sha256,
 }
 
 #[derive(Default)]
@@ -132,6 +136,7 @@ impl PayloadAssembler {
                     path,
                     total_size,
                     written: 0,
+                    hasher: Sha256::new(),
                 },
             );
         }
@@ -142,6 +147,7 @@ impl PayloadAssembler {
                 .get_mut(&id)
                 .ok_or_else(|| anyhow!("file_sink kayıp: id={}", id))?;
             sink.file.write_all(body).context("disk yazma")?;
+            sink.hasher.update(body);
             sink.written += body.len() as i64;
         }
 
@@ -151,10 +157,14 @@ impl PayloadAssembler {
                 .remove(&id)
                 .ok_or_else(|| anyhow!("son chunk ama sink yok: id={}", id))?;
             sink.file.sync_all().ok();
+            let digest = sink.hasher.finalize();
+            let mut sha256 = [0u8; 32];
+            sha256.copy_from_slice(&digest);
             return Ok(Some(CompletedPayload::File {
                 id,
                 path: sink.path,
                 total_size: sink.total_size,
+                sha256,
             }));
         }
         Ok(None)

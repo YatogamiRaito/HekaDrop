@@ -391,6 +391,9 @@
     <button onclick="act('stats_refresh')">
       <span class="icon">↻</span>Yenile
     </button>
+    <button onclick="act('check_update')">
+      <span class="icon">⬆︎</span>Güncelleme kontrol et
+    </button>
     <button onclick="act('open_logs')">
       <span class="icon">📄</span>Log klasörünü aç
     </button>
@@ -474,7 +477,7 @@
       list.innerHTML = items.map(h => `
         <div class="hitem" onclick="act('reveal::${escapeAttr(h.path)}')">
           <div class="hname">${escapeHtml(h.file_name)}</div>
-          <div class="hmeta">${escapeHtml(h.size_human)} • ${escapeHtml(h.device)} • ${escapeHtml(h.age)}</div>
+          <div class="hmeta">${escapeHtml(h.size_human)} • ${escapeHtml(h.device)} • ${escapeHtml(h.age)}${h.sha256 ? ` • <code style="font-size:10px;color:#636366">${escapeHtml(h.sha256)}</code>` : ''}</div>
         </div>
       `).join('');
     };

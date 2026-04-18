@@ -37,6 +37,7 @@ use crate::ukey2;
 use anyhow::{anyhow, bail, Result};
 use prost::Message;
 use rand::RngCore;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
@@ -303,6 +304,7 @@ async fn send_file_chunks(
     let mut file = tokio::fs::File::open(path).await?;
     let mut buf = vec![0u8; CHUNK_SIZE];
     let mut offset: i64 = 0;
+    let mut hasher = Sha256::new();
 
     loop {
         if state::is_cancelled() {
@@ -313,8 +315,15 @@ async fn send_file_chunks(
             let last = wrap_payload_transfer(payload_id, file_size, offset, 1, Vec::new());
             let enc = ctx.encrypt(&last.encode_to_vec());
             frame::write_frame(socket, &enc).await?;
+            let digest = hasher.finalize();
+            info!(
+                "[sender] {} gönderildi — SHA-256: {}",
+                file_name,
+                hex::encode(digest)
+            );
             break;
         }
+        hasher.update(&buf[..n]);
         let body = buf[..n].to_vec();
         let wrapped = wrap_payload_transfer(payload_id, file_size, offset, 0, body);
         let enc = ctx.encrypt(&wrapped.encode_to_vec());

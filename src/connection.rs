@@ -228,8 +228,16 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                             id,
                             path,
                             total_size,
+                            sha256,
                         } => {
                             pending_names.remove(&id);
+                            let sha_hex = hex::encode(sha256);
+                            info!(
+                                "[{}] ✓ {} alındı — SHA-256: {}",
+                                peer,
+                                path.display(),
+                                sha_hex
+                            );
                             {
                                 let st = state::get();
                                 let mut s = st.stats.write();
@@ -250,6 +258,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 size: total_size,
                                 device: remote_name_shared.clone(),
                                 when: std::time::SystemTime::now(),
+                                sha256_short: sha_hex.chars().take(16).collect(),
                             });
                             info!(
                                 "[{}] ✓ kaydedildi: {} ({} bayt)",
