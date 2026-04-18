@@ -2,7 +2,7 @@ use crate::config;
 use anyhow::Result;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use std::net::IpAddr;
-use tracing::info;
+use tracing::{info, warn};
 
 pub struct MdnsHandle {
     daemon: ServiceDaemon,
@@ -15,7 +15,13 @@ impl Drop for MdnsHandle {
     }
 }
 
-pub fn advertise(device_name: &str, port: u16) -> Result<MdnsHandle> {
+/// mDNS yayınını başlatır.
+///
+/// `None` döner: ağ arayüzü yoksa — bu durumda uygulama UI olarak çalışmaya
+/// devam eder (Ayarlar/Geçmiş görüntülenebilir), sadece yeni cihazlar
+/// keşfedilemez. Bu davranış kasıtlı: ağ kablosu çıkıkken uygulamayı açıp
+/// kapatmak gerekmesin.
+pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
     let service_type = config::service_type();
     let endpoint_id = config::random_endpoint_id();
     let instance = config::instance_name(&endpoint_id);
@@ -45,10 +51,11 @@ pub fn advertise(device_name: &str, port: u16) -> Result<MdnsHandle> {
         .collect();
 
     if addrs.is_empty() {
-        anyhow::bail!(
-            "mDNS yayını için uygun IPv4 adresi bulunamadı — \
-             kablolu/kablosuz bağlantı aktif mi?"
+        warn!(
+            "mDNS yayını için uygun IPv4 adresi yok (kablo çıkık / sanal arayüzler filtrelendi) — \
+             mDNS devre dışı; ağ bağlantısı geldiğinde uygulamayı yeniden başlatın"
         );
+        return Ok(None);
     }
 
     let info = ServiceInfo::new(
@@ -74,5 +81,5 @@ pub fn advertise(device_name: &str, port: u16) -> Result<MdnsHandle> {
         addrs,
     );
 
-    Ok(MdnsHandle { daemon, fullname })
+    Ok(Some(MdnsHandle { daemon, fullname }))
 }

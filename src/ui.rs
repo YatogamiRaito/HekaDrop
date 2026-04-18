@@ -184,7 +184,6 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
     {
         let _ = path; // macOS/Windows: şimdilik plain notify.
         notify(title, body);
-        return;
     }
 
     #[cfg(target_os = "linux")]
@@ -192,9 +191,13 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
         // notify-rust blocking API'si var; ayrı thread'de başlatıp dialog
         // kapanana kadar bekletiyoruz. Fire-and-forget — tokio runtime'ı
         // bloklamaz.
+        //
+        // `default` aksiyonu freedesktop spec'inde bildirim gövdesine
+        // tıklayınca tetiklenir (buton göstermez); "Klasörde göster" tek
+        // ek buton olarak kalır — aksi halde iki "Aç" butonu duplike görünür.
         let title = title.to_string();
         let body = body.to_string();
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("hekadrop-notify".into())
             .spawn(move || {
                 use notify_rust::Notification;
@@ -203,7 +206,6 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
                     .summary(&title)
                     .body(&body)
                     .action("default", "Aç")
-                    .action("open", "Aç")
                     .action("reveal", "Klasörde göster")
                     .timeout(10_000)
                     .show();
@@ -219,17 +221,20 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
                     }
                 };
                 handle.wait_for_action(|action| match action {
-                    "open" | "default" => {
+                    "default" => {
                         crate::platform::open_path(&path);
                     }
                     "reveal" => {
                         crate::platform::reveal_path(&path);
                     }
-                    "__closed" => {}
                     _ => {}
                 });
-            })
-            .expect("notify thread spawn");
+            });
+        if let Err(e) = spawned {
+            // title/body closure'a taşındı; fallback için kullanamayız. Thread
+            // spawn'ı sistemsel bir hata — sadece warn ve geç.
+            tracing::warn!("bildirim thread'i başlatılamadı: {}", e);
+        }
     }
 }
 

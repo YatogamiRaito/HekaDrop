@@ -9,9 +9,12 @@ use tracing::{info, warn};
 const DEFAULT_PORT: u16 = 47893;
 
 pub async fn start_listener() -> Result<TcpListener> {
+    // `HEKADROP_PORT=0` özellikle filtrelenir: 0 "OS seçsin" anlamına gelir ama
+    // "sabit port" semantiğini kırar, log'u yanıltır. 0 geçilirse default'a düşer.
     let wanted = std::env::var("HEKADROP_PORT")
         .ok()
         .and_then(|s| s.parse::<u16>().ok())
+        .filter(|p| *p != 0)
         .unwrap_or(DEFAULT_PORT);
 
     // Sabit portu dene; kullanımdaysa OS'un seçeceği random port'a düş. Böylece

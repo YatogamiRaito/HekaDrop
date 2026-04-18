@@ -967,12 +967,22 @@ fn toggle_login_item() {
     );
 }
 
+/// macOS/Linux dışındaki platformlarda (ör. Windows) otomatik başlatma henüz
+/// uygulanmadı; UI'yi kırmayacak şekilde stub bildirim gösterilir.
+#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+fn toggle_login_item() {
+    ui::show_info(
+        "HekaDrop — otomatik başlatma",
+        "Bu platformda otomatik başlatma henüz desteklenmiyor.",
+    );
+}
+
 /// Linux: systemd --user tabanlı otomatik başlatma.
 ///
 /// `~/.config/systemd/user/hekadrop.service` dosyasını yazar ya da kaldırır.
 /// Gerçek binary yolu `std::env::current_exe()` ile alınır — `cargo run` ya da
 /// kurulu binary olsun aynı kalır.
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn toggle_login_item() {
     let home = match std::env::var("HOME") {
         Ok(h) => h,
