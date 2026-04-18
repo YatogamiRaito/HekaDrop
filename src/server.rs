@@ -3,9 +3,32 @@ use anyhow::Result;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
+/// Varsayılan TCP portu. Random port yerine sabit değer seçildi çünkü
+/// Linux kullanıcıları UFW/firewalld ile tek sefer kural açıp unutmak ister.
+/// `HEKADROP_PORT` ortam değişkeniyle override edilebilir.
+const DEFAULT_PORT: u16 = 47893;
+
 pub async fn start_listener() -> Result<TcpListener> {
-    let listener = TcpListener::bind("0.0.0.0:0").await?;
-    Ok(listener)
+    let wanted = std::env::var("HEKADROP_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_PORT);
+
+    // Sabit portu dene; kullanımdaysa OS'un seçeceği random port'a düş. Böylece
+    // çift-instance çalıştırma durumu kilitlenme yerine düşüş davranışı verir.
+    match TcpListener::bind(("0.0.0.0", wanted)).await {
+        Ok(l) => {
+            info!("TCP sabit portta dinleniyor: {}", wanted);
+            Ok(l)
+        }
+        Err(e) => {
+            warn!(
+                "sabit port {} alınamadı ({}) — random port'a düşülüyor",
+                wanted, e
+            );
+            Ok(TcpListener::bind("0.0.0.0:0").await?)
+        }
+    }
 }
 
 pub async fn accept_loop(listener: TcpListener) -> Result<()> {

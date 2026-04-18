@@ -12,18 +12,7 @@ pub fn service_type() -> String {
 }
 
 pub fn device_name() -> String {
-    std::env::var("HEKADROP_NAME")
-        .ok()
-        .or_else(|| {
-            std::process::Command::new("scutil")
-                .args(["--get", "ComputerName"])
-                .output()
-                .ok()
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_else(|| "HekaDrop Mac".to_string())
+    crate::platform::device_name()
 }
 
 pub fn random_endpoint_id() -> [u8; 4] {

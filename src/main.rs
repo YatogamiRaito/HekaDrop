@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
+#[cfg(target_os = "macos")]
 use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 use tao::window::WindowBuilder;
 use tokio::runtime::Handle;
@@ -19,6 +20,7 @@ mod error;
 mod frame;
 mod mdns;
 mod payload;
+mod platform;
 mod secure;
 mod sender;
 mod server;
@@ -114,7 +116,8 @@ fn main() {
     run_app();
 }
 
-/// Hem stdout'a hem de `~/Library/Logs/HekaDrop/hekadrop.log` dosyasına yazar.
+/// Hem stdout'a hem de platforma uygun log dizinindeki `hekadrop.log` dosyasına yazar
+/// (macOS: `~/Library/Logs/HekaDrop`, Linux: `~/.local/state/HekaDrop/logs`).
 ///
 /// Log şişmesi koruması:
 ///   - Günlük rotation (her gün yeni dosya)
@@ -128,8 +131,7 @@ fn setup_logging() {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("hekadrop=info"));
 
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let log_dir = std::path::PathBuf::from(home).join("Library/Logs/HekaDrop");
+    let log_dir = platform::logs_dir();
     let _ = std::fs::create_dir_all(&log_dir);
 
     // Başlangıç temizliği — appender açılmadan önce diski kontrol altına al.
@@ -189,8 +191,14 @@ fn truncate_oversized_logs(dir: &std::path::Path, max_bytes: u64) {
 }
 
 fn run_app() -> ! {
+    #[cfg(target_os = "macos")]
     let mut event_loop = EventLoopBuilder::new().build();
-    // Dock'ta görünme — her zaman sadece menü çubuğunda
+    #[cfg(not(target_os = "macos"))]
+    let event_loop = EventLoopBuilder::new().build();
+
+    // Dock'ta görünme — her zaman sadece menü çubuğunda (macOS'a özgü davranış;
+    // Linux'ta pencere yöneticileri bunu uygulama tarafından yönetmez).
+    #[cfg(target_os = "macos")]
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
 
     let device_name = state::get().settings.read().resolved_device_name();
@@ -245,7 +253,7 @@ fn run_app() -> ! {
         .build(&event_loop)
         .expect("window oluşturulamadı");
 
-    let webview = WebViewBuilder::new()
+    let builder = WebViewBuilder::new()
         .with_html(WINDOW_HTML)
         .with_ipc_handler(|req| {
             let cmd = req.into_body();
@@ -261,9 +269,21 @@ fn run_app() -> ! {
                 }
             }
             true
-        })
-        .build(&window)
-        .expect("webview oluşturulamadı");
+        });
+
+    // Linux (GTK): wry WebView bir gtk::Container içine monte edilmelidir;
+    // raw-window-handle yolu desteklenmez. macOS/Windows'ta `.build(&window)`.
+    #[cfg(target_os = "linux")]
+    let webview = {
+        use tao::platform::unix::WindowExtUnix;
+        use wry::WebViewBuilderExtUnix;
+        let vbox = window
+            .default_vbox()
+            .expect("tao pencere gtk_vbox döndürmedi");
+        builder.build_gtk(vbox).expect("webview oluşturulamadı")
+    };
+    #[cfg(not(target_os = "linux"))]
+    let webview = builder.build(&window).expect("webview oluşturulamadı");
 
     let menu_channel = MenuEvent::receiver();
     let open_downloads_id = open_downloads.id().clone();
@@ -427,9 +447,7 @@ fn handle_ipc(cmd: &str) {
             ui::notify("HekaDrop", "İstatistikler sıfırlandı");
         }
         "open_logs" => {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            let log_dir = std::path::PathBuf::from(home).join("Library/Logs/HekaDrop");
-            let _ = std::process::Command::new("open").arg(&log_dir).spawn();
+            platform::open_path(&platform::logs_dir());
         }
         "check_update" => {
             if let Some(rt) = RUNTIME.get() {
@@ -542,14 +560,12 @@ fn push_stats_to_ui() {
         .map(|(n, b)| format!("{} ({})", n, human_size(b as i64)))
         .unwrap_or_else(|| "—".to_string());
 
-    let home = std::env::var("HOME").unwrap_or_default();
-
     let payload = serde_json::json!({
         "app_version": env!("CARGO_PKG_VERSION"),
         "device_name": st_settings_resolved_name(),
         "service_type": crate::config::service_type(),
         "port": state::listen_port(),
-        "log_dir": format!("{}/Library/Logs/HekaDrop", home),
+        "log_dir": platform::logs_dir().to_string_lossy(),
         "config_path": settings::config_path().to_string_lossy(),
         "bytes_received": human_size(s.bytes_received as i64),
         "bytes_sent": human_size(s.bytes_sent as i64),
@@ -610,15 +626,12 @@ fn push_history_to_ui() {
 }
 
 fn reveal_in_finder(path: &str) {
-    let _ = std::process::Command::new("open")
-        .arg("-R")
-        .arg(path)
-        .spawn();
+    platform::reveal_path(std::path::Path::new(path));
 }
 
 fn open_downloads_folder() {
     let dl = state::get().settings.read().resolved_download_dir();
-    let _ = std::process::Command::new("open").arg(&dl).spawn();
+    platform::open_path(&dl);
 }
 
 fn open_config_file() {
@@ -626,10 +639,7 @@ fn open_config_file() {
     if !path.exists() {
         let _ = state::get().settings.read().save();
     }
-    let _ = std::process::Command::new("open")
-        .arg("-R")
-        .arg(&path)
-        .spawn();
+    platform::reveal_path(&path);
 }
 
 fn progress_signature(p: &state::ProgressState) -> String {
@@ -875,6 +885,7 @@ fn human_size(bytes: i64) -> String {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn toggle_login_item() {
     let home = match std::env::var("HOME") {
         Ok(h) => h,
@@ -954,4 +965,106 @@ fn toggle_login_item() {
         "HekaDrop",
         "Otomatik başlatma açıldı (launchd agent yüklendi)",
     );
+}
+
+/// Linux: systemd --user tabanlı otomatik başlatma.
+///
+/// `~/.config/systemd/user/hekadrop.service` dosyasını yazar ya da kaldırır.
+/// Gerçek binary yolu `std::env::current_exe()` ile alınır — `cargo run` ya da
+/// kurulu binary olsun aynı kalır.
+#[cfg(not(target_os = "macos"))]
+fn toggle_login_item() {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => {
+            ui::notify("HekaDrop", "HOME bulunamadı");
+            return;
+        }
+    };
+
+    let unit_dir = std::path::PathBuf::from(&home).join(".config/systemd/user");
+    let unit_path = unit_dir.join("hekadrop.service");
+    let unit_name = "hekadrop.service";
+
+    if unit_path.exists() {
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "disable", "--now", unit_name])
+            .output();
+        let _ = std::fs::remove_file(&unit_path);
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .output();
+        ui::notify(
+            "HekaDrop",
+            "Otomatik başlatma kapatıldı (systemd user unit kaldırıldı)",
+        );
+        return;
+    }
+
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            ui::show_info(
+                "HekaDrop — otomatik başlatma",
+                &format!("current_exe alınamadı: {}", e),
+            );
+            return;
+        }
+    };
+
+    let unit = format!(
+        "[Unit]\n\
+         Description=HekaDrop — Quick Share alıcı/gönderici\n\
+         After=graphical-session.target\n\
+         \n\
+         [Service]\n\
+         Type=simple\n\
+         ExecStart={}\n\
+         Restart=on-failure\n\
+         RestartSec=10\n\
+         \n\
+         [Install]\n\
+         WantedBy=default.target\n",
+        exe.display()
+    );
+
+    if let Err(e) = std::fs::create_dir_all(&unit_dir) {
+        ui::show_info(
+            "HekaDrop",
+            &format!(
+                "systemd user dizini oluşturulamadı: {}\n{}",
+                e,
+                unit_dir.display()
+            ),
+        );
+        return;
+    }
+    if let Err(e) = std::fs::write(&unit_path, unit) {
+        ui::show_info(
+            "HekaDrop",
+            &format!("service dosyası yazılamadı: {}\n{}", e, unit_path.display()),
+        );
+        return;
+    }
+
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .output();
+    let enable = std::process::Command::new("systemctl")
+        .args(["--user", "enable", "--now", unit_name])
+        .output();
+    match enable {
+        Ok(o) if o.status.success() => ui::notify(
+            "HekaDrop",
+            "Otomatik başlatma açıldı (systemd user unit yüklendi)",
+        ),
+        Ok(o) => ui::show_info(
+            "HekaDrop",
+            &format!(
+                "systemctl --user enable hata:\n{}",
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+        ),
+        Err(e) => ui::show_info("HekaDrop", &format!("systemctl çalıştırılamadı: {}", e)),
+    }
 }

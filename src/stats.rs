@@ -1,4 +1,6 @@
-//! Kalıcı kullanım istatistikleri — `~/Library/Application Support/HekaDrop/stats.json`.
+//! Kalıcı kullanım istatistikleri — platforma göre:
+//!   - macOS: `~/Library/Application Support/HekaDrop/stats.json`
+//!   - Linux: `~/.config/HekaDrop/stats.json`
 //!
 //! Her başarılı aktarım sonrası güncellenir. UI'da "Tanı" sekmesinde gösterilir.
 //! SystemTime yerine UNIX epoch saniye olarak saklanır (serde'de kolay, taşınabilir).
@@ -110,6 +112,5 @@ impl Stats {
 }
 
 fn stats_path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME tanımsız");
-    PathBuf::from(home).join("Library/Application Support/HekaDrop/stats.json")
+    crate::platform::config_dir().join("stats.json")
 }

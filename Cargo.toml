@@ -41,6 +41,10 @@ cipher = { version = "0.4", features = ["block-padding"] }
 subtle = "2"
 elliptic-curve = { version = "0.13", features = ["sec1"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Aksiyon butonlu (Aç / Klasörde göster) D-Bus bildirimleri için.
+notify-rust = "4"
+
 [build-dependencies]
 prost-build = "0.13"
 
@@ -61,3 +65,21 @@ tokio-test = "0.4"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# cargo-deb (Linux .deb paketleme) için metadata.
+# Kullanım: `./scripts/make-deb.sh`  veya  `cargo deb`
+[package.metadata.deb]
+maintainer = "destek@sourvice.com"
+copyright = "2026 sourvice.com"
+license-file = ["LICENSE", "0"]
+extended-description = "HekaDrop — Google Quick Share protokolünü Rust ile konuşan açık kaynak, ücretsiz dosya paylaşım aracı. Android cihazlarla doğrudan dosya paylaşımı (bulut yok, hesap yok)."
+depends = "$auto, zenity"
+recommends = "wl-clipboard | xclip, notify-osd | libnotify-bin"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/hekadrop", "usr/bin/", "755"],
+    ["resources/hekadrop.desktop", "usr/share/applications/", "644"],
+    ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/hekadrop.png", "644"],
+    ["README.md", "usr/share/doc/hekadrop/", "644"],
+]
