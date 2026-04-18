@@ -420,11 +420,9 @@ async fn handle_sharing_frame(
     let v1 = frame.v1.as_ref().ok_or_else(|| anyhow!("sharing v1 yok"))?;
     let t = v1.r#type.and_then(|t| sh_v1::FrameType::try_from(t).ok());
     match t {
-        Some(sh_v1::FrameType::PairedKeyEncryption) => {
-            if !*sent_paired_result {
-                send_sharing_frame(socket, ctx, &build_paired_key_result()).await?;
-                *sent_paired_result = true;
-            }
+        Some(sh_v1::FrameType::PairedKeyEncryption) if !*sent_paired_result => {
+            send_sharing_frame(socket, ctx, &build_paired_key_result()).await?;
+            *sent_paired_result = true;
         }
         Some(sh_v1::FrameType::PairedKeyResult) => {}
         Some(sh_v1::FrameType::Introduction) => {
