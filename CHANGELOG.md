@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Reject sonrası pending destination temizliği (orphan dosyalar geride kalmıyordu)
-- `total_bytes=0` sender edge case — 0 byte dosyalar artık normal tamamlanıyor
+- `total_bytes=0` sender edge case — boş dosya gönderimi açıkça reddedilir (division-by-zero panic riski kalktı), multi-file `i64` overflow koruması eklendi
 - Unknown trusted device isim çakışması (endpoint ID hash ile ayrıştırıldı)
 - `FileSink.written` ölü kod temizliği
 - mDNS kapatılırken servis kaydı düşürülmeyen nadir race condition
