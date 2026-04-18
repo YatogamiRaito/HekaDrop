@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=HekaDrop
+GenericName=Quick Share File Transfer
+Comment=Google Quick Share protokolü (Rust) — dosya paylaşım aracı
+Exec=hekadrop
+Icon=hekadrop
+Terminal=false
+Type=Application
+Categories=Network;FileTransfer;Utility;
+Keywords=quickshare;nearby;share;file;transfer;airdrop;
+StartupNotify=true
+StartupWMClass=hekadrop

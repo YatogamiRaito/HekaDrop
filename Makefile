@@ -1,4 +1,4 @@
-.PHONY: help build release universal test check clean icon bundle dmg install uninstall install-service uninstall-service run dev all
+.PHONY: help build release universal test check clean icon bundle dmg install uninstall install-service uninstall-service run dev all install-linux install-linux-system uninstall-linux uninstall-linux-system deb
 
 PROFILE ?= release
 APP = target/$(PROFILE)/HekaDrop.app
@@ -22,6 +22,13 @@ help:
 	@echo "  make dev                — RUST_LOG=hekadrop=debug cargo run"
 	@echo "  make clean              — cargo clean + .icns temizle"
 	@echo "  make all                — test + bundle"
+	@echo ""
+	@echo "Linux:"
+	@echo "  make install-linux         — release + ~/.local altına kur (user)"
+	@echo "  make install-linux-system  — release + /usr/local altına kur (sudo)"
+	@echo "  make uninstall-linux       — user kurulumu kaldır"
+	@echo "  make uninstall-linux-system — system kurulumu kaldır (sudo)"
+	@echo "  make deb                   — cargo-deb ile HekaDrop-<version>.deb üret"
 
 build:
 	cargo build
@@ -99,3 +106,21 @@ clean:
 	rm -rf resources/AppIcon.iconset
 
 all: test bundle
+
+# Linux
+install-linux:
+	cargo build --release
+	./scripts/install-linux.sh --user
+
+install-linux-system:
+	cargo build --release
+	sudo ./scripts/install-linux.sh --system
+
+uninstall-linux:
+	./scripts/uninstall-linux.sh --user
+
+uninstall-linux-system:
+	sudo ./scripts/uninstall-linux.sh --system
+
+deb:
+	./scripts/make-deb.sh

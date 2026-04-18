@@ -16,11 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Codecov raporu + badge entegrasyonu
 - Criterion benchmark iskeleti (`bench.yml`)
 - Rustdoc yayın adımı GitHub Pages'e
+- Linux portu: GTK3 + WebKit2GTK + AppIndicator tray; zenity/kdialog dialog; systemd user service autostart
+- Sabit TCP port 47893 (HEKADROP_PORT env ile override'lanabilir) — firewall kurallarını kolaylaştırır
+- Platform abstraction modülü (`src/platform.rs`) — cross-platform path/device-name/open/clipboard
+- Alınan dosya bildiriminde aksiyon butonları (Aç / Klasörde göster) — Linux'ta D-Bus, macOS'ta düz bildirim
+- mDNS yayın filtresi: Docker/virbr/tailscale sanal arayüzleri hariç bırakılır (yanlış IP çözümlenmesini önler)
+- Makefile'a Linux hedefleri: `install-linux`, `install-linux-system`, `uninstall-linux`, `deb`
+- Cargo.toml `[package.metadata.deb]` — cargo-deb ile paket üretimi
 
 ### Changed
 - `Settings` yapısı JSON migration ile geri uyumlu (eski alanlar opsiyonel)
 - Rate limiter trusted cihazlar için bypass yolunu erken adımda kestirir (daha az kilit tutma)
 - Progress yayınları debounce (UI'ya yansıyan event sayısı azaltıldı)
+- Config/log yolları XDG uyumlu (`~/.config/HekaDrop`, `~/.local/state/HekaDrop/logs`); macOS'ta `~/Library/...` aynı kalır
+- Cihaz adı platform-aware: macOS'ta `scutil`, Linux'ta `/etc/hostname`
 
 ### Fixed
 - Reject sonrası pending destination temizliği (orphan dosyalar geride kalmıyordu)

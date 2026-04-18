@@ -296,13 +296,14 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 path.display(),
                                 total_size
                             );
-                            ui::notify(
+                            ui::notify_file_received(
                                 "HekaDrop",
                                 &format!(
                                     "İndirildi: {} ({})",
                                     path.file_name().and_then(|n| n.to_str()).unwrap_or("dosya"),
                                     human_size(total_size)
                                 ),
+                                path.clone(),
                             );
                         }
                     }
@@ -541,12 +542,12 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
     };
     match kind {
         TextType::Url => {
-            let _ = std::process::Command::new("open").arg(&text).spawn();
+            crate::platform::open_url(&text);
             info!("[{}] URL açıldı: {}", peer, text);
             ui::notify("HekaDrop", &format!("URL açıldı: {}", preview(&text, 80)));
         }
         _ => {
-            copy_to_clipboard(&text);
+            crate::platform::copy_to_clipboard(&text);
             info!(
                 "[{}] metin panoya kopyalandı ({} karakter)",
                 peer,
@@ -557,19 +558,6 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
                 &format!("Metin panoya kopyalandı: {}", preview(&text, 80)),
             );
         }
-    }
-}
-
-fn copy_to_clipboard(text: &str) {
-    use std::io::Write;
-    let child = std::process::Command::new("pbcopy")
-        .stdin(std::process::Stdio::piped())
-        .spawn();
-    if let Ok(mut c) = child {
-        if let Some(stdin) = c.stdin.as_mut() {
-            let _ = stdin.write_all(text.as_bytes());
-        }
-        let _ = c.wait();
     }
 }
 

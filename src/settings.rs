@@ -1,4 +1,6 @@
-//! Kalıcı ayarlar — `~/Library/Application Support/HekaDrop/config.json`.
+//! Kalıcı ayarlar — platforma göre:
+//!   - macOS: `~/Library/Application Support/HekaDrop/config.json`
+//!   - Linux: `~/.config/HekaDrop/config.json`
 //!
 //! JSON formatı insan tarafından okunabilir, ileri uyumlu. Bilinmeyen alanlar yok
 //! sayılır (`#[serde(default)]`).
@@ -183,16 +185,14 @@ impl Settings {
     }
 
     pub fn resolved_download_dir(&self) -> PathBuf {
-        self.download_dir.clone().unwrap_or_else(|| {
-            let home = std::env::var_os("HOME").expect("HOME tanımsız");
-            PathBuf::from(home).join("Downloads")
-        })
+        self.download_dir
+            .clone()
+            .unwrap_or_else(crate::platform::default_download_dir)
     }
 }
 
 pub fn config_path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME tanımsız");
-    PathBuf::from(home).join("Library/Application Support/HekaDrop/config.json")
+    crate::platform::config_dir().join("config.json")
 }
 
 /// `trusted_devices` alanı için özel deserializer — hem yeni (nesne dizisi)
