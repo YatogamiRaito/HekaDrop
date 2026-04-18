@@ -203,17 +203,24 @@ pub fn get() -> Arc<AppState> {
         .clone()
 }
 
-/// Progress'i atomik olarak günceller ve değişiklik jenerasyonunu artırır.
+/// Progress'i atomik olarak günceller, jenerasyonu artırır ve yeni jenerasyon
+/// değerini döndürür.
 ///
-/// Jenerasyon artışı, bekleyen gecikmeli reset görevlerinin "başka bir mutasyon
-/// oldu mu?" sorusunu cevaplamasını sağlar — böylece bir `Completed → Idle`
-/// reset, arada yeni bir `Receiving` başladıysa hiçbir şey yapmaz.
-pub fn set_progress(p: ProgressState) {
+/// Write lock altında hem progress'i yazar hem gen'i arttırır — bu ikisinin
+/// arasında başka bir `set_progress` çağrısı olamaz. Dolayısıyla döndürülen
+/// değer, çağıranın `set` ettiği progress durumuna birebir karşılık gelir ve
+/// gecikmeli görevler bu değeri yarış koşulu riski olmadan yakalayabilir.
+fn set_progress_returning_gen(p: ProgressState) -> u64 {
     let st = get();
     let mut guard = st.progress.write();
     *guard = p;
-    // SeqCst şart değil; fetch_add Relaxed order altında bile monotonik artar.
-    st.progress_gen.fetch_add(1, Ordering::AcqRel);
+    // Write lock zaten release/acquire sync sağlar; AcqRel defansif tercih.
+    st.progress_gen.fetch_add(1, Ordering::AcqRel) + 1
+}
+
+/// Progress'i günceller ve değişiklik jenerasyonunu artırır.
+pub fn set_progress(p: ProgressState) {
+    let _ = set_progress_returning_gen(p);
 }
 
 pub fn read_progress() -> ProgressState {
@@ -227,18 +234,17 @@ pub fn progress_generation() -> u64 {
     get().progress_gen.load(Ordering::Acquire)
 }
 
-/// `set_progress(Completed { file })` çağırır ve `delay` süresi sonunda —
-/// eğer o arada başka bir progress mutasyonu olmadıysa — otomatik olarak
-/// `Idle`'a döner.
+/// `Completed { file }` durumunu yazar ve `delay` süresi sonunda — eğer o
+/// arada başka bir progress mutasyonu olmadıysa — otomatik olarak `Idle`'a
+/// döner.
 ///
-/// Geri dönüşte `tokio::spawn` edilen görev, progress jenerasyonunu yakalar;
-/// dolduğunda hâlâ aynı jenerasyondaysa (yani bu Completed sonrası hiçbir
-/// şey olmamışsa) progress'i Idle yapar.
+/// Yakalanan jenerasyon, Completed'i yazan *aynı* write lock altında üretilir
+/// (bkz. `set_progress_returning_gen`); bu yüzden "yaz" ile "gen'i yakala"
+/// arasında başka bir thread araya giremez.
 ///
 /// Bu fonksiyon Tokio runtime context'i içinde çağrılmalıdır.
 pub fn set_progress_completed_auto_idle(file: String, delay: Duration) {
-    set_progress(ProgressState::Completed { file });
-    let captured_gen = progress_generation();
+    let captured_gen = set_progress_returning_gen(ProgressState::Completed { file });
     tokio::spawn(async move {
         tokio::time::sleep(delay).await;
         // Sleep sırasında başka bir mutasyon olmadıysa Idle'a dön.
