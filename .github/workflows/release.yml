@@ -16,6 +16,8 @@ jobs:
   release:
     name: Build + Release DMG
     runs-on: macos-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -38,14 +40,53 @@ jobs:
       - name: Build DMG
         run: ./scripts/make-dmg.sh
 
+      # TODO: notarize with Apple Developer ID — kullanıcı Developer ID sağlayınca etkinleştir.
+      # - name: Notarize DMG
+      #   env:
+      #     APPLE_ID: ${{ secrets.APPLE_ID }}
+      #     APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      #     APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      #   run: |
+      #     xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
+      #       --apple-id "$APPLE_ID" \
+      #       --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+      #       --team-id "$APPLE_TEAM_ID" \
+      #       --wait
+      #     xcrun stapler staple "${{ steps.dmg.outputs.path }}"
+
       - name: Locate DMG
         id: dmg
         run: echo "path=$(ls target/HekaDrop-*.dmg | head -1)" >> "$GITHUB_OUTPUT"
 
+      - name: Create source tarball
+        id: tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARBALL="target/HekaDrop-${VERSION}-src.tar.gz"
+          git archive --format=tar.gz --prefix="HekaDrop-${VERSION}/" -o "$TARBALL" HEAD
+          echo "path=$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - name: Generate SHA-256 checksums
+        id: checksums
+        run: |
+          cd target
+          CHECKSUMS="CHECKSUMS.txt"
+          : > "$CHECKSUMS"
+          for f in HekaDrop-*.dmg HekaDrop-*-src.tar.gz; do
+            if [ -f "$f" ]; then
+              shasum -a 256 "$f" >> "$CHECKSUMS"
+            fi
+          done
+          cat "$CHECKSUMS"
+          echo "path=target/$CHECKSUMS" >> "$GITHUB_OUTPUT"
+
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.dmg.outputs.path }}
+          files: |
+            ${{ steps.dmg.outputs.path }}
+            ${{ steps.tarball.outputs.path }}
+            ${{ steps.checksums.outputs.path }}
           generate_release_notes: true
           draft: false
           prerelease: false

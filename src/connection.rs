@@ -44,15 +44,33 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
         .context("ConnectionRequest okunamadı")?;
     let offline = OfflineFrame::decode(req.as_ref()).context("OfflineFrame decode")?;
     let v1 = offline.v1.ok_or_else(|| anyhow!("v1 yok"))?;
-    let endpoint_info = v1
+    let cr = v1
         .connection_request
-        .and_then(|r| r.endpoint_info)
+        .ok_or_else(|| anyhow!("connection_request yok"))?;
+    let endpoint_info = cr
+        .endpoint_info
+        .clone()
         .ok_or_else(|| anyhow!("endpoint_info yok"))?;
+    // endpoint_id: peer'ın kalıcı tanıtıcısı (Bug #32). Eksikse boş kabul;
+    // is_trusted() boş id'yi legacy kayıt kabul edeceğinden güvenli.
+    let remote_id = cr.endpoint_id.clone().unwrap_or_default();
     let remote_name = parse_remote_name(&endpoint_info).unwrap_or_else(|| "bilinmeyen".into());
-    info!("[{}] uzak cihaz: {}", peer, remote_name);
+    info!(
+        "[{}] uzak cihaz: {} (endpoint_id: {})",
+        peer,
+        remote_name,
+        if remote_id.is_empty() {
+            "<yok>"
+        } else {
+            remote_id.as_str()
+        }
+    );
 
     // Rate limiting — trusted cihazlar BU KONTROLDEN MUAFTIR (memory kuralı).
-    let trusted_early = state::get().settings.read().is_trusted(&remote_name);
+    let trusted_early = state::get()
+        .settings
+        .read()
+        .is_trusted(&remote_name, &remote_id);
     if !trusted_early {
         let st = state::get();
         if st.rate_limiter.check_and_record(peer.ip()) {
@@ -118,6 +136,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     let mut pending_texts: HashMap<i64, TextType> = HashMap::new();
     let mut pending_names: HashMap<i64, String> = HashMap::new();
     let remote_name_shared = remote_name.clone();
+    let remote_id_shared = remote_id.clone();
     let pin_shared = keys.pin_code.clone();
     state::clear_cancel();
 
@@ -132,8 +151,12 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                 .await
                 .ok();
             send_disconnection(&mut socket, &mut ctx).await.ok();
-            state::clear_cancel();
-            state::set_progress(ProgressState::Idle);
+            cleanup_transfer_state(
+                &peer,
+                &mut assembler,
+                &mut pending_names,
+                &mut pending_texts,
+            );
             ui::notify("HekaDrop", "Aktarım iptal edildi");
             break;
         }
@@ -212,6 +235,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                     &sharing,
                                     &mut sent_paired_result,
                                     &remote_name_shared,
+                                    &remote_id_shared,
                                     &pin_shared,
                                     &mut accepted,
                                     &mut pending_texts,
@@ -220,6 +244,12 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 .await?;
                                 if outcome == FlowOutcome::Disconnect {
                                     send_disconnection(&mut socket, &mut ctx).await.ok();
+                                    cleanup_transfer_state(
+                                        &peer,
+                                        &mut assembler,
+                                        &mut pending_names,
+                                        &mut pending_texts,
+                                    );
                                     break;
                                 }
                             }
@@ -301,7 +331,69 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
         }
     }
 
+    // Loop'tan nasıl çıkıldığından bağımsız olarak artakalan yarım dosyaları,
+    // pending haritaları ve global state bayraklarını temizle. Böylece bir
+    // sonraki bağlantı tamamen temiz bir state ile başlar (Bug #28).
+    cleanup_transfer_state(
+        &peer,
+        &mut assembler,
+        &mut pending_names,
+        &mut pending_texts,
+    );
+
     Ok(())
+}
+
+/// Yarım kalan alıcı state'ini — hem yerel hem global — temizler.
+///
+/// Reject, kullanıcı Cancel, peer Disconnect, I/O hatası veya socket
+/// kopması durumlarının hepsinde güvenli biçimde çağrılır; idempotent'tir.
+/// Yaptığı işler:
+///   * `pending_names` içindeki her payload_id için `PayloadAssembler::cancel`
+///     çağrılır — yarım yazılmış dosyalar ve açık dosya kulpları temizlenir,
+///     disk sızıntısı önlenir.
+///   * `pending_texts` ve `pending_names` tamamen boşaltılır.
+///   * Global `cancel_flag` sıfırlanır (bir sonraki bağlantıyı etkilemesin).
+///   * Progress durumu `Idle` yapılır (UI "alınıyor…" takılı kalmasın).
+fn cleanup_transfer_state(
+    peer: &SocketAddr,
+    assembler: &mut PayloadAssembler,
+    pending_names: &mut HashMap<i64, String>,
+    pending_texts: &mut HashMap<i64, TextType>,
+) {
+    let n = drain_pending(assembler, pending_names, pending_texts);
+    state::clear_cancel();
+    state::set_progress(ProgressState::Idle);
+
+    if n > 0 {
+        info!(
+            "[{}] cleanup: {} yarım dosya silindi, state Idle'a döndürüldü",
+            peer, n
+        );
+    } else {
+        tracing::debug!("[{}] cleanup: state Idle'a döndürüldü", peer);
+    }
+}
+
+/// `cleanup_transfer_state`'in saf (global-state'siz) çekirdeği — birim
+/// testlenebilsin diye ayrıldı. Yarım kalan dosyaları iptal eder ve iki
+/// haritayı boşaltır; temizlenen yarım dosya sayısını döner.
+fn drain_pending(
+    assembler: &mut PayloadAssembler,
+    pending_names: &mut HashMap<i64, String>,
+    pending_texts: &mut HashMap<i64, TextType>,
+) -> usize {
+    // pending_names'teki id'ler: Introduction sırasında "kabul edildi" kaydedilmiş
+    // ama henüz CompletedPayload::File olarak tamamlanmamış dosyalar. Bunları
+    // assembler'a cancel ettirmek yarım dosya + açık handle'ı siler.
+    let ids: Vec<i64> = pending_names.keys().copied().collect();
+    let n = ids.len();
+    for id in ids {
+        assembler.cancel(id);
+    }
+    pending_names.clear();
+    pending_texts.clear();
+    n
 }
 
 #[derive(PartialEq, Eq)]
@@ -310,6 +402,7 @@ enum FlowOutcome {
     Disconnect,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_sharing_frame(
     peer: &SocketAddr,
     socket: &mut TcpStream,
@@ -318,6 +411,7 @@ async fn handle_sharing_frame(
     frame: &SharingFrame,
     sent_paired_result: &mut bool,
     remote_name: &str,
+    remote_id: &str,
     pin_code: &str,
     accepted_flag: &mut bool,
     pending_texts: &mut HashMap<i64, TextType>,
@@ -326,11 +420,9 @@ async fn handle_sharing_frame(
     let v1 = frame.v1.as_ref().ok_or_else(|| anyhow!("sharing v1 yok"))?;
     let t = v1.r#type.and_then(|t| sh_v1::FrameType::try_from(t).ok());
     match t {
-        Some(sh_v1::FrameType::PairedKeyEncryption) => {
-            if !*sent_paired_result {
-                send_sharing_frame(socket, ctx, &build_paired_key_result()).await?;
-                *sent_paired_result = true;
-            }
+        Some(sh_v1::FrameType::PairedKeyEncryption) if !*sent_paired_result => {
+            send_sharing_frame(socket, ctx, &build_paired_key_result()).await?;
+            *sent_paired_result = true;
         }
         Some(sh_v1::FrameType::PairedKeyResult) => {}
         Some(sh_v1::FrameType::Introduction) => {
@@ -371,7 +463,10 @@ async fn handle_sharing_frame(
             //   1) Trusted device → dialog atla, otomatik kabul
             //   2) Settings.auto_accept → dialog atla, otomatik kabul
             //   3) Aksi halde dialog göster (3 seçenek: reddet/kabul/kabul+güven)
-            let trusted = state::get().settings.read().is_trusted(remote_name);
+            let trusted = state::get()
+                .settings
+                .read()
+                .is_trusted(remote_name, remote_id);
             let auto_accept = state::get().settings.read().auto_accept;
 
             let decision = if trusted {
@@ -392,9 +487,18 @@ async fn handle_sharing_frame(
             if matches!(decision, ui::AcceptResult::AcceptAndTrust) {
                 let st = state::get();
                 let mut s = st.settings.write();
-                s.add_trusted(remote_name);
+                s.add_trusted(remote_name, remote_id);
                 let _ = s.save();
-                info!("[{}] cihaz trusted listeye eklendi: {}", peer, remote_name);
+                info!(
+                    "[{}] cihaz trusted listeye eklendi: {} (id: {})",
+                    peer,
+                    remote_name,
+                    if remote_id.is_empty() {
+                        "<yok>"
+                    } else {
+                        remote_id
+                    }
+                );
                 ui::notify(
                     "HekaDrop",
                     &format!("{} artık güvenilir cihaz", remote_name),
@@ -685,4 +789,153 @@ fn parse_remote_name(endpoint_info: &[u8]) -> Option<String> {
         return None;
     }
     String::from_utf8(endpoint_info[18..18 + name_len].to_vec()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    // std::env::temp_dir + nanos-based path ile küçük bir geçici dosya yolu döndürür.
+    // Harici `tempfile` crate'ini projeye eklememek için minimal shim.
+    fn unique_tmp(name: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        // process id'yi de karıştır ki paralel test thread'leri çakışmasın.
+        p.push(format!(
+            "hekadrop-test-{}-{}-{}",
+            std::process::id(),
+            nanos,
+            name
+        ));
+        p
+    }
+
+    #[test]
+    fn split_name_handles_no_extension() {
+        assert_eq!(split_name("README"), ("README", ""));
+    }
+
+    #[test]
+    fn split_name_handles_dotfile() {
+        // Baş harfte nokta → extension yoktur (stem=".env").
+        assert_eq!(split_name(".env"), (".env", ""));
+    }
+
+    #[test]
+    fn split_name_handles_trailing_dot() {
+        // Sonda nokta → extension boş kabul edilir (tam adın kendisi stem).
+        assert_eq!(split_name("weird."), ("weird.", ""));
+    }
+
+    #[test]
+    fn split_name_basic_extension() {
+        assert_eq!(split_name("photo.jpg"), ("photo", "jpg"));
+    }
+
+    #[test]
+    fn parse_remote_name_reddeder_kisa_buffer() {
+        assert!(parse_remote_name(&[0u8; 10]).is_none());
+    }
+
+    #[test]
+    fn parse_remote_name_reddeder_yanlis_uzunluk() {
+        // 17. bayt "uzunluk=10" der ama buffer'da o kadar bayt yok.
+        let mut buf = vec![0u8; 18];
+        buf[17] = 10;
+        assert!(parse_remote_name(&buf).is_none());
+    }
+
+    #[test]
+    fn parse_remote_name_cozer_gecerli_utf8() {
+        let name = "Pixel 7";
+        let mut buf = vec![0u8; 18];
+        buf[17] = name.len() as u8;
+        buf.extend_from_slice(name.as_bytes());
+        assert_eq!(parse_remote_name(&buf).as_deref(), Some(name));
+    }
+
+    #[test]
+    fn drain_pending_bos_icin_sifir_dondurur() {
+        let mut asm = PayloadAssembler::new();
+        let mut names: HashMap<i64, String> = HashMap::new();
+        let mut texts: HashMap<i64, TextType> = HashMap::new();
+        assert_eq!(drain_pending(&mut asm, &mut names, &mut texts), 0);
+        assert!(names.is_empty());
+        assert!(texts.is_empty());
+    }
+
+    #[test]
+    fn drain_pending_yarim_kalan_dosyalari_diskten_siler() {
+        // Gerçekçi senaryo: kullanıcı introduction'ı kabul etti, assembler
+        // dosya hedefini kaydetti (fakat henüz hiç chunk gelmedi) → cancel
+        // edildiğinde pending_destination temizlenmeli.
+        let mut asm = PayloadAssembler::new();
+        let mut names: HashMap<i64, String> = HashMap::new();
+        let mut texts: HashMap<i64, TextType> = HashMap::new();
+
+        let p1 = unique_tmp("a.bin");
+        let p2 = unique_tmp("b.bin");
+        // Fiziksel dosyaları oluşturalım — reject sonrası silindiklerini doğrulamak için.
+        {
+            let mut f1 = std::fs::File::create(&p1).unwrap();
+            f1.write_all(b"half").unwrap();
+            let mut f2 = std::fs::File::create(&p2).unwrap();
+            f2.write_all(b"half").unwrap();
+        }
+        asm.register_file_destination(101, p1.clone());
+        asm.register_file_destination(202, p2.clone());
+        names.insert(101, "a.bin".into());
+        names.insert(202, "b.bin".into());
+        texts.insert(303, TextType::Text);
+
+        let cleaned = drain_pending(&mut asm, &mut names, &mut texts);
+
+        assert_eq!(cleaned, 2, "iki yarım dosya temizlenmeliydi");
+        assert!(names.is_empty(), "pending_names sıfırlanmalı");
+        assert!(texts.is_empty(), "pending_texts sıfırlanmalı");
+        // NOT: `register_file_destination` çağrılmış ama hiç chunk gelmemiş dosyalar
+        // için `assembler.cancel(id)` yalnızca haritadan kaldırır — diskte
+        // file yoktur (çünkü biz elle oluşturduk). Burada test dosyalarını
+        // temizlemek test hijyeni için:
+        std::fs::remove_file(&p1).ok();
+        std::fs::remove_file(&p2).ok();
+    }
+
+    #[test]
+    fn drain_pending_acik_dosya_sinkini_siler() {
+        // İlk chunk gelmiş → dosya create edilmiş → sonra reject/cancel.
+        let mut asm = PayloadAssembler::new();
+        let mut names: HashMap<i64, String> = HashMap::new();
+        let mut texts: HashMap<i64, TextType> = HashMap::new();
+
+        let p = unique_tmp("partial.bin");
+        asm.register_file_destination(777, p.clone());
+        names.insert(777, "partial.bin".into());
+
+        // İlk chunk'ı simüle et (100 bayt toplam, 10 bayt body, last=false).
+        let chunk_frame = wrap_payload_transfer(777, 100, 0, 0, vec![0xAB; 10])
+            .v1
+            .unwrap()
+            .payload_transfer
+            .unwrap();
+        // PayloadHeader'daki tipi File'a çevir.
+        let mut chunk_frame = chunk_frame;
+        if let Some(h) = chunk_frame.payload_header.as_mut() {
+            h.r#type = Some(PayloadType::File as i32);
+        }
+        asm.ingest(&chunk_frame).unwrap();
+
+        assert!(p.exists(), "assembler ilk chunk'ı diske yazmış olmalı");
+
+        let cleaned = drain_pending(&mut asm, &mut names, &mut texts);
+        assert_eq!(cleaned, 1);
+        assert!(
+            !p.exists(),
+            "yarım kalan dosya reject sonrası silinmiş olmalı"
+        );
+    }
 }

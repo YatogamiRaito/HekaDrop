@@ -572,7 +572,10 @@ fn st_settings_resolved_name() -> String {
 
 fn push_trusted_to_ui() {
     let st = state::get();
-    let names: Vec<String> = st.settings.read().trusted_devices.clone();
+    // Bug #32: Settings artık TrustedDevice struct listesi tutar; UI'ya
+    // `name (id_kisa)` biçiminde görünüm string'leri gönderilir (applyTrusted
+    // JS sözleşmesi string[] olarak korundu).
+    let names: Vec<String> = st.settings.read().trusted_display_list();
     let payload =
         serde_json::Value::Array(names.into_iter().map(serde_json::Value::String).collect());
     let js = format!("window.applyTrusted && window.applyTrusted({})", payload);

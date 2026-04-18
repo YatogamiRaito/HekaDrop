@@ -75,14 +75,35 @@ pub async fn send(req: SendRequest) -> Result<()> {
             .and_then(|n| n.to_str())
             .unwrap_or("dosya")
             .to_string();
+        // u64 → i64 cast: meta.len() en fazla u64::MAX olabilir; i64::MAX üstü saçma
+        // (8 EB). Güvenli tarafta kalmak için clamp ediyoruz; bu korumada tek bir
+        // dosyanın 8 EB'den büyük olması gibi absürt bir senaryoyu elemiş oluruz.
+        let raw_size = meta.len();
+        if raw_size > i64::MAX as u64 {
+            bail!(
+                "dosya çok büyük (≥ {} bayt, desteklenmiyor): {}",
+                i64::MAX,
+                path.display()
+            );
+        }
         plans.push(PlannedFile {
             path: path.clone(),
             name,
-            size: meta.len() as i64,
+            size: raw_size as i64,
             payload_id: rand::thread_rng().next_u64() as i64,
         });
     }
-    let total_bytes: i64 = plans.iter().map(|p| p.size).sum();
+    // Multi-file toplamda i64 overflow olmaması için checked_add kullan.
+    // 60 GB üstü senaryoda bile i64 hâlâ rahat, ama yine de savunmacı yaklaşım.
+    let total_bytes: i64 = plans
+        .iter()
+        .try_fold(0i64, |acc, p| acc.checked_add(p.size))
+        .ok_or_else(|| anyhow!("toplam bayt i64 kapasitesini aştı"))?;
+    // Bug #30: Boş dosya(lar) → total_bytes == 0 → aşağıda yüzde hesabı 0/0 olur.
+    // Boş dosya göndermeyi reddetmek en açık davranış; UI kullanıcıya anlamlı hata gösterir.
+    if total_bytes == 0 {
+        bail!("boş dosya gönderilemez (toplam 0 bayt)");
+    }
     info!(
         "[sender] hedef: {} ({}:{}), {} dosya, toplam {} bayt",
         req.device.name,
@@ -246,15 +267,24 @@ pub async fn send(req: SendRequest) -> Result<()> {
                         } else {
                             format!("{} dosya", plans.len())
                         };
-                        state::set_progress(ProgressState::Completed { file: summary });
+                        // Stats'i progress güncellemesinden ÖNCE yaz — böylece UI
+                        // Completed'ı gördüğünde istatistikler zaten tutarlı olur.
                         {
                             let st = state::get();
                             let mut s = st.stats.write();
                             for plan in &plans {
-                                s.record_sent(&peer_label, plan.size as u64);
+                                // size i64 ve >= 0; `as u64` güvenli. Defansif clamp:
+                                s.record_sent(&peer_label, plan.size.max(0) as u64);
                             }
                             let _ = s.save();
                         }
+                        // Bug #31: Completed gösteriminden sonra birkaç saniye içinde
+                        // otomatik Idle'a dönsün — kullanıcı pencereyi sonra açtığında
+                        // eski "Tamamlandı" banner'ı kalmasın.
+                        state::set_progress_completed_auto_idle(
+                            summary,
+                            state::DEFAULT_COMPLETED_IDLE_DELAY,
+                        );
                         info!("[sender] ✓ gönderim tamamlandı");
                         return Ok(());
                     }
@@ -330,10 +360,10 @@ async fn send_file_chunks(
         frame::write_frame(socket, &enc).await?;
         offset += n as i64;
 
-        // İlerleme yüzdesi: kümülatif (tüm dosyalar toplu)
-        if total_bytes > 0 {
-            let cumulative = bytes_sent_before + offset;
-            let percent = ((cumulative * 100) / total_bytes).clamp(0, 100) as u8;
+        // İlerleme yüzdesi: kümülatif (tüm dosyalar toplu).
+        // total_bytes == 0 entry point'te bail ediliyor (Bug #30); yine de
+        // `compute_percent` defansif olarak 0/0 ve overflow'u ele alır.
+        if let Some(percent) = compute_percent(bytes_sent_before, offset, total_bytes) {
             state::set_progress(ProgressState::Receiving {
                 device: peer_label.to_string(),
                 file: file_name.to_string(),
@@ -424,6 +454,24 @@ fn guess_mime(name: &str) -> &'static str {
     }
 }
 
+/// Kümülatif byte'lardan [0, 100] aralığında yüzde hesaplar.
+///
+/// Döner `None` olursa hesap yapılmadı demektir (sıfıra bölme, taşma vb.) —
+/// UI'a yeni bir progress update gönderilmez, eski değer kalır.
+///
+/// - `total` sıfır ya da negatifse `None`: anlamlı bir yüzde yok.
+/// - Ara çarpım `i64` taşarsa `None`: dev dosyalarda savunma.
+/// - Sonuç `[0, 100]` aralığına `clamp` edilir (floating-point olmadan).
+fn compute_percent(bytes_before: i64, offset: i64, total: i64) -> Option<u8> {
+    if total <= 0 {
+        return None;
+    }
+    let cumulative = bytes_before.checked_add(offset)?;
+    let product = cumulative.checked_mul(100)?;
+    let raw = product.checked_div(total)?;
+    Some(raw.clamp(0, 100) as u8)
+}
+
 fn build_connection_request(our_name: &str) -> OfflineFrame {
     let endpoint_id = config::random_endpoint_id();
     let endpoint_info = config::endpoint_info(our_name);
@@ -445,5 +493,68 @@ fn build_connection_request(our_name: &str) -> OfflineFrame {
             }),
             ..Default::default()
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Bug #30: total == 0 durumunda yüzde hesaplanmaz → panic/NaN riski yok.
+    #[test]
+    fn compute_percent_total_zero_returns_none() {
+        assert_eq!(compute_percent(0, 0, 0), None);
+        assert_eq!(compute_percent(100, 50, 0), None);
+    }
+
+    // Bug #30 kenar durum: negatif total (kurallara aykırı veri) sessizce atlanır.
+    #[test]
+    fn compute_percent_negative_total_returns_none() {
+        assert_eq!(compute_percent(0, 0, -1), None);
+    }
+
+    #[test]
+    fn compute_percent_basic_progression() {
+        // 0/1000 = 0%
+        assert_eq!(compute_percent(0, 0, 1000), Some(0));
+        // 500/1000 = 50%
+        assert_eq!(compute_percent(0, 500, 1000), Some(50));
+        // 1000/1000 = 100%
+        assert_eq!(compute_percent(500, 500, 1000), Some(100));
+    }
+
+    #[test]
+    fn compute_percent_clamps_to_100() {
+        // Offset total'dan büyükse (patolojik giriş) sonuç 100'e clamp edilir,
+        // asla 100'ü aşmaz.
+        assert_eq!(compute_percent(0, 10_000, 1000), Some(100));
+        assert_eq!(compute_percent(2000, 0, 1000), Some(100));
+    }
+
+    #[test]
+    fn compute_percent_overflow_safe_on_huge_values() {
+        // cumulative * 100 i64'u taşıracaksa None; panic YOK.
+        // i64::MAX / 100 + 1 → çarparken kesin taşar.
+        let huge = (i64::MAX / 100) + 1;
+        assert_eq!(compute_percent(huge, 0, i64::MAX), None);
+    }
+
+    #[test]
+    fn compute_percent_large_realistic_transfer() {
+        // 60 GB transfer simülasyonu — overflow olmadan doğru yüzde.
+        let total: i64 = 60 * 1024 * 1024 * 1024;
+        let half = total / 2;
+        assert_eq!(compute_percent(0, half, total), Some(50));
+        assert_eq!(compute_percent(half, half, total), Some(100));
+    }
+
+    #[test]
+    fn guess_mime_known_and_unknown() {
+        assert_eq!(guess_mime("foto.jpg"), "image/jpeg");
+        assert_eq!(guess_mime("FOTO.JPEG"), "image/jpeg");
+        assert_eq!(guess_mime("video.mp4"), "video/mp4");
+        assert_eq!(guess_mime("belge.pdf"), "application/pdf");
+        assert_eq!(guess_mime("bilinmiyor.xyz"), "application/octet-stream");
+        assert_eq!(guess_mime("uzantisiz"), "application/octet-stream");
     }
 }
