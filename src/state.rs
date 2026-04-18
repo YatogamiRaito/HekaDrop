@@ -9,13 +9,22 @@ use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 const HISTORY_CAP: usize = 10;
 
-#[derive(Clone, Debug)]
+/// Completed state'ini otomatik olarak Idle'a döndürmek için varsayılan gecikme.
+pub const DEFAULT_COMPLETED_IDLE_DELAY: Duration = Duration::from_secs(3);
+
+/// Anlık UI ilerleme durumu.
+///
+/// - [`Idle`](ProgressState::Idle): hiçbir transfer yok, progress bar gizli/boş.
+/// - [`Receiving`](ProgressState::Receiving): aktarım sürüyor, yüzde [0, 100].
+/// - [`Completed`](ProgressState::Completed): aktarım bitti; [`set_progress_completed_auto_idle`]
+///   çağrıldıysa birkaç saniye sonra otomatik `Idle`'a döner.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProgressState {
     Idle,
     Receiving {
@@ -43,6 +52,10 @@ pub struct HistoryItem {
 pub struct AppState {
     pub settings: RwLock<Settings>,
     pub progress: RwLock<ProgressState>,
+    /// Her progress mutasyonunda artan jeneratör. Gecikmeli reset görevleri bu sayıyı
+    /// kendileri önce okur, zamanlayıcı dolduğunda aynı değeri görürlerse reset ederler —
+    /// yani aradan başka bir aktarım geçmişse (yeni Receiving vb.) reset iptal olur.
+    pub progress_gen: AtomicU64,
     pub history: RwLock<VecDeque<HistoryItem>>,
     pub listen_port: RwLock<u16>,
     /// Aktif aktarımı iptal etmek için ayarlanır. Transfer loop'ları kontrol edip temiz kapanış yapar.
@@ -107,6 +120,7 @@ pub fn init(settings: Settings) {
     let _ = STATE.set(Arc::new(AppState {
         settings: RwLock::new(settings),
         progress: RwLock::new(ProgressState::Idle),
+        progress_gen: AtomicU64::new(0),
         history: RwLock::new(VecDeque::with_capacity(HISTORY_CAP)),
         listen_port: RwLock::new(0),
         cancel_flag: AtomicBool::new(false),
@@ -189,10 +203,87 @@ pub fn get() -> Arc<AppState> {
         .clone()
 }
 
+/// Progress'i atomik olarak günceller ve değişiklik jenerasyonunu artırır.
+///
+/// Jenerasyon artışı, bekleyen gecikmeli reset görevlerinin "başka bir mutasyon
+/// oldu mu?" sorusunu cevaplamasını sağlar — böylece bir `Completed → Idle`
+/// reset, arada yeni bir `Receiving` başladıysa hiçbir şey yapmaz.
 pub fn set_progress(p: ProgressState) {
-    *get().progress.write() = p;
+    let st = get();
+    let mut guard = st.progress.write();
+    *guard = p;
+    // SeqCst şart değil; fetch_add Relaxed order altında bile monotonik artar.
+    st.progress_gen.fetch_add(1, Ordering::AcqRel);
 }
 
 pub fn read_progress() -> ProgressState {
     get().progress.read().clone()
+}
+
+/// Mevcut progress jenerasyonunu döner. Gecikmeli reset görevleri bu değeri
+/// kendileri önce okuyup, zamanlayıcı dolduğunda aynı değerin hâlâ geçerli
+/// olup olmadığını kontrol ederler.
+pub fn progress_generation() -> u64 {
+    get().progress_gen.load(Ordering::Acquire)
+}
+
+/// `set_progress(Completed { file })` çağırır ve `delay` süresi sonunda —
+/// eğer o arada başka bir progress mutasyonu olmadıysa — otomatik olarak
+/// `Idle`'a döner.
+///
+/// Geri dönüşte `tokio::spawn` edilen görev, progress jenerasyonunu yakalar;
+/// dolduğunda hâlâ aynı jenerasyondaysa (yani bu Completed sonrası hiçbir
+/// şey olmamışsa) progress'i Idle yapar.
+///
+/// Bu fonksiyon Tokio runtime context'i içinde çağrılmalıdır.
+pub fn set_progress_completed_auto_idle(file: String, delay: Duration) {
+    set_progress(ProgressState::Completed { file });
+    let captured_gen = progress_generation();
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        // Sleep sırasında başka bir mutasyon olmadıysa Idle'a dön.
+        if progress_generation() == captured_gen {
+            set_progress(ProgressState::Idle);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn rate_limiter_accepts_until_cap_then_blocks() {
+        let rl = RateLimiter::new();
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        for _ in 0..RateLimiter::MAX_PER_WINDOW {
+            assert!(!rl.check_and_record(ip));
+        }
+        // 11. istek limit aşıldığı için true döner.
+        assert!(rl.check_and_record(ip));
+    }
+
+    #[test]
+    fn rate_limiter_isolates_per_ip() {
+        let rl = RateLimiter::new();
+        let a = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let b = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+        for _ in 0..RateLimiter::MAX_PER_WINDOW {
+            assert!(!rl.check_and_record(a));
+        }
+        // b henüz hiç istek atmadı — limit'ten etkilenmez.
+        assert!(!rl.check_and_record(b));
+        // a ise dolmuş.
+        assert!(rl.check_and_record(a));
+    }
+
+    #[test]
+    fn progress_state_equality() {
+        assert_eq!(ProgressState::Idle, ProgressState::Idle);
+        assert_ne!(
+            ProgressState::Idle,
+            ProgressState::Completed { file: "x".into() }
+        );
+    }
 }
