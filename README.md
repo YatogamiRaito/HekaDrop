@@ -91,6 +91,61 @@ make install-service       # oturum açılışında otomatik başlat (launchd)
 
 Gereksinimler: Rust 1.90+, `protoc`, Xcode CLT (macOS için `iconutil`).
 
+### Linux (AppImage / deb / kaynak)
+
+#### Kaynaktan
+
+```bash
+# Sistem bağımlılıkları (Debian/Ubuntu)
+sudo apt install protobuf-compiler libwebkit2gtk-4.1-dev libxdo-dev \
+                 libsoup-3.0-dev libgtk-3-dev \
+                 zenity wl-clipboard  # kdialog ve xclip da kabul edilir
+
+# Derle ve kur
+git clone https://github.com/YatogamiRaito/HekaDrop.git
+cd HekaDrop
+make test
+make install-linux          # ~/.local/bin + ~/.local/share/applications (user)
+# veya
+sudo make install-linux-system  # /usr/local/bin + /usr/share/applications (system)
+```
+
+Runtime paketleri: `zenity` (dialog'lar için şart — yoksa `kdialog` fallback), `wl-clipboard`
+veya `xclip`/`xsel` (gelen URL/metni panoya kopyalamak için), `notify-osd` veya herhangi
+bir libnotify implementasyonu (bildirimler + aksiyon butonları).
+
+#### .deb paketi
+
+```bash
+make deb                    # cargo-deb ile target/debian/hekadrop_<ver>_amd64.deb üretir
+sudo apt install ./target/debian/hekadrop_*.deb
+```
+
+`.deb` paketleri ileride [GitHub Releases](https://github.com/YatogamiRaito/HekaDrop/releases)
+sayfasında da yayınlanacak.
+
+#### UFW / firewall notu
+
+```bash
+sudo ufw allow 47893/tcp    # HekaDrop TCP sabit portu
+sudo ufw allow 5353/udp     # mDNS / Bonjour
+```
+
+TCP port varsayılan olarak **47893**'tür; farklı bir port kullanmak için `HEKADROP_PORT`
+ortam değişkenini ayarlayın.
+
+#### Otomatik başlatma
+
+Tepsi (tray) menüsünden **"Başlangıçta aç"**'ı işaretleyin — `~/.config/systemd/user/`
+altına bir user unit yükler ve `systemctl --user enable` ile oturum açılışında başlatır.
+
+#### Pencere kapatma davranışı
+
+Pencerenin `X` düğmesine basınca uygulama arkaplanda çalışmaya devam eder; tamamen
+kapatmak için tepsi menüsünden **"Çıkış"**'ı kullanın. GNOME'da tepsi ikonu varsayılan
+olarak görünmeyebilir — [AppIndicator Support](https://extensions.gnome.org/extension/615/appindicator-support/)
+GNOME uzantısını yükleyin.
+
 ## Kullanım
 
 1. **HekaDrop**'u başlatın → menü çubuğunda `⇄` simgesi belirir.
@@ -118,6 +173,7 @@ yazılacaktır.
 src/
 ├── main.rs         ─ platform UI orkestrasyonu (tao event loop + wry WebView + tray-icon)
 ├── ui.rs           ─ platform UI helper (dialog, notify, clipboard)
+├── platform.rs    ─ platform abstraction (paths, open, clipboard, device name)
 │
 ├── server.rs       ─ TCP accept + rate limiter
 ├── connection.rs   ─ receiver state machine
@@ -164,7 +220,7 @@ src/
 | Platform | Alıcı | Gönderici | UI  | Notlar |
 |----------|:-----:|:---------:|:---:|--------|
 | macOS    | ✅    | ✅        | ✅  | Universal2 (Intel + Apple Silicon), DMG + Homebrew cask |
-| Linux    | 🚧    | 🚧        | ⏳  | Çekirdek protokol hazır; tepsi/UI katmanı planlanıyor (zbus + webkit2gtk) |
+| Linux    | ✅    | ✅        | ✅  | GTK3 + WebKit2GTK + AppIndicator tray; zenity/kdialog dialog; systemd user service; Ubuntu/Debian .deb |
 | Windows  | ⏳    | ⏳        | ⏳  | Yol haritasında (tray-icon + webview2, MSIX paketleme) |
 | Android / iOS | —  | —      | —   | Karşı taraf cihaz olarak kullanılır; native istemci geliştirilmeyecek |
 
@@ -173,7 +229,7 @@ Lejant: ✅ tamam · 🚧 geliştirme aşamasında · ⏳ planlı
 ## Yol haritası
 
 - **0.2.0** — clipboard senkronizasyonu, İngilizce arayüz (i18n altyapısı), klasör drag-drop, SHA-256 integrity UI göstergesi
-- **0.3.0** — Linux UI (zbus tray + webkit2gtk penceresi, systemd user service)
+- **0.3.0** — Linux UI (GTK3 + WebKit2GTK + AppIndicator tray, systemd user service) — ✅ **tamamlandı (2026 Nisan)**
 - **0.4.0** — Windows UI (tray-icon + webview2, MSIX paket, winget manifest)
 - **0.5.0+** — partial transfer resume, keychain entegrasyonu, otomatik klasör indirme kuralları
 
@@ -216,7 +272,8 @@ Protokolün tersine mühendislik çalışmasına ve referans implementasyonlara 
 protocol. It speaks UKEY2 + AES-256-CBC + HMAC-SHA256, performs mDNS discovery on
 `_FC9F5ED42C8A._tcp.local.`, and acts as both receiver and sender — a drop-in
 local-network alternative to Google's closed-source QuickDrop. The macOS build ships
-as a Universal2 `.app` with a menu bar UI; Linux and Windows ports are on the roadmap.
+as a Universal2 `.app` with a menu bar UI; the Linux build ships as `.deb` and a
+system-wide install with a GTK3 + WebKit2GTK + AppIndicator tray UI; the Windows port is on the roadmap.
 Security features include ephemeral P-256 ECDH, 4-digit PIN MITM protection, SHA-256
 file integrity, replay-safe sequence counters, a rate limiter (trusted devices bypass
 it), and disciplined log rotation (daily + max 3 files + 10 MB cap).
