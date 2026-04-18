@@ -1,0 +1,51 @@
+name: Bench
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Node 20 kalktıktan sonra dahi çalışması için Node 24'e zorla.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  bench:
+    name: Benchmarks (macOS)
+    runs-on: macos-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        run: brew install protobuf
+
+      # TODO: add [[bench]] targets to Cargo.toml (criterion-based) — şimdilik noop.
+      - name: Run benchmarks
+        run: |
+          if cargo bench --no-run 2>&1 | grep -q "no bench target"; then
+            echo "No bench targets defined — skipping."
+            mkdir -p target/criterion
+            echo "No benchmarks yet. Add [[bench]] target in Cargo.toml and uncomment criterion dev-dependency." > target/criterion/README.txt
+          else
+            cargo bench --all-features | tee bench-output.txt
+          fi
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: bench-results
+          path: |
+            target/criterion/
+            bench-output.txt
+          if-no-files-found: ignore
+          retention-days: 30

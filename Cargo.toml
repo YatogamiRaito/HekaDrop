@@ -3,6 +3,13 @@ name = "hekadrop"
 version = "0.1.0"
 edition = "2021"
 description = "Google Quick Share (Nearby Share) protokolünün Rust implementasyonu — cross-platform alıcı/gönderici"
+authors = ["destek@sourvice.com"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/YatogamiRaito/HekaDrop"
+homepage = "https://github.com/YatogamiRaito/HekaDrop"
+readme = "README.md"
+keywords = ["quick-share", "nearby-share", "p2p", "file-transfer", "macos"]
+categories = ["network-programming", "command-line-utilities"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time", "fs"] }
@@ -36,6 +43,19 @@ elliptic-curve = { version = "0.13", features = ["sec1"] }
 
 [build-dependencies]
 prost-build = "0.13"
+
+[dev-dependencies]
+# Bütün kripto/proto crate'leri ([dependencies] altında olan p256, aes, cbc, hmac, sha2,
+# hkdf, prost, hex, rand, tokio, base64, serde, serde_json, thiserror, parking_lot,
+# elliptic-curve) zaten build grafine dahil — integration test'ler o sürümleri doğrudan
+# kullanabilir, dev-dependency olarak tekrar eklemeye gerek yok.
+#
+# Aşağıdaki test-özgü crate'ler mevcut test'ler tarafından doğrudan import edilmiyor, ama
+# ileride eklenecek senaryolar için önceden bildirilmiş dependency olarak tutuluyor. Bağlı
+# build ağırlığı önemsiz (<1 MB) ve `cargo test` cache'ine yaslanıyor.
+pretty_assertions = "1.4"
+tokio-test = "0.4"
+# criterion = "0.5"  # enable when benchmarks are added
 
 [profile.release]
 lto = "thin"
