@@ -33,6 +33,17 @@ chmod +x "${MACOS}/hekadrop"
 echo "==> Info.plist kopyalanıyor"
 cp resources/Info.plist "${CONTENTS}/Info.plist"
 
+# Cargo.toml'daki sürümü Info.plist'e enjekte et — resources/Info.plist
+# içindeki sabit değer stale olsa bile bundle doğru sürümü gösterir.
+# `^version = "X"` satırını tırnak içindeki değeri yakalayarak ayıkla.
+# Trailing yorum (`# comment`) ya da ek boşluk stringe sızmaz.
+CARGO_VERSION=$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' Cargo.toml | head -n 1)
+if [ -n "$CARGO_VERSION" ]; then
+    echo "==> Info.plist sürümü güncelleniyor: ${CARGO_VERSION}"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${CARGO_VERSION}" "${CONTENTS}/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${CARGO_VERSION}" "${CONTENTS}/Info.plist"
+fi
+
 if [ -f "resources/AppIcon.icns" ]; then
     echo "==> uygulama ikonu ekleniyor (AppIcon.icns)"
     cp resources/AppIcon.icns "${RESOURCES}/AppIcon.icns"
