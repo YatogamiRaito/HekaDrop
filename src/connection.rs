@@ -157,7 +157,10 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                 &mut pending_names,
                 &mut pending_texts,
             );
-            ui::notify("HekaDrop", "Aktarım iptal edildi");
+            ui::notify(
+                crate::i18n::t("notify.app_name"),
+                crate::i18n::t("notify.cancel_requested"),
+            );
             break;
         }
 
@@ -296,12 +299,16 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 path.display(),
                                 total_size
                             );
+                            let fname = path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("file")
+                                .to_string();
                             ui::notify_file_received(
-                                "HekaDrop",
-                                &format!(
-                                    "İndirildi: {} ({})",
-                                    path.file_name().and_then(|n| n.to_str()).unwrap_or("dosya"),
-                                    human_size(total_size)
+                                crate::i18n::t("notify.app_name"),
+                                &crate::i18n::tf(
+                                    "notify.received",
+                                    &[&fname, &human_size(total_size)],
                                 ),
                                 path.clone(),
                             );
@@ -544,7 +551,10 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
         TextType::Url => {
             crate::platform::open_url(&text);
             info!("[{}] URL açıldı: {}", peer, text);
-            ui::notify("HekaDrop", &format!("URL açıldı: {}", preview(&text, 80)));
+            ui::notify(
+                crate::i18n::t("notify.app_name"),
+                &crate::i18n::tf("notify.url_opened", &[&preview(&text, 80)]),
+            );
         }
         _ => {
             crate::platform::copy_to_clipboard(&text);
@@ -554,8 +564,8 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
                 text.len()
             );
             ui::notify(
-                "HekaDrop",
-                &format!("Metin panoya kopyalandı: {}", preview(&text, 80)),
+                crate::i18n::t("notify.app_name"),
+                &crate::i18n::tf("notify.text_clipboard", &[&preview(&text, 80)]),
             );
         }
     }
