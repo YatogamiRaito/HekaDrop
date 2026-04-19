@@ -58,21 +58,33 @@ doğrudan — bulut yok, hesap yok, tracker yok.
 
 ## Kurulum
 
-### Homebrew (önerilen — yakında)
+### Homebrew (macOS — yakında)
 
 ```bash
 brew install --cask yatogamiraito/tap/hekadrop
 ```
 
 > Tap (`yatogamiraito/homebrew-tap`) henüz yayında değil — **coming soon**.
-> O zamana kadar DMG veya kaynaktan kurulum yolunu kullanın.
+> `Casks/hekadrop.rb` dosyası repoda hazır (v0.4.0 zip + SHA ile); tap repo'ya kopyalandığında doğrudan çalışır.
 
-### DMG (GitHub Releases)
+### Releases (zip / deb / exe)
 
-1. [Releases](https://github.com/YatogamiRaito/HekaDrop/releases) sayfasından en güncel
-   `HekaDrop-<version>.dmg` dosyasını indirin.
-2. DMG'yi açın ve **HekaDrop.app**'i **Applications** klasörüne sürükleyin.
-3. İlk açılışta macOS Gatekeeper uyarısı gelirse: **Ayarlar → Gizlilik & Güvenlik → Yine de Aç**.
+| Platform | Asset | Kurulum |
+|---|---|---|
+| macOS | `HekaDrop-x.y.z-macos.zip` | Zip'i aç, `HekaDrop.app`'i `Applications`'a taşı. İlk açılışta Gatekeeper uyarısı için: **Ayarlar → Gizlilik & Güvenlik → Yine de Aç** |
+| Ubuntu/Debian | `HekaDrop-x.y.z.deb` | `sudo apt install ./HekaDrop-x.y.z.deb` |
+| Windows | `HekaDrop-x.y.z.exe` | İndir → çalıştır (unsigned; Defender "Run anyway") |
+
+[Releases sayfası](https://github.com/YatogamiRaito/HekaDrop/releases/latest) — çekilmiş tag için artifact + checksum.
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add yatogamiraito https://github.com/YatogamiRaito/HekaDrop
+scoop install hekadrop
+```
+
+> Manifest repoda (`scoop/hekadrop.json`); bucket aktifleşince tek komutla kurulur.
 
 ### Kaynaktan derleme
 

@@ -1,10 +1,10 @@
 cask "hekadrop" do
-  version "0.1.0"
-  sha256 :no_check # İlk release sonrası gerçek hash ile değiştirilecek
+  version "0.4.0"
+  sha256 "f2f2122e2e82b9af465fe3682c06aae45c0039cae789b2a239202aae3516b1ad"
 
-  url "https://github.com/YatogamiRaito/HekaDrop/releases/download/v#{version}/HekaDrop-#{version}.dmg"
+  url "https://github.com/YatogamiRaito/HekaDrop/releases/download/v#{version}/HekaDrop-#{version}-macos.zip"
   name "HekaDrop"
-  desc "Google Quick Share (Nearby Share) client for macOS — Rust"
+  desc "Google Quick Share (Nearby Share) client — Rust, cross-platform"
   homepage "https://github.com/YatogamiRaito/HekaDrop"
 
   auto_updates false
