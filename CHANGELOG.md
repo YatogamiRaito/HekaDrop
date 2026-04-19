@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (accessibility)
+- Webview CSS tokenized via CSS custom properties (`--bg-*`, `--fg-*`,
+  `--accent`, `--danger`, `--border*`). Dark palette unchanged by
+  default; `prefers-color-scheme: light` now renders a WCAG 2.1 AA
+  conformant light theme. `forced-colors: active` uses system colors.
+  Explicit override via `<html data-theme="light|dark">` for future
+  Settings-driven toggle.
+
 ### Changed (release infrastructure)
 - Release workflow now publishes Windows `.exe` + Linux `.deb` in
   addition to macOS `.dmg` (+ source tarball). Scoop install
