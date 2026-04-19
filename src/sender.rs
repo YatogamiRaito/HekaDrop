@@ -127,8 +127,8 @@ pub async fn send(req: SendRequest) -> Result<()> {
     let keys = ukey2::client_handshake(&mut socket).await?;
     // SECURITY: PIN clear-text log'a yazılmaz (bkz. connection.rs).
     info!(
-        "[sender] ✓ UKEY2 tamam — PIN fingerprint: {}",
-        crate::crypto::pin_fingerprint(&keys.pin_code)
+        "[sender] ✓ UKEY2 tamam — session fingerprint: {}",
+        crate::crypto::session_fingerprint(&keys.auth_key)
     );
 
     // 4) Plain ConnectionResponse exchange
@@ -236,12 +236,12 @@ pub async fn send(req: SendRequest) -> Result<()> {
                             connection::send_disconnection(&mut socket, &mut ctx)
                                 .await
                                 .ok();
-                            // PIN clear-text vermeyelim — fingerprint kullanıcıya
-                            // sadece "hangi handshake" olduğunu gösterir.
+                            // PIN clear-text vermeyelim — auth_key fingerprint
+                            // handshake'i ifşa etmeden log ilişkilendirmeye yeter.
                             bail!(
-                                "Peer aktarımı reddetti (status={}). PIN fingerprint: {} — eşleşmedi mi?",
+                                "Peer aktarımı reddetti (status={}). Session fingerprint: {} — PIN eşleşmedi mi?",
                                 status,
-                                crate::crypto::pin_fingerprint(&keys.pin_code)
+                                crate::crypto::session_fingerprint(&keys.auth_key)
                             );
                         }
                         // 11) Tüm dosyaları sırayla gönder

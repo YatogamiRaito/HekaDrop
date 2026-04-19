@@ -47,15 +47,17 @@ pub fn pin_code_from_auth_key(key: &[u8]) -> String {
     format!("{:04}", hash.abs())
 }
 
-/// PIN'in log-güvenli özeti: SHA-256 hash'inin ilk 6 hex karakteri.
+/// Oturumun log-güvenli özeti: `auth_key`'in SHA-256 hash'inin ilk 6 hex
+/// karakteri.
 ///
-/// **Neden:** Clear-text PIN log'da 3 gün saklanıyordu (`setup_logging`
-/// rolling appender); disk forensics + handshake audit için ciddi leak.
-/// Fingerprint client + sender log'larını handshake-boyunca ilişkilendirmek
-/// için yeterli ama PIN'i ifşa etmez (4 basamaklı PIN uzayı 10k, 6-hex
-/// fingerprint 16.7M).
-pub fn pin_fingerprint(pin: &str) -> String {
-    let digest = sha256(pin.as_bytes());
+/// **Neden:** PIN sadece 4 basamak (10k olasılık); SHA-256 özeti bile
+/// rainbow-table / brute-force ile saniyeler içinde geri döndürülür.
+/// Log audit için bunun yerine UKEY2 handshake'ten türeyen `auth_key`
+/// (256-bit entropi) kullanıyoruz — brute-force mümkün değil, fingerprint
+/// sender + receiver log'larını handshake boyunca ilişkilendirmeye
+/// yeter ama zayıf PIN uzayını hedef almaz.
+pub fn session_fingerprint(auth_key: &[u8]) -> String {
+    let digest = sha256(auth_key);
     hex::encode(&digest[..3]) // 6 hex karakter
 }
 
