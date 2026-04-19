@@ -205,6 +205,7 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "pick.download_folder" => "İndirme klasörünü seçin",
         "common.send" => "Gönder",
         "common.cancel" => "İptal",
+        "common.device" => "Cihaz",
 
         // Time
         "time.seconds_ago" => "{0} sn önce",
@@ -289,6 +290,7 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "pick.download_folder" => "Select download folder",
         "common.send" => "Send",
         "common.cancel" => "Cancel",
+        "common.device" => "Device",
 
         // Time
         "time.seconds_ago" => "{0}s ago",
@@ -437,6 +439,7 @@ mod tests {
             "pick.download_folder",
             "common.send",
             "common.cancel",
+            "common.device",
             "time.seconds_ago",
             "time.minutes_ago",
             "time.hours_ago",

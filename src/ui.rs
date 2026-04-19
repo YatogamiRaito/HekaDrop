@@ -94,12 +94,11 @@ fn prompt_accept_blocking(
         Ok(o) => {
             let s = String::from_utf8_lossy(&o.stdout);
             // osascript çıktısı: "button returned:<LABEL>, ..." formatında.
-            // Buton metinleri dile göre değiştiği için i18n'den çekili
-            // label'larla karşılaştırıyoruz. Trust butonunu önce kontrol et
-            // (accept içinde "Kabul" gibi bir substring kesişimi olabilir).
-            if s.contains(btn_trust) {
+            // "button returned:" prefix'ini arayarak substring collision
+            // riskini kaldırıyoruz ("Kabul" ile "Kabul + güven" gibi).
+            if s.contains(&format!("button returned:{}", btn_trust)) {
                 AcceptResult::AcceptAndTrust
-            } else if s.contains(btn_accept) {
+            } else if s.contains(&format!("button returned:{}", btn_accept)) {
                 AcceptResult::Accept
             } else {
                 AcceptResult::Reject
@@ -136,9 +135,11 @@ fn prompt_accept_blocking(
     // zaten lokalize geliyor; biz mesajın gövdesinde buton anlamlarını
     // i18n üzerinden yazdırıyoruz.
     let body_main = crate::i18n::tf("accept.body", &[device, pin, &files_str]);
+    // Windows sistem Yes/No/Cancel butonları dile göre lokalize olarak geliyor;
+    // kullanıcıya sadece hangi butonun hangi aksiyona karşılık geldiğini
+    // yazıyoruz. "Kabul + güven" zaten accept+trust semantik bütününü taşıyor.
     let hint = format!(
-        "\n\nYes/Evet  = {} + {}\nNo/Hayır = {}\nCancel/İptal = {}",
-        crate::i18n::t("accept.accept"),
+        "\n\nYes/Evet  = {}\nNo/Hayır = {}\nCancel/İptal = {}",
         crate::i18n::t("accept.accept_trust"),
         crate::i18n::t("accept.accept"),
         crate::i18n::t("accept.reject"),
@@ -811,7 +812,7 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
             format!("--title={}", crate::i18n::t("app.title")),
             format!("--text={}", crate::i18n::t("send.device_prompt")),
             "--column=".into(),
-            "--column=".into(),
+            format!("--column={}", crate::i18n::t("common.device")),
             "--width=480".into(),
             "--height=360".into(),
         ];
