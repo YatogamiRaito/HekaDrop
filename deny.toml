@@ -1,0 +1,84 @@
+[graph]
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-pc-windows-msvc" },
+]
+
+[advisories]
+version = 2
+yanked = "warn"
+# Transitive advisory'ler — hiçbiri HekaDrop kodunda doğrudan kullanılmıyor.
+# Tümü Linux GUI stack'i (`tao` → `wry` → `gtk3-rs` ailesi) üzerinden
+# dolaylı gelir. Upstream maintainers gtk4-rs'e geçişi planlıyor; biz
+# `tao`/`wry`'den kurtulamayız çünkü tek cross-platform webview çözümü.
+# Her girişin yanına neden güvenli olduğunun özeti + upstream issue
+# referansı eklendi; upstream fix çıkınca ilgili satır silinir.
+ignore = [
+    # --- gtk3-rs ailesi: tümü "archived, use gtk4-rs" (2024-03-04) ---
+    # Biz gtk3 API'sini doğrudan çağırmıyoruz; wry webview'i Linux'ta
+    # GTK3'ü gömer. gtk4-rs'e geçiş wry'nin 0.50+ sürümünde planlı.
+    "RUSTSEC-2024-0411", # gdkwayland-sys unmaintained
+    "RUSTSEC-2024-0412", # gdk unmaintained
+    "RUSTSEC-2024-0413", # atk unmaintained
+    "RUSTSEC-2024-0414", # gdkx11-sys unmaintained
+    "RUSTSEC-2024-0415", # gtk unmaintained
+    "RUSTSEC-2024-0416", # atk-sys unmaintained
+    "RUSTSEC-2024-0417", # gdkx11 unmaintained
+    "RUSTSEC-2024-0418", # gdk-sys unmaintained
+    "RUSTSEC-2024-0419", # gtk3-macros unmaintained
+    "RUSTSEC-2024-0420", # gtk-sys unmaintained
+
+    # --- tao/wry dolaylı bağımlılıkları ---
+    # `instant 0.1.13` → `tao` → `web-time` kullanımı planlı (tao 0.32+).
+    "RUSTSEC-2024-0384", # instant unmaintained
+    # `proc-macro-error 1.0.4` → `glib-macros` build-dep; macro crate,
+    # compile-time only, runtime yüzeyi yok. gtk4-rs geçişinde düşer.
+    "RUSTSEC-2024-0370", # proc-macro-error unmaintained
+    # `fxhash 0.2.1` → `selectors` → `kuchikiki` → `wry` HTML parser.
+    # rustc-hash'e geçiş upstream'de tartışılıyor.
+    "RUSTSEC-2025-0057", # fxhash unmaintained
+
+    # --- unsound ama fonksiyonel etkisiz ---
+    # `glib 0.18.5` VariantStrIter — biz bu iteratörü kullanmıyoruz,
+    # tao/wry da kullanmıyor (grep edildi). gtk4-rs'te düzeltildi.
+    "RUSTSEC-2024-0429", # glib VariantStrIter unsound
+    # `rand 0.7.3` → `phf_generator` (build-time, compile-only kod
+    # üretir). Runtime'da rand 0.9 kullanıyoruz; bu sadece macro
+    # expansion sırasında deterministic hash için.
+    "RUSTSEC-2026-0097", # rand 0.7 unsound-with-custom-logger
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "OpenSSL",
+    "0BSD",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = []
+skip = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
