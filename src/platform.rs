@@ -432,12 +432,8 @@ mod win {
             let mut size: u32 = 256;
             let mut buf = vec![0u16; size as usize];
             // windows-rs 0.60: PWSTR doğrudan geçilir (Option değil).
-            if GetComputerNameExW(
-                ComputerNameDnsHostname,
-                PWSTR(buf.as_mut_ptr()),
-                &mut size,
-            )
-            .is_err()
+            if GetComputerNameExW(ComputerNameDnsHostname, PWSTR(buf.as_mut_ptr()), &mut size)
+                .is_err()
             {
                 return None;
             }
