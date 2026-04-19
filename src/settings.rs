@@ -236,14 +236,22 @@ fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 
 #[cfg(windows)]
 fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
-    use windows::core::HSTRING;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
+    // PCWSTR dizileri null-terminated olmalı — OsStr::encode_wide null
+    // katmaz, bu yüzden manuel ekliyoruz (repo içi başka Win32 çağrılarıyla
+    // aynı pattern, bkz. src/platform.rs, src/main.rs).
+    let mut src_w: Vec<u16> = tmp.as_os_str().encode_wide().collect();
+    src_w.push(0);
+    let mut dst_w: Vec<u16> = dst.as_os_str().encode_wide().collect();
+    dst_w.push(0);
     unsafe {
         MoveFileExW(
-            &HSTRING::from(tmp.as_os_str()),
-            Some(&HSTRING::from(dst.as_os_str())),
+            PCWSTR(src_w.as_ptr()),
+            PCWSTR(dst_w.as_ptr()),
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
         )
         .map_err(std::io::Error::other)
