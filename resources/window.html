@@ -2,9 +2,209 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
+<meta name="color-scheme" content="dark light">
 <title>HekaDrop</title>
 <style>
-  :root { color-scheme: dark; }
+  /* ------------------------------------------------------------------
+     Design tokens (dark = default palette, matches post-WCAG PR #27).
+     Every color below is referenced via var(--…); overrides for light
+     mode (prefers-color-scheme / data-theme) and forced-colors live in
+     the media queries further down.
+
+     Contrast (dark, verified WCAG 2.1):
+       fg-primary   #ffffff on bg-primary   #1c1c1e = 17.0:1  (AAA)
+       fg-primary   #ffffff on bg-secondary #2c2c2e = 13.9:1  (AAA)
+       fg-secondary #b0b0b5 on bg-primary   #1c1c1e =  7.9:1  (AAA)
+       fg-secondary #b0b0b5 on bg-secondary #2c2c2e =  6.4:1  (AA)
+       fg-tertiary  #8e8e93 on bg-primary   #1c1c1e =  5.2:1  (AA)
+       accent       #409cff on bg-primary   #1c1c1e =  6.0:1  (AA)
+       accent       #409cff on bg-secondary #2c2c2e =  4.9:1  (AA)
+       danger       #ff6b61 on bg-primary   #1c1c1e =  6.1:1  (AA)
+       danger       #ff6b61 on bg-secondary #2c2c2e =  5.0:1  (AA)
+       success      #30d158 on bg-secondary #2c2c2e =  6.9:1  (AA)
+       accent-primary-fg #ffffff on #0a84ff        =  3.7:1  (UI/LG)
+         note: primary-button label is 13px/500 — pre-existing; would
+         need a darker button bg to clear 4.5:1 AA for normal text.
+  ------------------------------------------------------------------ */
+  :root {
+    color-scheme: dark light;
+
+    /* Surfaces */
+    --bg-primary:      #1c1c1e;
+    --bg-secondary:    #2c2c2e;
+    --bg-tertiary:     #3a3a3c;   /* hover on button / hitem */
+    --bg-quaternary:   #48484a;   /* :active button, switch off track */
+
+    /* Text */
+    --fg-primary:      #ffffff;
+    --fg-strong:       #e0e0e0;   /* drop-zone:hover text (slightly dim) */
+    --fg-bright:       #d0d0d0;   /* progress-label (between fg-primary & fg-secondary) */
+    --fg-secondary:    #b0b0b5;   /* sub / labels / empty states */
+    --fg-tertiary:     #8e8e93;   /* footer only */
+    --fg-on-accent:    #ffffff;   /* label on primary button */
+
+    /* Accent (brand blue) */
+    --accent:                #409cff;  /* tab active, focus ring, drop-zone active */
+    --accent-strong:         #6fb6ff;  /* progress-fill gradient end */
+    --accent-weak:           rgba(64, 156, 255, 0.10);  /* drop-zone active bg */
+    --accent-primary-bg:     #0a84ff;  /* primary button filled background */
+    --accent-primary-hover:  #006fcf;  /* primary button hover */
+
+    /* Semantic */
+    --danger:          #ff6b61;   /* danger button text */
+    --success:         #30d158;   /* toggle on, save-note, switch checkmark */
+    --success-contrast:#004d1a;   /* checkmark on --success track (switch on) */
+
+    /* Lines / borders (rgba = composited over bg) */
+    --border-subtle:   rgba(255, 255, 255, 0.04);  /* diag-row */
+    --border-faint:    rgba(255, 255, 255, 0.05);  /* button hairline */
+    --border-hairline: rgba(255, 255, 255, 0.06);  /* tabs bottom, hr */
+    --border-input:    rgba(255, 255, 255, 0.08);  /* input outline, progress-bar track */
+    --border:          rgba(255, 255, 255, 0.12);  /* neutral border (not currently used by rules) */
+    --border-strong:   rgba(255, 255, 255, 0.35);  /* drop-zone dashed */
+    --border-stronger: rgba(255, 255, 255, 0.50);  /* drop-zone:hover dashed */
+
+    /* Focus ring: same as --accent, given an explicit alias so forced-colors
+       can override without touching the accent brand value elsewhere. */
+    --focus-ring:      var(--accent);
+  }
+
+  /* ------------------------------------------------------------------
+     Light palette. Two triggers (user OS preference AND explicit
+     override via <html data-theme="light">), sharing one token set.
+     data-theme="dark" is also honored to force dark regardless of OS
+     (plumbing for a future Settings toggle — TODO below).
+
+     Contrast (light, verified):
+       fg-primary   #1c1c1e on bg-primary   #ffffff = 17.0:1  (AAA)
+       fg-primary   #1c1c1e on bg-secondary #f2f2f7 = 15.2:1  (AAA)
+       fg-secondary #3a3a3c on bg-primary   #ffffff = 11.4:1  (AAA)
+       fg-secondary #3a3a3c on bg-secondary #f2f2f7 = 10.2:1  (AAA)
+       fg-tertiary  #6a6a6f on bg-primary   #ffffff =  5.4:1  (AA)
+       fg-tertiary  #6a6a6f on bg-secondary #f2f2f7 =  4.8:1  (AA)
+       accent       #0066cc on bg-primary   #ffffff =  5.6:1  (AA)
+       accent       #0066cc on bg-secondary #f2f2f7 =  5.0:1  (AA)
+       danger       #d70015 on bg-primary   #ffffff =  5.4:1  (AA)
+       danger       #d70015 on bg-secondary #f2f2f7 =  4.8:1  (AA)
+       success      #107d2c on bg-secondary #f2f2f7 =  4.7:1  (AA)
+         [first-choice #1c863a = 4.16:1 FAIL — bumped to #107d2c]
+       fg-on-accent #ffffff on accent-primary-bg #0066cc = 5.6:1 (AA)
+         [first-choice #0a84ff = 3.65:1 text FAIL — remapped to same
+          darker blue as --accent so the primary button clears 4.5:1]
+       drop-zone dashed: rgba(0,0,0,0.50) composited over #fff ≈ #808080
+         on #fff = 3.95:1 (UI component ≥3:1 ✓)
+         [first-choice 0.35 = 2.43:1 FAIL — bumped to 0.50]
+  ------------------------------------------------------------------ */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+
+      --bg-primary:      #ffffff;
+      --bg-secondary:    #f2f2f7;
+      --bg-tertiary:     #e5e5ea;
+      --bg-quaternary:   #d1d1d6;
+
+      --fg-primary:      #1c1c1e;
+      --fg-strong:       #1c1c1e;
+      --fg-bright:       #1c1c1e;
+      --fg-secondary:    #3a3a3c;
+      --fg-tertiary:     #6a6a6f;
+      --fg-on-accent:    #ffffff;
+
+      --accent:                #0066cc;
+      --accent-strong:         #3b8cf2;
+      --accent-weak:           rgba(0, 102, 204, 0.10);
+      --accent-primary-bg:     #0066cc;  /* match --accent so label hits 4.5:1 */
+      --accent-primary-hover:  #004a99;
+
+      --danger:          #d70015;
+      --success:         #107d2c;
+      --success-contrast:#ffffff;        /* white checkmark on green track */
+
+      --border-subtle:   rgba(0, 0, 0, 0.06);
+      --border-faint:    rgba(0, 0, 0, 0.08);
+      --border-hairline: rgba(0, 0, 0, 0.10);
+      --border-input:    rgba(0, 0, 0, 0.15);
+      --border:          rgba(0, 0, 0, 0.18);
+      --border-strong:   rgba(0, 0, 0, 0.50);
+      --border-stronger: rgba(0, 0, 0, 0.65);
+    }
+  }
+
+  /* Explicit override — wins over OS preference. TODO(theme): the
+     Settings UI can flip this attribute (Rust push_theme_to_ui() in a
+     future PR, symmetric to push_i18n_to_ui). Not wired yet. */
+  :root[data-theme="light"] {
+    color-scheme: light;
+
+    --bg-primary:      #ffffff;
+    --bg-secondary:    #f2f2f7;
+    --bg-tertiary:     #e5e5ea;
+    --bg-quaternary:   #d1d1d6;
+
+    --fg-primary:      #1c1c1e;
+    --fg-strong:       #1c1c1e;
+    --fg-bright:       #1c1c1e;
+    --fg-secondary:    #3a3a3c;
+    --fg-tertiary:     #6a6a6f;
+    --fg-on-accent:    #ffffff;
+
+    --accent:                #0066cc;
+    --accent-strong:         #3b8cf2;
+    --accent-weak:           rgba(0, 102, 204, 0.10);
+    --accent-primary-bg:     #0066cc;
+    --accent-primary-hover:  #004a99;
+
+    --danger:          #d70015;
+    --success:         #107d2c;
+    --success-contrast:#ffffff;
+
+    --border-subtle:   rgba(0, 0, 0, 0.06);
+    --border-faint:    rgba(0, 0, 0, 0.08);
+    --border-hairline: rgba(0, 0, 0, 0.10);
+    --border-input:    rgba(0, 0, 0, 0.15);
+    --border:          rgba(0, 0, 0, 0.18);
+    --border-strong:   rgba(0, 0, 0, 0.50);
+    --border-stronger: rgba(0, 0, 0, 0.65);
+  }
+
+  /* Force dark even on a light OS (explicit override). Tokens equal
+     :root defaults; redeclared so data-theme="dark" wins over the
+     prefers-color-scheme: light media query. */
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --bg-primary:      #1c1c1e;
+    --bg-secondary:    #2c2c2e;
+    --bg-tertiary:     #3a3a3c;
+    --bg-quaternary:   #48484a;
+
+    --fg-primary:      #ffffff;
+    --fg-strong:       #e0e0e0;
+    --fg-bright:       #d0d0d0;
+    --fg-secondary:    #b0b0b5;
+    --fg-tertiary:     #8e8e93;
+    --fg-on-accent:    #ffffff;
+
+    --accent:                #409cff;
+    --accent-strong:         #6fb6ff;
+    --accent-weak:           rgba(64, 156, 255, 0.10);
+    --accent-primary-bg:     #0a84ff;
+    --accent-primary-hover:  #006fcf;
+
+    --danger:          #ff6b61;
+    --success:         #30d158;
+    --success-contrast:#004d1a;
+
+    --border-subtle:   rgba(255, 255, 255, 0.04);
+    --border-faint:    rgba(255, 255, 255, 0.05);
+    --border-hairline: rgba(255, 255, 255, 0.06);
+    --border-input:    rgba(255, 255, 255, 0.08);
+    --border:          rgba(255, 255, 255, 0.12);
+    --border-strong:   rgba(255, 255, 255, 0.35);
+    --border-stronger: rgba(255, 255, 255, 0.50);
+  }
+
   * { box-sizing: border-box; }
 
   /* Screen-reader-only utility (visually hidden but accessible) */
@@ -20,8 +220,8 @@
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
     margin: 0;
     padding: 0;
-    background: #1c1c1e;
-    color: #fff;
+    background: var(--bg-primary);
+    color: var(--fg-primary);
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -36,10 +236,10 @@
     margin: 0 0 2px 0;
     letter-spacing: -0.01em;
   }
-  /* Secondary text: #b0b0b5 on #1c1c1e ≈ 8.4:1 (was #8e8e93 ≈ 3.82:1 FAIL) */
+  /* Secondary text — token --fg-secondary ≥4.5:1 on every --bg-* surface. */
   .sub {
     font-size: 11.5px;
-    color: #b0b0b5;
+    color: var(--fg-secondary);
   }
 
   /* Tab bar */
@@ -47,14 +247,14 @@
     display: flex;
     gap: 4px;
     padding: 0 10px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid var(--border-hairline);
     margin-bottom: 12px;
   }
   /* Reset native button styling for tab buttons */
   .tab {
     padding: 6px 12px;
     font-size: 12px;
-    color: #b0b0b5; /* was #8e8e93 — now ≈8.4:1 on #1c1c1e */
+    color: var(--fg-secondary);
     cursor: pointer;
     border: 0;
     border-bottom: 2px solid transparent;
@@ -62,12 +262,12 @@
     font-family: inherit;
     transition: all 0.15s;
   }
-  .tab:hover { color: #fff; }
-  /* Active tab: #409cff ≈ 5.8:1 on #1c1c1e (was #0a84ff ≈ 4.26:1 FAIL) */
+  .tab:hover { color: var(--fg-primary); }
+  /* Active tab uses --accent; contrast verified in :root token block. */
   .tab.active,
   .tab[aria-selected="true"] {
-    color: #409cff;
-    border-bottom-color: #409cff;
+    color: var(--accent);
+    border-bottom-color: var(--accent);
   }
 
   .panel {
@@ -83,31 +283,31 @@
   .drop-zone {
     display: block;
     width: 100%;
-    border: 2px dashed rgba(255,255,255,0.35); /* was 0.12 (~1.5:1); now ≈3.2:1 */
+    border: 2px dashed var(--border-strong);
     border-radius: 12px;
     padding: 22px 16px;
     text-align: center;
     transition: all 0.15s;
     font-size: 12.5px;
-    color: #b0b0b5; /* was #8e8e93 */
+    color: var(--fg-secondary);
     background: transparent;
     font-family: inherit;
     cursor: pointer;
   }
-  .drop-zone:hover { border-color: rgba(255,255,255,0.5); color: #e0e0e0; }
-  .drop-zone.active { border-color: #409cff; background: rgba(64, 156, 255, 0.10); color: #409cff; }
+  .drop-zone:hover { border-color: var(--border-stronger); color: var(--fg-strong); }
+  .drop-zone.active { border-color: var(--accent); background: var(--accent-weak); color: var(--accent); }
   .drop-zone .big { font-size: 22px; display: block; margin-bottom: 4px; }
 
   .progress {
     display: none;
     padding: 10px 12px;
-    background: #2c2c2e;
+    background: var(--bg-secondary);
     border-radius: 10px;
   }
   .progress.active { display: block; }
   .progress-label {
     font-size: 12px;
-    color: #d0d0d0;
+    color: var(--fg-bright);
     margin-bottom: 6px;
     white-space: nowrap;
     overflow: hidden;
@@ -115,13 +315,13 @@
   }
   .progress-bar {
     height: 5px;
-    background: rgba(255,255,255,0.08);
+    background: var(--border-input);
     border-radius: 3px;
     overflow: hidden;
   }
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #409cff, #6fb6ff);
+    background: linear-gradient(90deg, var(--accent), var(--accent-strong));
     width: 0%;
     transition: width 0.25s ease;
   }
@@ -132,31 +332,31 @@
     gap: 10px;
     width: 100%;
     padding: 10px 13px;
-    background: #2c2c2e;
-    border: 1px solid rgba(255,255,255,0.05);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-faint);
     border-radius: 10px;
-    color: #fff;
+    color: var(--fg-primary);
     font-size: 13px;
     font-family: inherit;
     text-align: left;
     cursor: pointer;
     transition: background 0.12s;
   }
-  button:hover { background: #3a3a3c; }
-  button:active { background: #48484a; }
+  button:hover { background: var(--bg-tertiary); }
+  button:active { background: var(--bg-quaternary); }
   button.primary {
-    background: #0a84ff;
+    background: var(--accent-primary-bg);
     border-color: transparent;
+    color: var(--fg-on-accent);
     font-weight: 500;
     justify-content: center;
     text-align: center;
   }
-  button.primary:hover { background: #006fcf; }
-  /* Danger: #ff6b61 ≈ 5.1:1 on #2c2c2e (was #ff453a ≈ 3.96:1 FAIL).
-     Also: give the text an underline-via-border on the icon so color
-     is NOT the sole signal (WCAG 1.4.1). */
+  button.primary:hover { background: var(--accent-primary-hover); }
+  /* Danger text — contrast verified in :root token block. Icon border
+     provides a redundant non-color signal (WCAG 1.4.1). */
   button.danger {
-    color: #ff6b61;
+    color: var(--danger);
   }
   button.danger .icon {
     border: 1px solid currentColor;
@@ -180,7 +380,7 @@
   }
   hr {
     border: 0;
-    border-top: 1px solid rgba(255,255,255,0.06);
+    border-top: 1px solid var(--border-hairline);
     margin: 2px 0;
   }
 
@@ -189,23 +389,22 @@
     flex-direction: column;
     gap: 5px;
   }
-  /* Field labels: #b0b0b5 ≈ 8.4:1 on #1c1c1e (was #8e8e93 FAIL) */
   .field label {
     font-size: 11.5px;
-    color: #b0b0b5;
+    color: var(--fg-secondary);
     font-weight: 500;
   }
   .field input[type="text"] {
-    background: #2c2c2e;
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-input);
     border-radius: 8px;
     padding: 8px 10px;
-    color: #fff;
+    color: var(--fg-primary);
     font-size: 13px;
     font-family: inherit;
   }
   /* Intentionally no outline:none on inputs — keyboard users need focus. */
-  .field input[type="text"]:focus { border-color: #409cff; }
+  .field input[type="text"]:focus { border-color: var(--accent); }
 
   .row { display: flex; gap: 6px; align-items: stretch; }
   .row input { flex: 1; }
@@ -217,14 +416,13 @@
     justify-content: space-between;
     align-items: center;
     padding: 10px 13px;
-    background: #2c2c2e;
+    background: var(--bg-secondary);
     border-radius: 10px;
     cursor: pointer;
   }
   .toggle > .toggle-main { display: flex; flex-direction: column; }
   .toggle > .toggle-main > span { font-size: 13px; }
-  /* Sub-description on #2c2c2e: #b0b0b5 ≈ 7.8:1 (was #8e8e93 ≈ 3.55:1 FAIL) */
-  .toggle-desc { color: #b0b0b5; font-size: 11px; }
+  .toggle-desc { color: var(--fg-secondary); font-size: 11px; }
   .toggle-control {
     display: flex;
     align-items: center;
@@ -239,16 +437,16 @@
     padding: 2px 6px;
     border-radius: 4px;
     border: 1px solid currentColor;
-    color: #b0b0b5;
+    color: var(--fg-secondary);
   }
   .toggle.on .toggle-badge {
-    color: #30d158;
+    color: var(--success);
   }
   .switch {
     position: relative;
     width: 40px;
     height: 24px;
-    background: #48484a;
+    background: var(--bg-quaternary);
     border-radius: 12px;
     transition: background 0.2s;
     flex-shrink: 0;
@@ -270,14 +468,18 @@
     position: absolute;
     top: 7px; left: 7px;
     width: 10px; height: 6px;
-    border-left: 2px solid #30d158;
-    border-bottom: 2px solid #30d158;
+    border-left: 2px solid var(--success);
+    border-bottom: 2px solid var(--success);
     transform: rotate(-45deg) scale(0);
     transition: transform 0.2s;
   }
-  .toggle.on .switch { background: #30d158; }
+  .toggle.on .switch { background: var(--success); }
   .toggle.on .switch::before { transform: translateX(16px); }
-  .toggle.on .switch::after { transform: rotate(-45deg) scale(1); left: 8px; top: 9px; border-color: #004d1a; }
+  .toggle.on .switch::after {
+    transform: rotate(-45deg) scale(1);
+    left: 8px; top: 9px;
+    border-color: var(--success-contrast);
+  }
 
   /* Trusted list */
   .trusted-item {
@@ -285,7 +487,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 7px 10px 7px 12px;
-    background: #2c2c2e;
+    background: var(--bg-secondary);
     border-radius: 8px;
     font-size: 12.5px;
   }
@@ -303,19 +505,17 @@
   }
   .trusted-item .ttl-label {
     font-size: 11px;
-    color: #b0b0b5; /* on #2c2c2e — 4.5:1+ passes AA */
+    color: var(--fg-secondary); /* token-driven; AA on --bg-secondary both modes */
   }
   .trusted-item .ttl-expired {
     font-size: 11px;
-    color: #ff453a; /* Apple system red — AA on #2c2c2e */
+    color: var(--danger); /* token-driven; AA on --bg-secondary both modes */
     font-weight: 500;
   }
-  /* Footer & empty states: #8e8e93 ≈ 4.65:1 on #1c1c1e (was #636366 FAIL).
-     The irony noted in the research report — the "lighter" value is actually
-     #8e8e93, which clears 4.5:1 on the darker #1c1c1e body. */
+  /* Empty states on --bg-primary — --fg-secondary ≥7:1 both modes. */
   .trusted-empty, .history-empty {
     text-align: center;
-    color: #b0b0b5; /* on #1c1c1e → ≈8.4:1 */
+    color: var(--fg-secondary);
     font-size: 12px;
     padding: 18px 0;
   }
@@ -324,7 +524,7 @@
     display: flex;
     flex-direction: column;
     padding: 8px 12px;
-    background: #2c2c2e;
+    background: var(--bg-secondary);
     border-radius: 8px;
     gap: 2px;
     cursor: pointer;
@@ -334,35 +534,33 @@
     text-align: left;
     font-family: inherit;
   }
-  .hitem:hover { background: #3a3a3c; }
+  .hitem:hover { background: var(--bg-tertiary); }
   .hitem .hname {
     font-size: 12.5px;
     font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: #fff;
+    color: var(--fg-primary);
   }
-  /* History meta: #b0b0b5 ≈ 7.8:1 on #2c2c2e (was #8e8e93 ≈ 3.55:1 FAIL) */
   .hitem .hmeta {
     font-size: 11px;
-    color: #b0b0b5;
+    color: var(--fg-secondary);
   }
-  /* SHA hash code: #b0b0b5 ≈ 7.8:1 on #2c2c2e (was #636366 ≈ 2.19:1 FAIL) */
   .hitem .hmeta code {
-    color: #b0b0b5;
+    color: var(--fg-secondary);
   }
 
   .footer {
     margin-top: auto;
     padding: 8px 14px 10px;
     font-size: 10.5px;
-    color: #8e8e93; /* was #636366; now ≈4.65:1 on #1c1c1e */
+    color: var(--fg-tertiary);
     text-align: center;
   }
   .save-note {
     font-size: 11px;
-    color: #30d158;
+    color: var(--success);
     opacity: 0;
     transition: opacity 0.3s;
     text-align: center;
@@ -371,16 +569,15 @@
   .save-note.show { opacity: 1; }
 
   .diag-section {
-    background: #2c2c2e;
+    background: var(--bg-secondary);
     border-radius: 10px;
     padding: 10px 12px;
   }
-  /* Diag title: #b0b0b5 ≈ 7.8:1 on #2c2c2e (was #8e8e93 FAIL) */
   .diag-title {
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: #b0b0b5;
+    color: var(--fg-secondary);
     margin-bottom: 6px;
   }
   .diag-row {
@@ -388,12 +585,12 @@
     justify-content: space-between;
     padding: 4px 0;
     font-size: 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid var(--border-subtle);
   }
   .diag-row:last-child { border-bottom: 0; }
-  .diag-row span:first-child { color: #b0b0b5; }
+  .diag-row span:first-child { color: var(--fg-secondary); }
   .diag-row span:last-child {
-    color: #fff;
+    color: var(--fg-primary);
     font-variant-numeric: tabular-nums;
     text-align: right;
     max-width: 55%;
@@ -404,23 +601,23 @@
 
   /* Inline rate-limit hint beside label */
   .label-hint {
-    color: #b0b0b5;
+    color: var(--fg-secondary);
     font-weight: normal;
   }
 
   /* Focus management: hide ring for pointer users, show for keyboard.
-     Accent is #409cff (≈5.8:1 on #1c1c1e, ≈5.4:1 on #2c2c2e) — exceeds
-     WCAG 1.4.11 UI component 3:1 requirement. */
+     Ring uses --focus-ring (= --accent) — contrast verified in :root
+     token blocks; exceeds WCAG 1.4.11 UI-component 3:1 both modes. */
   :focus { outline: none; }
   :focus-visible {
-    outline: 2px solid #409cff;
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
     border-radius: inherit;
   }
   .field input[type="text"]:focus-visible {
-    outline: 2px solid #409cff;
+    outline: 2px solid var(--focus-ring);
     outline-offset: 1px;
-    border-color: #409cff;
+    border-color: var(--accent);
   }
 
   /* Reduced motion: dampen all transitions/animations. */
@@ -434,9 +631,38 @@
   }
 
   /* Forced colors (Windows high-contrast / Edge forced-colors mode).
-     Let the UA paint system colors; draw explicit borders so boundaries
-     remain visible when backgrounds are collapsed. */
+     System colors win; remap tokens where possible, then apply the
+     original per-element overrides that were already in place for
+     Canvas/CanvasText borders and Highlight focus rings. */
   @media (forced-colors: active) {
+    :root {
+      --bg-primary:      Canvas;
+      --bg-secondary:    Canvas;
+      --bg-tertiary:     Canvas;
+      --bg-quaternary:   Canvas;
+      --fg-primary:      CanvasText;
+      --fg-strong:       CanvasText;
+      --fg-bright:       CanvasText;
+      --fg-secondary:    CanvasText;
+      --fg-tertiary:     CanvasText;
+      --fg-on-accent:    HighlightText;
+      --accent:          Highlight;
+      --accent-strong:   Highlight;
+      --accent-weak:     transparent;
+      --accent-primary-bg:    Highlight;
+      --accent-primary-hover: Highlight;
+      --danger:          LinkText;  /* no system "danger" token — LinkText reads as emphasized */
+      --success:         Highlight;
+      --success-contrast:HighlightText;
+      --border-subtle:   CanvasText;
+      --border-faint:    CanvasText;
+      --border-hairline: CanvasText;
+      --border-input:    CanvasText;
+      --border:          CanvasText;
+      --border-strong:   CanvasText;
+      --border-stronger: CanvasText;
+      --focus-ring:      Highlight;
+    }
     button, .drop-zone, .toggle, .hitem, .trusted-item, .diag-section,
     .field input[type="text"] {
       border: 1px solid CanvasText;
@@ -460,11 +686,6 @@
     .toggle.on .switch { background: Highlight; }
     button.danger { color: LinkText; }
   }
-
-  /* TODO(a11y): prefers-color-scheme: light. Current palette is a single
-     hardcoded dark theme (no CSS custom properties). A proper light theme
-     would require tokenizing every color — deferred to a follow-up that
-     introduces design tokens. */
 </style>
 </head>
 <body>
