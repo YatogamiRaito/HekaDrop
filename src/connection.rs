@@ -529,44 +529,27 @@ async fn handle_sharing_frame(
             }
 
             // Karar mantığı (Issue #17):
-            //   1) Peer secret_id_hash gönderdiyse → hash ile trust sorgula
-            //      (birincil yol, TTL uygulanır).
-            //   2) Yoksa → legacy `(name, id)` eşleşmesi (fallback, 3 sürümlük
-            //      uyumluluk penceresi).
+            //   1) Peer secret_id_hash gönderdiyse → (hash eşleşir VEYA legacy
+            //      kayıt eşleşir) trusted sayılır. Birinci sürüm review sonrası
+            //      fix (Gemini review #34): legacy kaydı olan cihaz ilk kez
+            //      hash gönderdiğinde dialog sormadan silent upgrade olmalı.
+            //      Önceden yalnız `is_trusted_by_hash` bakılıyordu → hash
+            //      henüz kaydedilmediği için false dönüyor, kullanıcıya
+            //      gereksiz dialog çıkıyordu.
+            //   2) Peer hash yoksa → legacy `(name, id)` eşleşmesi (fallback,
+            //      3 sürümlük uyumluluk penceresi).
             //   3) Settings.auto_accept → dialog atla.
             //   4) Aksi halde dialog göster (3 seçenek: reddet/kabul/kabul+güven).
             let trusted = {
                 let st = state::get();
                 let s = st.settings.read();
                 match peer_secret_id_hash {
-                    Some(h) => s.is_trusted_by_hash(h),
+                    Some(h) => {
+                        s.is_trusted_by_hash(h) || s.is_trusted_legacy(remote_name, remote_id)
+                    }
                     None => s.is_trusted_legacy(remote_name, remote_id),
                 }
             };
-            // Opportunistic legacy upgrade: peer hash göndermiş ama trust
-            // kaydı legacy (hash=None). Kullanıcı zaten bu cihazı güvenmişti;
-            // hash'i kayda işleyelim → bir sonraki bağlantıda hash-first
-            // karar verilir ve spoof direnci otomatik kazanılır.
-            if let Some(h) = peer_secret_id_hash {
-                let needs_upgrade = {
-                    let st = state::get();
-                    let s = st.settings.read();
-                    s.is_trusted_legacy(remote_name, remote_id) && !s.is_trusted_by_hash(h)
-                };
-                if needs_upgrade {
-                    let st = state::get();
-                    let snap = {
-                        let mut s = st.settings.write();
-                        s.add_trusted_with_hash(remote_name, remote_id, *h);
-                        s.clone()
-                    };
-                    let _ = snap.save();
-                    info!(
-                        "[{}] legacy trust kaydı secret_id_hash ile yükseltildi: {}",
-                        peer, remote_name
-                    );
-                }
-            }
 
             let auto_accept = state::get().settings.read().auto_accept;
 
@@ -594,6 +577,44 @@ async fn handle_sharing_frame(
 
             let ok = !matches!(decision, ui::AcceptResult::Reject);
             *accepted_flag = ok;
+
+            // Opportunistic legacy → hash upgrade.
+            //
+            // SECURITY (Copilot review #34 HIGH): **yalnızca** kullanıcı
+            // kabul ettiyse çalışır. Önceki kod dialog öncesinde, kararın
+            // farkında olmadan upgrade yapıyordu — attacker bağlanır, kullanıcı
+            // reddeder, ama attacker'ın hash'i legacy kayda bağlanmış olurdu;
+            // bir sonraki bağlantısında hash-first kararla sessizce auto-accept
+            // edilirdi (dialog bypass).
+            //
+            // Tasarım (design 017 §5.2): "user zaten 'bu cihazı güven' demişti"
+            // — yani legacy kayıt varsa ve kullanıcı ŞU ANDAKİ bağlantıyı
+            // reddetmiyorsa hash'i işle. `AcceptAndTrust` branch'i zaten
+            // `add_trusted_with_hash` ile upgrade eder (legacy match → hash
+            // doldurulur); burada sadece düz `Accept` + legacy varsa enrich
+            // ederiz. Reject yolunda hiçbir zaman çalışmaz.
+            if matches!(decision, ui::AcceptResult::Accept) {
+                if let Some(h) = peer_secret_id_hash {
+                    let needs_upgrade = {
+                        let st = state::get();
+                        let s = st.settings.read();
+                        s.is_trusted_legacy(remote_name, remote_id) && !s.is_trusted_by_hash(h)
+                    };
+                    if needs_upgrade {
+                        let st = state::get();
+                        let snap = {
+                            let mut s = st.settings.write();
+                            s.add_trusted_with_hash(remote_name, remote_id, *h);
+                            s.clone()
+                        };
+                        let _ = snap.save();
+                        info!(
+                            "[{}] legacy trust kaydı secret_id_hash ile yükseltildi: {}",
+                            peer, remote_name
+                        );
+                    }
+                }
+            }
 
             if matches!(decision, ui::AcceptResult::AcceptAndTrust) {
                 let st = state::get();

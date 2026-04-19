@@ -13,8 +13,10 @@
 //!
 //! ## Güvenlik modeli
 //!
-//! - **POSIX:** dosya `0o600` izinle yaratılır; atomic `tmp-file + rename`
-//!   kullanıldığı için yarım yazılmış anahtar dosyası kalmaz.
+//! - **POSIX:** tmp dosya `O_EXCL | mode(0o600)` ile açılır; atomic
+//!   `tmp-file + rename` kullanıldığı için yarım yazılmış anahtar dosyası
+//!   kalmaz ve dosya hiçbir zaman world-readable olarak görünmez (rename
+//!   inode'u koruduğu için izinler final path'e aynen taşınır).
 //! - **Windows:** NTFS default owner-only ACL kabul; tam `SetNamedSecurityInfoW`
 //!   ile ACL sıkılaştırma follow-up (v0.7).
 //! - Korrupt (boyut ≠ 32) dosya → hata döner; **auto-regenerate etmeyiz**,
@@ -74,25 +76,18 @@ impl DeviceIdentity {
         }
 
         // İlk çalıştırma — yeni anahtar üret + atomic yaz + 0o600.
+        //
+        // SECURITY (review #34 MED): tmp dosya baştan `O_EXCL | mode(0o600)`
+        // ile açılır; önceki kod tmp'yi umask-default (tipik 0644) ile açıp
+        // rename SONRASI `set_permissions(0o600)` çağırıyordu — bu iki adım
+        // arasında dosya dünya-okunabilir olarak kısa bir süre varlık
+        // gösteriyordu. `atomic_write_mode` ile bu pencere tamamen kapanır
+        // (rename inode'u korur, izinler taşınır).
         let mut key = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut key);
-        crate::settings::atomic_write(path, &key)
+        crate::settings::atomic_write_mode(path, &key, Some(0o600))
             .with_context(|| format!("identity.key yazılamadı: {}", path.display()))?;
 
-        // POSIX'te atomic_write tmp + rename kullanıyor; yazım sonrası mode'u
-        // 0o600'e çekmemiz gerek (tmp default 0644 ile açılıyor olabilir).
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            if let Err(e) = std::fs::set_permissions(path, perms) {
-                tracing::warn!(
-                    "identity.key 0600 izin ayarlanamadı ({}): {}",
-                    path.display(),
-                    e
-                );
-            }
-        }
         // Windows: NTFS default ACL (kullanıcı profili altında owner-only)
         // kabul edilebilir. Tam ACL sıkılaştırma (SetNamedSecurityInfoW) v0.7
         // follow-up — şu an en-iyi-çaba.

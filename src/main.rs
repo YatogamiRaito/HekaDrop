@@ -733,10 +733,14 @@ fn st_settings_resolved_name() -> String {
 fn push_trusted_to_ui() {
     let st = state::get();
     // Issue #17: `applyTrusted` JS artık zengin nesne dizisi kabul eder —
-    // her kayıt `{display, trusted_at_epoch, ttl_secs, has_hash}` yapısında;
-    // UI TTL rozetini ve "süresi doldu" uyarısını burada hesaplar.
-    // Backward: eski HTML boolean olmayan obje alanlarına girmeyeceği için
-    // string array kısmı "display" alanında kalır.
+    // her kayıt `{name, display, trusted_at_epoch, ttl_secs, has_hash}`
+    // yapısında; UI TTL rozetini ve "süresi doldu" uyarısını burada hesaplar.
+    //
+    // `name` ayrı alan olarak gönderilir (review #34 LOW): UI `trust_remove`
+    // IPC çağrısında `display` yerine raw `name` kullanır, böylece
+    // "Pixel 7 (abcdef01)" gibi display string'leri kayıt adıyla
+    // eşleşmediği için silme sessizce başarısız olmaz. Backward-compat için
+    // `display` alanı korunur (zengin başlık metni).
     let s = st.settings.read();
     let ttl_secs = s.trust_ttl_secs;
     let items: Vec<serde_json::Value> = s
@@ -744,6 +748,7 @@ fn push_trusted_to_ui() {
         .iter()
         .map(|d| {
             serde_json::json!({
+                "name": d.name,
                 "display": d.display(),
                 "trusted_at_epoch": d.trusted_at_epoch,
                 "ttl_secs": ttl_secs,

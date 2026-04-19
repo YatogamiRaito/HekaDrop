@@ -992,15 +992,21 @@
       const removeLabel = escapeHtml(t('webview.settings.trust_remove'));
       const nowSecs = Math.floor(Date.now() / 1000);
       // Backward compat: eski kod string[] gönderirdi — item string ise
-      // {display: item, ...} olarak genişletip işleyelim.
+      // {display: item, name: item, ...} olarak genişletip işleyelim.
       const normalised = items.map(it => {
         if (typeof it === 'string') {
-          return { display: it, trusted_at_epoch: 0, ttl_secs: 0, has_hash: false };
+          return { name: it, display: it, trusted_at_epoch: 0, ttl_secs: 0, has_hash: false };
         }
         return it;
       });
       el.innerHTML = normalised.map(it => {
-        const name = it.display || '';
+        // Fix (review #34 LOW): IPC payload'ı `name` (raw) kullanır; ekranda
+        // "Pixel 7 (abcdef01)" gibi display gösterilse bile Rust tarafı
+        // `remove_trusted(name)` ile eşleştiğinden id-qualified kayıtlar da
+        // silinebilir. Eski kod `display` gönderiyordu ve hiçbir kayıtla
+        // eşleşmeyip sessizce başarısız oluyordu.
+        const label = it.display || it.name || '';
+        const rawName = it.name || it.display || '';
         let ttlBadge = '';
         // TTL rozeti yalnız hash-bağlı v0.6+ kayıtlarda anlamlı.
         if (it.has_hash && it.trusted_at_epoch > 0 && it.ttl_secs > 0) {
@@ -1009,19 +1015,19 @@
             ttlBadge = `<span class="ttl-expired">${escapeHtml(t('webview.trusted.ttl_expired'))}</span>`;
           } else {
             const days = Math.max(0, Math.floor(age / 86400));
-            const label = tf('webview.trusted.ttl_label', [String(days)]);
-            ttlBadge = `<span class="ttl-label">${escapeHtml(label)}</span>`;
+            const ttlLabel = tf('webview.trusted.ttl_label', [String(days)]);
+            ttlBadge = `<span class="ttl-label">${escapeHtml(ttlLabel)}</span>`;
           }
         }
         return `
         <div class="trusted-item" role="listitem">
           <div class="trusted-meta">
-            <span class="trusted-name">${escapeHtml(name)}</span>
+            <span class="trusted-name">${escapeHtml(label)}</span>
             ${ttlBadge}
           </div>
           <button type="button" class="small danger"
-                  onclick="act('trust_remove::${escapeAttr(name)}')"
-                  aria-label="Güvenilen cihazı kaldır: ${escapeAttr(name)}">
+                  onclick="act('trust_remove::${escapeAttr(rawName)}')"
+                  aria-label="Güvenilen cihazı kaldır: ${escapeAttr(label)}">
             <span class="icon" aria-hidden="true">✕</span>${removeLabel}
           </button>
         </div>
@@ -1031,11 +1037,16 @@
 
     // tf() — basit formatlayıcı: window.__I18N__ sözlüğünden çeviriyi alıp
     // `{0}` `{1}` vb. yer tutucuları args ile değiştirir (Rust tarafındaki
-    // `tf()` ile aynı semantik, tek geçişli tek seviye).
+    // `apply_args` ile aynı semantik — tüm eşleşmeleri değiştirir).
+    //
+    // Bug (review #34 MED): önceden `String.replace(string, string)` yalnız
+    // ilk eşleşmeyi değiştiriyordu; "Dosya {0} alındı. {0} aç?" gibi aynı
+    // argümanı iki kez kullanan çeviriler ikinci `{0}`'ı literal bırakıyordu.
+    // `split/join` ile tüm eşleşmeler tek pasada değişir.
     function tf(key, args) {
       let s = t(key);
       for (let i = 0; i < args.length; i++) {
-        s = s.replace('{' + i + '}', args[i]);
+        s = s.split('{' + i + '}').join(args[i]);
       }
       return s;
     }
