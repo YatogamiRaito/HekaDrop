@@ -420,7 +420,11 @@ impl PayloadAssembler {
 fn remove_partial_file(path: &std::path::Path) {
     if let Err(e) = std::fs::remove_file(path) {
         if e.kind() != std::io::ErrorKind::NotFound {
-            tracing::debug!("partial silinemedi: {} — {}", path.display(), e);
+            tracing::debug!(
+                "partial silinemedi: {} — {}",
+                crate::log_redact::path_basename(path),
+                e
+            );
         }
     }
 }
