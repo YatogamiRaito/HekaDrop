@@ -182,7 +182,7 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "dialog.history.title" => "Son aktarımlar",
         "dialog.update.latest" => "En güncel sürümü kullanıyorsun (v{0}).",
         "dialog.update.available" => "Mevcut: v{0}\nYeni sürüm: {1}\n\n{2}",
-        "dialog.update.failed" => "Güncelleme kontrolü başarısız.\n\nHenüz yayınlanmış bir release yoksa (repo özel ise) bu normal.\nİnternet bağlantını kontrol edip tekrar dene.",
+        "dialog.update.failed" => "Güncelleme kontrolü başarısız.\n\nGitHub API'ye ulaşılamamış olabilir; internet bağlantını kontrol edip tekrar dene.",
         "dialog.update.title" => "HekaDrop — Güncelleme var",
 
         // Accept dialog
@@ -263,7 +263,7 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "dialog.history.title" => "Recent transfers",
         "dialog.update.latest" => "You're on the latest version (v{0}).",
         "dialog.update.available" => "Current: v{0}\nNew version: {1}\n\n{2}",
-        "dialog.update.failed" => "Update check failed.\n\nIf no release is published yet (private repo) this is normal.\nCheck your internet connection and retry.",
+        "dialog.update.failed" => "Update check failed.\n\nCould not reach GitHub API; check your internet connection and retry.",
         "dialog.update.title" => "HekaDrop — Update available",
 
         // Accept dialog

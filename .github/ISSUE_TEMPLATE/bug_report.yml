@@ -1,0 +1,75 @@
+name: Hata raporu
+description: Beklenmeyen bir davranış, çökme veya protokol uyumsuzluğu
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bildirdiğiniz için teşekkürler. Güvenlik açığı içeriyorsa public issue
+        açmayın — `SECURITY.md` dosyasındaki özel bildirim yolunu kullanın.
+  - type: input
+    id: version
+    attributes:
+      label: HekaDrop sürümü
+      description: "`hekadrop --version` ya da Ayarlar → Hakkında"
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: İşletim sistemi
+      multiple: true
+      options:
+        - macOS
+        - Linux (Ubuntu/Debian)
+        - Linux (Fedora)
+        - Linux (Arch)
+        - Linux (diğer)
+        - Windows 10
+        - Windows 11
+    validations:
+      required: true
+  - type: input
+    id: peer
+    attributes:
+      label: Karşı cihaz (opsiyonel)
+      description: Aktarım yapıyorsanız karşı taraf cihazın OS/marka/modeli
+      placeholder: "Android 14, Pixel 8"
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Ne oldu?
+      description: Beklenen davranış ile gözlemlenen arasındaki fark.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Yeniden üretim adımları
+      placeholder: |
+        1. HekaDrop'u aç
+        2. Android'den dosya gönder
+        3. PIN görünmeden uygulama donuyor
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Loglar
+      description: |
+        macOS: `~/Library/Logs/HekaDrop/hekadrop.log`
+        Linux: `~/.local/state/HekaDrop/logs/`
+        Windows: `%LOCALAPPDATA%\HekaDrop\logs\`
+
+        `RUST_LOG=hekadrop=debug hekadrop` ile detaylı log alabilirsiniz.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Ön kontroller
+      options:
+        - label: Mevcut issue'ları taradım; tekrar eden kayıt yok
+          required: true
+        - label: En son sürümde (veya main branch'te) tekrar ürettim
+          required: false
