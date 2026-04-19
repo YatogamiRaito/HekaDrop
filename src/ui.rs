@@ -52,9 +52,9 @@ pub async fn prompt_accept(
 fn format_payload_lines(files: &[(String, i64)], text_count: usize) -> String {
     if files.is_empty() {
         if text_count > 0 {
-            format!("{} metin", text_count)
+            crate::i18n::tf("accept.text_count", &[&text_count.to_string()])
         } else {
-            "içerik yok".to_string()
+            crate::i18n::t("accept.content_none").to_string()
         }
     } else {
         files
@@ -73,21 +73,33 @@ fn prompt_accept_blocking(
     text_count: usize,
 ) -> AcceptResult {
     let files_str = format_payload_lines(files, text_count);
-    let message = format!(
-        "{} cihazından dosya gönderiliyor.\n\nPIN: {}\n\n{}",
-        device, pin, files_str
-    );
+    let message = crate::i18n::tf("accept.body", &[device, pin, &files_str]);
+    let btn_reject = crate::i18n::t("accept.reject");
+    let btn_accept = crate::i18n::t("accept.accept");
+    let btn_trust = crate::i18n::t("accept.accept_trust");
+    let title = crate::i18n::t("accept.title");
+
     let script = format!(
-        r#"display dialog "{}" buttons {{"Reddet", "Kabul et", "Kabul + güven"}} default button "Kabul et" cancel button "Reddet" with title "HekaDrop" with icon note"#,
-        escape_applescript(&message)
+        r#"display dialog "{}" buttons {{"{}", "{}", "{}"}} default button "{}" cancel button "{}" with title "{}" with icon note"#,
+        escape_applescript(&message),
+        escape_applescript(btn_reject),
+        escape_applescript(btn_accept),
+        escape_applescript(btn_trust),
+        escape_applescript(btn_accept),
+        escape_applescript(btn_reject),
+        escape_applescript(title),
     );
     let out = Command::new("osascript").arg("-e").arg(&script).output();
     match out {
         Ok(o) => {
             let s = String::from_utf8_lossy(&o.stdout);
-            if s.contains("Kabul + güven") {
+            // osascript çıktısı: "button returned:<LABEL>, ..." formatında.
+            // Buton metinleri dile göre değiştiği için i18n'den çekili
+            // label'larla karşılaştırıyoruz. Trust butonunu önce kontrol et
+            // (accept içinde "Kabul" gibi bir substring kesişimi olabilir).
+            if s.contains(btn_trust) {
                 AcceptResult::AcceptAndTrust
-            } else if s.contains("Kabul et") {
+            } else if s.contains(btn_accept) {
                 AcceptResult::Accept
             } else {
                 AcceptResult::Reject
@@ -120,14 +132,19 @@ fn prompt_accept_blocking(
     };
 
     let files_str = format_payload_lines(files, text_count);
-    let message = format!(
-        "{} cihazından dosya gönderiliyor.\n\nPIN: {}\n\n{}\n\n\
-         Evet  = Kabul et + güven listesine ekle\n\
-         Hayır = Sadece bu seferlik kabul et\n\
-         İptal = Reddet",
-        device, pin, files_str
+    // MessageBoxW'un Yes/No/Cancel butonları Windows sistem diline göre
+    // zaten lokalize geliyor; biz mesajın gövdesinde buton anlamlarını
+    // i18n üzerinden yazdırıyoruz.
+    let body_main = crate::i18n::tf("accept.body", &[device, pin, &files_str]);
+    let hint = format!(
+        "\n\nYes/Evet  = {} + {}\nNo/Hayır = {}\nCancel/İptal = {}",
+        crate::i18n::t("accept.accept"),
+        crate::i18n::t("accept.accept_trust"),
+        crate::i18n::t("accept.accept"),
+        crate::i18n::t("accept.reject"),
     );
-    let title = "HekaDrop";
+    let message = format!("{}{}", body_main, hint);
+    let title = crate::i18n::t("accept.title");
     let msg_w = to_wide(&message);
     let title_w = to_wide(title);
 
@@ -155,10 +172,8 @@ fn prompt_accept_blocking(
     text_count: usize,
 ) -> AcceptResult {
     let files_str = format_payload_lines(files, text_count);
-    let message = format!(
-        "{} cihazından dosya gönderiliyor.\n\nPIN: {}\n\n{}",
-        device, pin, files_str
-    );
+    let message = crate::i18n::tf("accept.body", &[device, pin, &files_str]);
+    let title = crate::i18n::t("accept.title");
 
     // zenity yalnız "Tamam/İptal" 2 butonu destekler. "Kabul + güven"
     // seçeneğini ikinci adımda soruyoruz: önce kabul/ret, sonra güven.
@@ -166,10 +181,10 @@ fn prompt_accept_blocking(
         let accept = Command::new("zenity")
             .args([
                 "--question",
-                "--title=HekaDrop",
+                &format!("--title={}", title),
                 &format!("--text={}", message),
-                "--ok-label=Kabul et",
-                "--cancel-label=Reddet",
+                &format!("--ok-label={}", crate::i18n::t("accept.accept")),
+                &format!("--cancel-label={}", crate::i18n::t("accept.reject")),
                 "--width=420",
             ])
             .stderr(Stdio::null())
@@ -181,10 +196,13 @@ fn prompt_accept_blocking(
         let trust = Command::new("zenity")
             .args([
                 "--question",
-                "--title=HekaDrop",
-                &format!("--text={} cihazını bu ve sonraki aktarımlar için güven listesine ekleyeyim mi?", device),
-                "--ok-label=Evet, güven",
-                "--cancel-label=Sadece bu sefer",
+                &format!("--title={}", title),
+                &format!(
+                    "--text={}",
+                    crate::i18n::tf("accept.trust_prompt", &[device])
+                ),
+                &format!("--ok-label={}", crate::i18n::t("accept.trust_yes")),
+                &format!("--cancel-label={}", crate::i18n::t("accept.trust_later")),
             ])
             .stderr(Stdio::null())
             .status();
@@ -195,15 +213,18 @@ fn prompt_accept_blocking(
         }
     } else if have("kdialog") {
         // kdialog 3-button: --yesnocancel → Evet (Accept+Trust) / Hayır (Accept) / İptal (Reject)
+        let hint = format!(
+            "{} / {} / {}",
+            crate::i18n::t("accept.accept_trust"),
+            crate::i18n::t("accept.accept"),
+            crate::i18n::t("accept.reject"),
+        );
         let out = Command::new("kdialog")
             .args([
                 "--title",
-                "HekaDrop",
+                title,
                 "--yesnocancel",
-                &format!(
-                    "{}\n\n(Evet = Kabul + güven, Hayır = Kabul, İptal = Reddet)",
-                    message
-                ),
+                &format!("{}\n\n({})", message, hint),
             ])
             .status();
         match out {
@@ -495,13 +516,14 @@ if ($dlg.ShowDialog() -eq 'OK') { $dlg.FileNames -join "`n" }
 
 #[cfg(target_os = "linux")]
 fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
+    let title = crate::i18n::t("send.choose_title");
     if have("zenity") {
         let out = Command::new("zenity")
             .args([
                 "--file-selection",
                 "--multiple",
                 "--separator=\n",
-                "--title=Gönderilecek dosyaları seçin",
+                &format!("--title={}", title),
             ])
             .stderr(Stdio::null())
             .output()
@@ -525,7 +547,7 @@ fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
         let out = Command::new("kdialog")
             .args([
                 "--title",
-                "Gönderilecek dosyaları seçin",
+                title,
                 "--getopenfilename",
                 "--multiple",
                 "--separate-output",
@@ -564,11 +586,13 @@ pub async fn choose_folder() -> Option<std::path::PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn choose_folder_blocking() -> Option<std::path::PathBuf> {
+    let prompt = crate::i18n::t("pick.download_folder");
+    let script = format!(
+        r#"POSIX path of (choose folder with prompt "{}")"#,
+        escape_applescript(prompt)
+    );
     let out = Command::new("osascript")
-        .args([
-            "-e",
-            r#"POSIX path of (choose folder with prompt "İndirme klasörünü seçin")"#,
-        ])
+        .args(["-e", &script])
         .output()
         .ok()?;
     if !out.status.success() {
@@ -584,14 +608,20 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn choose_folder_blocking() -> Option<std::path::PathBuf> {
-    let script = r#"
+    // PowerShell'e i18n string'ini güvenli geçirmek için single-quote'ları
+    // double'lıyoruz (PS'te single-quoted string içinde `''` → `'`).
+    let desc = crate::i18n::t("pick.download_folder").replace('\'', "''");
+    let script = format!(
+        r#"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-$dlg.Description = 'İndirme klasörünü seçin'
+$dlg.Description = '{}'
 $dlg.ShowNewFolderButton = $true
-if ($dlg.ShowDialog() -eq 'OK') { $dlg.SelectedPath }
-"#;
+if ($dlg.ShowDialog() -eq 'OK') {{ $dlg.SelectedPath }}
+"#,
+        desc
+    );
     let out = Command::new("powershell")
         .args([
             "-NoProfile",
@@ -599,7 +629,7 @@ if ($dlg.ShowDialog() -eq 'OK') { $dlg.SelectedPath }
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            script,
+            &script,
         ])
         .stderr(Stdio::null())
         .output()
@@ -617,12 +647,13 @@ if ($dlg.ShowDialog() -eq 'OK') { $dlg.SelectedPath }
 
 #[cfg(target_os = "linux")]
 fn choose_folder_blocking() -> Option<std::path::PathBuf> {
+    let title = crate::i18n::t("pick.download_folder");
     if have("zenity") {
         let out = Command::new("zenity")
             .args([
                 "--file-selection",
                 "--directory",
-                "--title=İndirme klasörünü seçin",
+                &format!("--title={}", title),
             ])
             .stderr(Stdio::null())
             .output()
@@ -638,12 +669,7 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
         }
     } else if have("kdialog") {
         let out = Command::new("kdialog")
-            .args([
-                "--title",
-                "İndirme klasörünü seçin",
-                "--getexistingdirectory",
-                ".",
-            ])
+            .args(["--title", title, "--getexistingdirectory", "."])
             .output()
             .ok()?;
         if !out.status.success() {
@@ -681,8 +707,10 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
         .collect::<Vec<_>>()
         .join(", ");
     let script = format!(
-        r#"choose from list {{{}}} with prompt "Hedef cihaz" with title "HekaDrop" default items {{"{}"}}"#,
+        r#"choose from list {{{}}} with prompt "{}" with title "{}" default items {{"{}"}}"#,
         items,
+        escape_applescript(crate::i18n::t("send.device_prompt")),
+        escape_applescript(crate::i18n::t("app.title")),
         escape_applescript(&labels[0])
     );
     let out = Command::new("osascript")
@@ -701,23 +729,31 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
     // PowerShell ile minimal ListBox dialog'u. `Out-GridView -PassThru` de
     // kullanılabilirdi ama standart PowerShell'da ayrı modül gerekir;
     // System.Windows.Forms her kurulumda hazır.
+    // PowerShell single-quoted string içinde `''` ile escape ediyoruz
+    // (bkz. choose_folder_blocking). i18n string'leri non-ASCII içerebilir;
+    // UTF-8 output encoding yukarıda.
+    let ps_esc = |s: &str| s.replace('\'', "''");
     let items = labels
         .iter()
-        .map(|s| format!("'{}'", s.replace('\'', "''")))
+        .map(|s| format!("'{}'", ps_esc(s)))
         .collect::<Vec<_>>()
         .join(",");
+    let t_title = ps_esc(crate::i18n::t("app.title"));
+    let t_prompt = ps_esc(crate::i18n::t("send.device_prompt"));
+    let t_send = ps_esc(crate::i18n::t("common.send"));
+    let t_cancel = ps_esc(crate::i18n::t("common.cancel"));
     let script = format!(
         r#"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 Add-Type -AssemblyName System.Drawing | Out-Null
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'HekaDrop'
+$form.Text = '{t_title}'
 $form.Size = New-Object System.Drawing.Size(480, 360)
 $form.StartPosition = 'CenterScreen'
 $form.TopMost = $true
 $label = New-Object System.Windows.Forms.Label
-$label.Text = 'Hedef cihaz'
+$label.Text = '{t_prompt}'
 $label.Location = New-Object System.Drawing.Point(10, 10)
 $label.Size = New-Object System.Drawing.Size(440, 20)
 $form.Controls.Add($label)
@@ -728,13 +764,13 @@ $listbox.Size = New-Object System.Drawing.Size(440, 230)
 if ($listbox.Items.Count -gt 0) {{ $listbox.SelectedIndex = 0 }}
 $form.Controls.Add($listbox)
 $ok = New-Object System.Windows.Forms.Button
-$ok.Text = 'Gönder'
+$ok.Text = '{t_send}'
 $ok.Location = New-Object System.Drawing.Point(280, 280)
 $ok.DialogResult = 'OK'
 $form.AcceptButton = $ok
 $form.Controls.Add($ok)
 $cancel = New-Object System.Windows.Forms.Button
-$cancel.Text = 'İptal'
+$cancel.Text = '{t_cancel}'
 $cancel.Location = New-Object System.Drawing.Point(370, 280)
 $cancel.DialogResult = 'Cancel'
 $form.CancelButton = $cancel
@@ -772,10 +808,10 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
         let mut args: Vec<String> = vec![
             "--list".into(),
             "--radiolist".into(),
-            "--title=HekaDrop".into(),
-            "--text=Hedef cihaz".into(),
+            format!("--title={}", crate::i18n::t("app.title")),
+            format!("--text={}", crate::i18n::t("send.device_prompt")),
             "--column=".into(),
-            "--column=Cihaz".into(),
+            "--column=".into(),
             "--width=480".into(),
             "--height=360".into(),
         ];
@@ -804,9 +840,9 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
     } else if have("kdialog") {
         let mut args: Vec<String> = vec![
             "--title".into(),
-            "HekaDrop".into(),
+            crate::i18n::t("app.title").into(),
             "--radiolist".into(),
-            "Hedef cihaz".into(),
+            crate::i18n::t("send.device_prompt").into(),
         ];
         for (i, l) in labels.iter().enumerate() {
             args.push(format!("{}", i));

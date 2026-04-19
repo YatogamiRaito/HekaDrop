@@ -202,6 +202,9 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "send.device_prompt" => "Hedef cihaz",
         "send.discovery_error" => "HekaDrop — keşif hatası",
         "send.send_error" => "HekaDrop — gönderim",
+        "pick.download_folder" => "İndirme klasörünü seçin",
+        "common.send" => "Gönder",
+        "common.cancel" => "İptal",
 
         // Time
         "time.seconds_ago" => "{0} sn önce",
@@ -283,6 +286,9 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "send.device_prompt" => "Target device",
         "send.discovery_error" => "HekaDrop — discovery error",
         "send.send_error" => "HekaDrop — transfer",
+        "pick.download_folder" => "Select download folder",
+        "common.send" => "Send",
+        "common.cancel" => "Cancel",
 
         // Time
         "time.seconds_ago" => "{0}s ago",
@@ -428,6 +434,9 @@ mod tests {
             "send.device_prompt",
             "send.discovery_error",
             "send.send_error",
+            "pick.download_folder",
+            "common.send",
+            "common.cancel",
             "time.seconds_ago",
             "time.minutes_ago",
             "time.hours_ago",
