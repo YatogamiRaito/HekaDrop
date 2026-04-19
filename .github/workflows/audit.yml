@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
   issues: write
+  # `rustsec/audit-check@v2` bulduğu advisory'leri GitHub check-run API'si
+  # üzerinden annotation olarak rapor eder; bu yetki verilmezse action
+  # "Resource not accessible by integration" hatasıyla düşer.
+  checks: write
 
 jobs:
   audit:
