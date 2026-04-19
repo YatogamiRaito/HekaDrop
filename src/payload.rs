@@ -18,10 +18,10 @@ use crate::location::nearby::connections::{
 use anyhow::{anyhow, bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tracing::warn;
 
 /// Bir chunk üzerinden geçmişken `last_chunk_at`'in ne kadar eskiyebileceği.
@@ -194,7 +194,7 @@ impl PayloadAssembler {
     ///
     /// Her çağrıda önce [`Self::gc`] çalışır ([`ASSEMBLER_GC_TIMEOUT`]); böylece
     /// dışarıdan periyodik tetik gerekmeden yarım kalanlar süpürülür.
-    pub fn ingest(&mut self, f: &PayloadTransferFrame) -> Result<Option<CompletedPayload>> {
+    pub async fn ingest(&mut self, f: &PayloadTransferFrame) -> Result<Option<CompletedPayload>> {
         // Her chunk'ta cheap GC: dolu map yoksa zaten hiçbir şey yapmaz.
         self.gc(ASSEMBLER_GC_TIMEOUT);
 
@@ -218,7 +218,7 @@ impl PayloadAssembler {
 
         match PayloadType::try_from(ptype).unwrap_or(PayloadType::UnknownPayloadType) {
             PayloadType::Bytes => self.ingest_bytes(id, body, last_chunk),
-            PayloadType::File => self.ingest_file(id, total_size, body, last_chunk),
+            PayloadType::File => self.ingest_file(id, total_size, body, last_chunk).await,
             other => Err(anyhow!("desteklenmeyen payload tipi: {:?}", other)),
         }
     }
@@ -262,7 +262,7 @@ impl PayloadAssembler {
         Ok(None)
     }
 
-    fn ingest_file(
+    async fn ingest_file(
         &mut self,
         id: i64,
         total_size: i64,
@@ -326,11 +326,12 @@ impl PayloadAssembler {
                     });
                 }
             }
-            let file = std::fs::OpenOptions::new()
+            let file = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
                 .open(&dest.path)
+                .await
                 .with_context(|| format!("dosya açılamadı: {}", dest.path.display()))?;
             slot.insert(FileSink {
                 file,
@@ -362,7 +363,7 @@ impl PayloadAssembler {
                     sink.total_size
                 );
             }
-            sink.file.write_all(body).context("disk yazma")?;
+            sink.file.write_all(body).await.context("disk yazma")?;
             sink.hasher.update(body);
             sink.written = new_written;
             sink.last_chunk_at = Instant::now();
@@ -388,7 +389,7 @@ impl PayloadAssembler {
             // gönderebiliriz ama disk'te veri henüz yok → crash durumunda
             // dosya boş/yarım kalır. Hatayı propagate et ki user retry'la
             // anlamlı bir sonuç alabilsin.
-            sink.file.sync_all().with_context(|| {
+            sink.file.sync_all().await.with_context(|| {
                 format!(
                     "dosya senkronize edilemedi: id={} path={}",
                     id,
@@ -470,11 +471,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn bytes_single_chunk_completes() {
+    #[tokio::test]
+    async fn bytes_single_chunk_completes() {
         let mut a = PayloadAssembler::new();
         let f = make_frame(42, PbPayloadType::Bytes, b"hello", true);
-        let out = a.ingest(&f).expect("ingest ok");
+        let out = a.ingest(&f).await.expect("ingest ok");
         match out {
             Some(CompletedPayload::Bytes { id, data }) => {
                 assert_eq!(id, 42);
@@ -485,25 +486,25 @@ mod tests {
         assert_eq!(a.partial_count(), 0, "tamamlanan bytes temizlenmeli");
     }
 
-    #[test]
-    fn bytes_multiple_chunks_accumulate() {
+    #[tokio::test]
+    async fn bytes_multiple_chunks_accumulate() {
         let mut a = PayloadAssembler::new();
         let f1 = make_frame(1, PbPayloadType::Bytes, b"foo", false);
         let f2 = make_frame(1, PbPayloadType::Bytes, b"bar", true);
-        assert!(a.ingest(&f1).unwrap().is_none());
-        let done = a.ingest(&f2).unwrap().expect("last chunk tamamlar");
+        assert!(a.ingest(&f1).await.unwrap().is_none());
+        let done = a.ingest(&f2).await.unwrap().expect("last chunk tamamlar");
         match done {
             CompletedPayload::Bytes { data, .. } => assert_eq!(data, b"foobar"),
             other => panic!("{:?}", other),
         }
     }
 
-    #[test]
-    fn gc_drops_stale_bytes_buffer() {
+    #[tokio::test]
+    async fn gc_drops_stale_bytes_buffer() {
         let mut a = PayloadAssembler::new();
         // İlk chunk ingest et ama last=false, bu yüzden buffer kalsın.
         let f = make_frame(7, PbPayloadType::Bytes, b"abc", false);
-        a.ingest(&f).unwrap();
+        a.ingest(&f).await.unwrap();
         assert_eq!(a.partial_count(), 1);
 
         // 0 timeout ile GC → her şey eski sayılır ve silinir.
@@ -517,19 +518,19 @@ mod tests {
         assert_eq!(a.partial_count(), 0);
     }
 
-    #[test]
-    fn gc_preserves_fresh_entries() {
+    #[tokio::test]
+    async fn gc_preserves_fresh_entries() {
         let mut a = PayloadAssembler::new();
         let f = make_frame(9, PbPayloadType::Bytes, b"xyz", false);
-        a.ingest(&f).unwrap();
+        a.ingest(&f).await.unwrap();
         // timeout çok büyük → hiçbir giriş eski sayılmaz.
         let n = a.gc(Duration::from_secs(3600));
         assert_eq!(n, 0);
         assert_eq!(a.partial_count(), 1);
     }
 
-    #[test]
-    fn gc_drops_stale_file_sink_and_deletes_disk_file() {
+    #[tokio::test]
+    async fn gc_drops_stale_file_sink_and_deletes_disk_file() {
         let tmp =
             std::env::temp_dir().join(format!("hekadrop-gc-test-{}.part", std::process::id()));
         // Temiz başla.
@@ -539,7 +540,7 @@ mod tests {
         a.register_file_destination(100, tmp.clone()).unwrap();
         // İlk (ve sadece) chunk: dosya açılır, disk'e yazılır, last=false.
         let f = make_frame(100, PbPayloadType::File, b"partial-data", false);
-        a.ingest(&f).unwrap();
+        a.ingest(&f).await.unwrap();
         assert!(tmp.exists(), "chunk sonrası dosya oluşmalı");
         assert_eq!(a.partial_count(), 1);
 
@@ -565,8 +566,8 @@ mod tests {
         assert_eq!(a.partial_count(), 0);
     }
 
-    #[test]
-    fn ingest_triggers_automatic_gc() {
+    #[tokio::test]
+    async fn ingest_triggers_automatic_gc() {
         // 0 timeout → her ingest çağrısında eski olan buffer silinir.
         // Fakat ingest kendi id'si için yeni timestamp yazar, silinmez.
         // Farklı bir id için önce buffer bırakalım, sonra biraz bekleyip
@@ -576,23 +577,23 @@ mod tests {
         // sadece ingest + manuel gc sırasının doğru çalıştığını doğrularız.
         let mut a = PayloadAssembler::new();
         let f_old = make_frame(1, PbPayloadType::Bytes, b"aa", false);
-        a.ingest(&f_old).unwrap();
+        a.ingest(&f_old).await.unwrap();
         let f_new = make_frame(2, PbPayloadType::Bytes, b"bb", false);
-        a.ingest(&f_new).unwrap();
+        a.ingest(&f_new).await.unwrap();
         assert_eq!(a.partial_count(), 2);
 
         std::thread::sleep(Duration::from_millis(15));
         // id=2'yi tazele:
         let f_touch = make_frame(2, PbPayloadType::Bytes, b"cc", false);
-        a.ingest(&f_touch).unwrap();
+        a.ingest(&f_touch).await.unwrap();
 
         let dropped = a.gc(Duration::from_millis(10));
         assert_eq!(dropped, 1, "sadece id=1 düşmeli");
         assert_eq!(a.partial_count(), 1);
     }
 
-    #[test]
-    fn cancel_removes_bytes_file_and_pending() {
+    #[tokio::test]
+    async fn cancel_removes_bytes_file_and_pending() {
         let pid = std::process::id();
         let rnd: u32 = rand::random();
         let tmp = std::env::temp_dir().join(format!("hekadrop-cancel-test-{}-{}.part", pid, rnd));
@@ -601,10 +602,12 @@ mod tests {
 
         // bytes buffer
         a.ingest(&make_frame(1, PbPayloadType::Bytes, b"x", false))
+            .await
             .unwrap();
         // file sink (total_size=big enough for one-byte body)
         a.register_file_destination(2, tmp.clone()).unwrap();
         a.ingest(&make_frame_total(2, PbPayloadType::File, b"y", false, 10))
+            .await
             .unwrap();
         assert!(tmp.exists());
         // pending destination — review-18 MED: cancel artık placeholder'ı da silmeli.
@@ -629,9 +632,9 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(unix)]
-    fn ingest_file_symlink_destination_reddeder() {
+    async fn ingest_file_symlink_destination_reddeder() {
         // review-18: dest.path symlink'e dönüştüyse (TOCTOU) ingest_file
         // reddetmelidir.
         let pid = std::process::id();
@@ -647,6 +650,7 @@ mod tests {
         a.register_file_destination(42, link.clone()).unwrap();
         let err = a
             .ingest(&make_frame_total(42, PbPayloadType::File, b"y", false, 10))
+            .await
             .expect_err("symlink hedef reddedilmeli");
         assert!(
             err.to_string().contains("symlink"),
@@ -658,8 +662,8 @@ mod tests {
         let _ = std::fs::remove_file(&real);
     }
 
-    #[test]
-    fn ingest_file_total_size_absurd_buyuk_reddeder() {
+    #[tokio::test]
+    async fn ingest_file_total_size_absurd_buyuk_reddeder() {
         // review-18: 1 TiB üstü bildirilen dosya başlamadan reddedilmeli.
         let pid = std::process::id();
         let rnd: u32 = rand::random();
@@ -678,6 +682,7 @@ mod tests {
                 false,
                 absurd,
             ))
+            .await
             .expect_err("absurd total_size reddedilmeli");
         assert!(
             err.to_string().contains("absürt") || err.to_string().contains("1 TiB"),
@@ -687,8 +692,8 @@ mod tests {
         let _ = std::fs::remove_file(&tmp);
     }
 
-    #[test]
-    fn file_last_chunk_finalizes_and_computes_sha256() {
+    #[tokio::test]
+    async fn file_last_chunk_finalizes_and_computes_sha256() {
         let tmp =
             std::env::temp_dir().join(format!("hekadrop-finalize-test-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
@@ -703,9 +708,11 @@ mod tests {
             false,
             6,
         ))
+        .await
         .unwrap();
         let out = a
             .ingest(&make_frame_total(200, PbPayloadType::File, b"bar", true, 6))
+            .await
             .unwrap()
             .expect("son chunk tamamlar");
         match out {
@@ -746,12 +753,13 @@ mod tests {
         assert_eq!(a.gc(Duration::from_secs(1)), 0);
     }
 
-    #[test]
-    fn gc_sub_uptime_overflow_safe() {
+    #[tokio::test]
+    async fn gc_sub_uptime_overflow_safe() {
         // Eğer timeout >= process uptime ise `Instant::now() - timeout`
         // panic edebilir. Kod bunu `checked_sub` ile korumalı.
         let mut a = PayloadAssembler::new();
         a.ingest(&make_frame(1, PbPayloadType::Bytes, b"a", false))
+            .await
             .unwrap();
         // 10 yıl gibi absürt timeout.
         let n = a.gc(Duration::from_secs(60 * 60 * 24 * 365 * 10));
@@ -774,8 +782,8 @@ mod tests {
         assert!(err.to_string().contains("duplicate"));
     }
 
-    #[test]
-    fn file_overrun_reddedilir() {
+    #[tokio::test]
+    async fn file_overrun_reddedilir() {
         // total_size=5 iken 10 bayt body → overrun hatası, disk sızıntısı yok.
         let tmp = std::env::temp_dir().join(format!("hd-overrun-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
@@ -783,13 +791,13 @@ mod tests {
         a.register_file_destination(1, tmp.clone()).unwrap();
         let bloat = vec![0xCDu8; 10];
         let f = make_frame_total(1, PbPayloadType::File, &bloat, false, 5);
-        let err = a.ingest(&f).expect_err("overrun red");
+        let err = a.ingest(&f).await.expect_err("overrun red");
         assert!(err.to_string().contains("overrun"));
         let _ = std::fs::remove_file(&tmp);
     }
 
-    #[test]
-    fn file_last_chunk_truncation_reddedilir() {
+    #[tokio::test]
+    async fn file_last_chunk_truncation_reddedilir() {
         // last_chunk=true geldiğinde written != total_size → hata.
         // Peer 10 bayt deklare edip 3 bayt + last_chunk yollayamaz.
         let tmp = std::env::temp_dir().join(format!("hd-trunc-{}.bin", std::process::id()));
@@ -797,19 +805,19 @@ mod tests {
         let mut a = PayloadAssembler::new();
         a.register_file_destination(7, tmp.clone()).unwrap();
         let f = make_frame_total(7, PbPayloadType::File, b"abc", true, 10);
-        let err = a.ingest(&f).expect_err("truncation red");
+        let err = a.ingest(&f).await.expect_err("truncation red");
         assert!(err.to_string().contains("truncated"));
         let _ = std::fs::remove_file(&tmp);
     }
 
-    #[test]
-    fn file_negative_total_size_reddedilir() {
+    #[tokio::test]
+    async fn file_negative_total_size_reddedilir() {
         let tmp = std::env::temp_dir().join(format!("hd-negtotal-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
         let mut a = PayloadAssembler::new();
         a.register_file_destination(9, tmp.clone()).unwrap();
         let f = make_frame_total(9, PbPayloadType::File, b"a", false, -1);
-        let err = a.ingest(&f).expect_err("negatif total red");
+        let err = a.ingest(&f).await.expect_err("negatif total red");
         assert!(err.to_string().contains("negatif"));
     }
 }

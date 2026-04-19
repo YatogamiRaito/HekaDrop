@@ -115,6 +115,11 @@ pub async fn send(req: SendRequest) -> Result<()> {
 
     let addr = format!("{}:{}", req.device.addr, req.device.port);
     let mut socket = TcpStream::connect(&addr).await?;
+    // PERF: Nagle algoritmasını devre dışı bırak — UKEY2 handshake küçük
+    // frame'leri 200 ms bekletmeyi engeller. Fail non-fatal.
+    if let Err(e) = socket.set_nodelay(true) {
+        warn!("[sender] set_nodelay başarısız ({}): {}", addr, e);
+    }
     info!("[sender] TCP bağlantı: {} ✓", addr);
 
     // 2) Plain ConnectionRequest
@@ -186,7 +191,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                 let pt = v1
                     .payload_transfer
                     .ok_or_else(|| anyhow!("payload_transfer yok"))?;
-                let Some(done) = assembler.ingest(&pt)? else {
+                let Some(done) = assembler.ingest(&pt).await? else {
                     continue;
                 };
                 let CompletedPayload::Bytes { data, .. } = done else {
