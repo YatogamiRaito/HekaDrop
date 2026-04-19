@@ -112,13 +112,18 @@ impl PayloadAssembler {
     /// Onaylanmayan (örn. Bytes olup bilinmeyen) bir payload'ı temizler.
     ///
     /// Açıksa dosya kulpunu düşürür ve yarım yazılmış `.part` dosyasını siler.
+    /// Hiç chunk gelmemiş pending destination kayıtları için de diskteki
+    /// 0-bayt placeholder'ı siler — aksi halde iptal sonrası indirme
+    /// klasöründe sahibsiz sıfır bayt dosyalar birikir (review-18 MED).
     #[allow(dead_code)]
     pub fn cancel(&mut self, payload_id: i64) {
         self.bytes_buffers.remove(&payload_id);
         if let Some(sink) = self.file_sinks.remove(&payload_id) {
             remove_partial_file(&sink.path);
         }
-        self.pending_destinations.remove(&payload_id);
+        if let Some(dest) = self.pending_destinations.remove(&payload_id) {
+            remove_partial_file(&dest.path);
+        }
     }
 
     /// Belirli süreden uzun sessiz kalmış partial'ları düşürür.
@@ -284,6 +289,43 @@ impl PayloadAssembler {
             if total_size < 0 {
                 bail!("total_size negatif: {}", total_size);
             }
+            // Quick Share pratikte 1 TiB'den büyük tek dosya göndermez —
+            // 1 TiB üstü değer neredeyse kesin kötü niyetli / broken peer.
+            // Bu sınırı koymadan `(written*100)/total` progress aritmetiği ve
+            // `i64 → u64` cast'lerde sürpriz davranışlara yol açar.
+            const MAX_FILE_BYTES: i64 = 1 << 40; // 1 TiB
+            if total_size > MAX_FILE_BYTES {
+                bail!(
+                    "total_size absürt büyük: {} bayt (>1 TiB limit)",
+                    total_size
+                );
+            }
+            // SECURITY: Hedef yol symlink ise saldırgan (veya TOCTOU race ile
+            // üçüncü taraf) placeholder'ı symlink'e çevirip bizi keyfi dosyaya
+            // yazmaya zorlayabilir. `symlink_metadata` link'i resolve etmez;
+            // symlink tespit edersek işlemi iptal ederiz.
+            // NOT: Placeholder'ın olmaması yasal bir durum (test/legacy kod
+            // `register_file_destination`'ı bir path ile çağırıp diske
+            // placeholder yaratmadan `ingest` çağırabilir — `create:true`
+            // fallback'i bu yol için mevcut). Bu yüzden NotFound'u tolere et.
+            match std::fs::symlink_metadata(&dest.path) {
+                Ok(md) => {
+                    if md.file_type().is_symlink() {
+                        bail!(
+                            "hedef symlink — reddedildi (TOCTOU koruması): {}",
+                            dest.path.display()
+                        );
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // Placeholder yok → legacy/test kodu; `create:true` aşağıda yaratacak.
+                }
+                Err(e) => {
+                    return Err(anyhow::Error::from(e)).with_context(|| {
+                        format!("hedef metadata okunamadı: {}", dest.path.display())
+                    });
+                }
+            }
             let file = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -342,7 +384,17 @@ impl PayloadAssembler {
                     sink.total_size
                 );
             }
-            sink.file.sync_all().ok();
+            // Durability: sync_all hatası yutulursa peer'a başarı mesajı
+            // gönderebiliriz ama disk'te veri henüz yok → crash durumunda
+            // dosya boş/yarım kalır. Hatayı propagate et ki user retry'la
+            // anlamlı bir sonuç alabilsin.
+            sink.file.sync_all().with_context(|| {
+                format!(
+                    "dosya senkronize edilemedi: id={} path={}",
+                    id,
+                    sink.path.display()
+                )
+            })?;
             let digest = sink.hasher.finalize();
             let mut sha256 = [0u8; 32];
             sha256.copy_from_slice(&digest);
@@ -538,21 +590,25 @@ mod tests {
     #[test]
     fn cancel_removes_bytes_file_and_pending() {
         let pid = std::process::id();
-        let tmp = std::env::temp_dir().join(format!("hekadrop-cancel-test-{}.part", pid));
+        let rnd: u32 = rand::random();
+        let tmp = std::env::temp_dir().join(format!("hekadrop-cancel-test-{}-{}.part", pid, rnd));
         let _ = std::fs::remove_file(&tmp);
         let mut a = PayloadAssembler::new();
 
         // bytes buffer
         a.ingest(&make_frame(1, PbPayloadType::Bytes, b"x", false))
             .unwrap();
-        // file sink
+        // file sink (total_size=big enough for one-byte body)
         a.register_file_destination(2, tmp.clone()).unwrap();
-        a.ingest(&make_frame(2, PbPayloadType::File, b"y", false))
+        a.ingest(&make_frame_total(2, PbPayloadType::File, b"y", false, 10))
             .unwrap();
         assert!(tmp.exists());
-        // pending destination
-        let tmp2 = std::env::temp_dir().join(format!("hekadrop-cancel-pending-{}.part", pid));
-        a.register_file_destination(3, tmp2).unwrap();
+        // pending destination — review-18 MED: cancel artık placeholder'ı da silmeli.
+        let tmp2 =
+            std::env::temp_dir().join(format!("hekadrop-cancel-pending-{}-{}.part", pid, rnd));
+        // Diskte sıfır bayt placeholder simulate et (unique_downloads_path davranışı).
+        std::fs::write(&tmp2, b"").expect("placeholder yarat");
+        a.register_file_destination(3, tmp2.clone()).unwrap();
 
         assert_eq!(a.partial_count(), 3);
         a.cancel(1);
@@ -563,6 +619,68 @@ mod tests {
             !tmp.exists(),
             "cancel file sink'in diskteki dosyasını silmeli"
         );
+        assert!(
+            !tmp2.exists(),
+            "cancel pending destination placeholder'ını diskten silmeli"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ingest_file_symlink_destination_reddeder() {
+        // review-18: dest.path symlink'e dönüştüyse (TOCTOU) ingest_file
+        // reddetmelidir.
+        let pid = std::process::id();
+        let rnd: u32 = rand::random();
+        let real = std::env::temp_dir().join(format!("hekadrop-symlink-real-{}-{}.bin", pid, rnd));
+        let link = std::env::temp_dir().join(format!("hekadrop-symlink-link-{}-{}.bin", pid, rnd));
+        let _ = std::fs::remove_file(&real);
+        let _ = std::fs::remove_file(&link);
+        std::fs::write(&real, b"").expect("real yarat");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink yarat");
+
+        let mut a = PayloadAssembler::new();
+        a.register_file_destination(42, link.clone()).unwrap();
+        let err = a
+            .ingest(&make_frame_total(42, PbPayloadType::File, b"y", false, 10))
+            .expect_err("symlink hedef reddedilmeli");
+        assert!(
+            err.to_string().contains("symlink"),
+            "hata mesajı symlink belirtmeli, aldı: {}",
+            err
+        );
+
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_file(&real);
+    }
+
+    #[test]
+    fn ingest_file_total_size_absurd_buyuk_reddeder() {
+        // review-18: 1 TiB üstü bildirilen dosya başlamadan reddedilmeli.
+        let pid = std::process::id();
+        let rnd: u32 = rand::random();
+        let tmp = std::env::temp_dir().join(format!("hekadrop-absurd-{}-{}.bin", pid, rnd));
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&tmp, b"").expect("placeholder");
+
+        let mut a = PayloadAssembler::new();
+        a.register_file_destination(42, tmp.clone()).unwrap();
+        let absurd = (1i64 << 40) + 1; // 1 TiB + 1
+        let err = a
+            .ingest(&make_frame_total(
+                42,
+                PbPayloadType::File,
+                b"x",
+                false,
+                absurd,
+            ))
+            .expect_err("absurd total_size reddedilmeli");
+        assert!(
+            err.to_string().contains("absürt") || err.to_string().contains("1 TiB"),
+            "hata mesajı limit belirtmeli, aldı: {}",
+            err
+        );
+        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
@@ -574,8 +692,14 @@ mod tests {
         a.register_file_destination(200, tmp.clone()).unwrap();
         // İki chunk'lı dosya — total_size=6 (foo+bar). Her iki frame aynı
         // total'ı deklare etmeli yoksa overrun/truncation validasyonu patlar.
-        a.ingest(&make_frame_total(200, PbPayloadType::File, b"foo", false, 6))
-            .unwrap();
+        a.ingest(&make_frame_total(
+            200,
+            PbPayloadType::File,
+            b"foo",
+            false,
+            6,
+        ))
+        .unwrap();
         let out = a
             .ingest(&make_frame_total(200, PbPayloadType::File, b"bar", true, 6))
             .unwrap()
@@ -649,8 +773,7 @@ mod tests {
     #[test]
     fn file_overrun_reddedilir() {
         // total_size=5 iken 10 bayt body → overrun hatası, disk sızıntısı yok.
-        let tmp = std::env::temp_dir()
-            .join(format!("hd-overrun-{}.bin", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("hd-overrun-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
         let mut a = PayloadAssembler::new();
         a.register_file_destination(1, tmp.clone()).unwrap();
@@ -665,8 +788,7 @@ mod tests {
     fn file_last_chunk_truncation_reddedilir() {
         // last_chunk=true geldiğinde written != total_size → hata.
         // Peer 10 bayt deklare edip 3 bayt + last_chunk yollayamaz.
-        let tmp = std::env::temp_dir()
-            .join(format!("hd-trunc-{}.bin", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("hd-trunc-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
         let mut a = PayloadAssembler::new();
         a.register_file_destination(7, tmp.clone()).unwrap();
@@ -678,8 +800,7 @@ mod tests {
 
     #[test]
     fn file_negative_total_size_reddedilir() {
-        let tmp = std::env::temp_dir()
-            .join(format!("hd-negtotal-{}.bin", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("hd-negtotal-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
         let mut a = PayloadAssembler::new();
         a.register_file_destination(9, tmp.clone()).unwrap();

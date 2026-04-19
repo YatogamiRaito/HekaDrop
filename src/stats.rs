@@ -58,14 +58,20 @@ impl Stats {
     }
 
     pub fn save(&self) -> Result<()> {
+        // Process-wide Stats disk lock — review-18 (HIGH) save reordering.
+        // connection.rs (RX path) ve sender.rs (TX path) eş zamanlı
+        // `save()` çağırdığında snapshot'lar disk I/O kuyruğunda ters
+        // sırada çözülüp eski hal diske yazılabilir. Bu mutex serileştirir.
+        static DISK_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+        let _guard = DISK_LOCK.lock();
+
         let path = stats_path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
         let json = serde_json::to_string_pretty(self).context("stats JSON serialize")?;
         // Atomik tmp+rename — crash sırasında yarım yazılmış JSON diske kalmaz.
-        crate::settings::atomic_write(&path, json.as_bytes())
-            .context("stats.json yazılamadı")?;
+        crate::settings::atomic_write(&path, json.as_bytes()).context("stats.json yazılamadı")?;
         Ok(())
     }
 

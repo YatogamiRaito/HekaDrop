@@ -557,6 +557,23 @@ async fn handle_sharing_frame(
                 send_sharing_frame(socket, ctx, &build_consent_accept()).await?;
                 info!("[{}] ✓ kullanıcı kabul etti", peer);
             } else {
+                // Reject: `unique_downloads_path` her `planned_files` için
+                // `create_new(true)` ile 0-bayt placeholder rezerve etmişti.
+                // Hiçbirini PayloadAssembler'a kaydetmediğimiz için normal
+                // cleanup yolu bunları bilmiyor — burada elle siliyoruz,
+                // aksi halde indirme klasöründe sahipsiz boş dosyalar birikir
+                // (review-18 MED).
+                for (_pid, path, _name) in &planned_files {
+                    if let Err(e) = std::fs::remove_file(path) {
+                        if e.kind() != std::io::ErrorKind::NotFound {
+                            tracing::debug!(
+                                "reject cleanup: placeholder silinemedi {}: {}",
+                                path.display(),
+                                e
+                            );
+                        }
+                    }
+                }
                 send_sharing_frame(socket, ctx, &build_consent_reject()).await?;
                 info!("[{}] ✗ kullanıcı reddetti", peer);
                 ui::notify("HekaDrop", &format!("{}: aktarım reddedildi", remote_name));

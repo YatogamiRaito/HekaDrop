@@ -97,8 +97,7 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     frame::write_frame(socket, &client_init_bytes).await?;
 
     // 4) ServerInit al — slow-loris defansı: handshake timeout
-    let server_init_raw =
-        frame::read_frame_timeout(socket, frame::HANDSHAKE_READ_TIMEOUT).await?;
+    let server_init_raw = frame::read_frame_timeout(socket, frame::HANDSHAKE_READ_TIMEOUT).await?;
     let server_init_msg = Ukey2Message::decode(server_init_raw.as_ref())?;
     if server_init_msg.message_type != Some(3) {
         bail!(

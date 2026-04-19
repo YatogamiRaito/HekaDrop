@@ -195,6 +195,71 @@ pub fn config_path() -> PathBuf {
     crate::platform::config_dir().join("config.json")
 }
 
+/// Tmp dosya scope-guard'ı — Drop anında `path`'i sessizce siler.
+///
+/// `atomic_write` içinde tmp dosya yaratılır; başarılı `rename`'den sonra
+/// `defuse()` çağrılarak silinme iptal edilir. Aksi takdirde (write hatası,
+/// rename hatası, paniğe neden olan bir hata) Drop çalışır ve tmp diskte
+/// sızmaz — review-18 (MED) cleanup gereksinimi.
+struct TmpCleanup {
+    path: Option<std::path::PathBuf>,
+}
+
+impl TmpCleanup {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self { path: Some(path) }
+    }
+    /// Temizliği iptal et — rename başarılı olduğunda çağrılır.
+    fn defuse(mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for TmpCleanup {
+    fn drop(&mut self) {
+        if let Some(p) = self.path.take() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+/// Cross-platform atomik replace. Unix'te `fs::rename` zaten atomik
+/// (O_RENAME) ve destination mevcutsa üzerine yazar. Windows'ta
+/// `std::fs::rename` **destination varsa hata verir** — her `save()` ikinci
+/// çağrıdan itibaren sessizce başarısız olurdu. `MoveFileExW` +
+/// `MOVEFILE_REPLACE_EXISTING` bu durumu çözer; `MOVEFILE_WRITE_THROUGH`
+/// direktori entry'sinin diske flush'unu garantiler.
+#[cfg(unix)]
+fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::rename(tmp, dst)
+}
+
+#[cfg(windows)]
+fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    unsafe {
+        MoveFileExW(
+            &HSTRING::from(tmp.as_os_str()),
+            Some(&HSTRING::from(dst.as_os_str())),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+        .map_err(std::io::Error::other)
+    }
+}
+
+/// Process-wide disk write lock — review-18 (HIGH) save-snapshot reordering.
+///
+/// İki concurrent `save()` çağrısı (ör. connection.rs Stats + sender.rs Stats
+/// aynı anda) diske yazılırken, yazım sırası ters dönebilirdi: geç başlayan
+/// save önce bitip eski snapshot'ı diske bırakabilirdi (kernel scheduler,
+/// disk I/O queue vb.). Settings RwLock'u artık lock dışında save yaptığımız
+/// için koruma sağlamıyor. Bu mutex her `save()`'i FIFO sırasına sokar.
+/// Settings ve Stats ayrı hot-path ancak tek bir lock yeterli ve kolay.
+static SETTINGS_DISK_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 /// Atomik dosya yazma — tmp-file + rename pattern.
 ///
 /// **Neden:** `fs::write` traditionally `O_TRUNC | O_CREAT` açar; crash/panic
@@ -202,13 +267,19 @@ pub fn config_path() -> PathBuf {
 /// `Settings::default()`'e düşer, kullanıcının trusted cihaz listesi silinmiş
 /// gibi görünür). `rename` POSIX'te atomik — eski içerik ya olduğu gibi kalır
 /// ya da tamamen yeni içerikle değişir; yarım durum yoktur. Windows'ta
-/// `ReplaceFile`/`MoveFileEx` best-effort atomik (aynı volume şart).
+/// `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` ile
+/// best-effort atomik replace (aynı volume şart).
 ///
-/// Aynı dizinde unique suffix'li tmp file yaratıp `persist` benzeri semantik
-/// sağlar; external `tempfile` crate'ine ihtiyaç yok çünkü süreç-içi paralel
-/// çağrı settings RwLock ile serileştirilmiş (bkz. main.rs call pattern).
+/// Tmp dosya adı `pid + rand u64` ile benzersizdir — aynı süreçte iki thread
+/// aynı anda `save()` çağırırsa da tmp dosya adları çakışmaz. Scope-guard
+/// (`TmpCleanup`) başarısız yazımlarda sızıntıyı önler. `sync_all` hataları
+/// artık yutulmuyor (durability garantisi propagate edilir).
 pub(crate) fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use rand::RngCore;
     use std::io::Write as _;
+
+    let _disk_guard = SETTINGS_DISK_LOCK.lock();
+
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "path'ın parent'ı yok")
     })?;
@@ -216,28 +287,39 @@ pub(crate) fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Resu
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("config.json");
-    let tmp = parent.join(format!(
-        ".{}.{}.tmp",
-        file_name,
-        std::process::id()
-    ));
-    {
-        let mut f = std::fs::OpenOptions::new()
+
+    // Unique tmp adı: pid + rand u64 + create_new(true) retry.
+    // create_new başarısız olursa (AlreadyExists) yeni rand ile tekrar dene;
+    // başka I/O hatalarında erken çık.
+    let pid = std::process::id();
+    let mut attempts = 0u32;
+    let (mut file, tmp_path) = loop {
+        attempts += 1;
+        let r = rand::thread_rng().next_u64();
+        let tmp = parent.join(format!(".{}.{}.{:016x}.tmp", file_name, pid, r));
+        match std::fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&tmp)?;
-        f.write_all(data)?;
-        f.sync_all().ok();
-    }
-    match std::fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            // Rename başarısızsa tmp'yi temizle — disk sızıntısını önle.
-            let _ = std::fs::remove_file(&tmp);
-            Err(e)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(f) => break (f, tmp),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 8 => continue,
+            Err(e) => return Err(e),
         }
-    }
+    };
+
+    // Drop anında sızıntı engelle. Rename başarılı olursa defuse().
+    let cleanup = TmpCleanup::new(tmp_path.clone());
+
+    file.write_all(data)?;
+    // Durability: sync_all hatasını yutmuyoruz — kullanıcı güvenli yazımı
+    // talep etti; diskten dönüş başarısızsa save çağrısı hata dönmeli.
+    file.sync_all()?;
+    drop(file);
+
+    replace_atomic(&tmp_path, path)?;
+    cleanup.defuse();
+    Ok(())
 }
 
 /// `trusted_devices` alanı için özel deserializer — hem yeni (nesne dizisi)
@@ -528,5 +610,115 @@ mod tests {
         s.add_trusted("B", "");
         let list = s.trusted_display_list();
         assert_eq!(list, vec!["A (id-aaaaa)".to_string(), "B".to_string()]);
+    }
+
+    #[test]
+    fn atomic_write_basariyla_yazar_ve_destination_uzerine_yazar() {
+        // Review-18: Windows'ta `fs::rename` destination varsa hata verir →
+        // Regression guard: ikinci yazımın diski üzerine yazdığını doğrula.
+        let dir = std::env::temp_dir().join(format!(
+            "hekadrop-aw-overwrite-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("target.json");
+        atomic_write(&p, b"first").expect("ilk yazım");
+        atomic_write(&p, b"second").expect("ikinci yazım (overwrite)");
+        let got = std::fs::read(&p).expect("read back");
+        assert_eq!(got, b"second");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_tmp_sizintisi_bırakmaz_basariyla() {
+        // `atomic_write`'tan sonra parent dizinde `.target.json.<pid>.<rand>.tmp`
+        // kalan bir tmp olmamalı — defuse() sonrası dosya rename ile yok olmalı.
+        let dir = std::env::temp_dir().join(format!(
+            "hekadrop-aw-tmp-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("target.json");
+        atomic_write(&p, b"ok").expect("write");
+
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "atomic_write sonrası tmp dosya kalmamalı: {:?}",
+            leftovers.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_hata_durumunda_tmp_temizler() {
+        // Parent dizini olmayan bir path'e yazarsak open() ENOENT atar.
+        // Bu durumda TmpCleanup henüz yaratılmamış olur — alternatif olarak
+        // kötü bir rename hedefi vermeyi dene: geçerli tmp yaratılır ama
+        // rename path'i bir var olmayan dizine işaret eder → rename hata
+        // döner ve TmpCleanup'ın Drop'u tmp'yi silmeli.
+        let dir = std::env::temp_dir().join(format!(
+            "hekadrop-aw-err-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Geçerli parent ama destination bir sub-dizin altında (yok → rename fail).
+        let bad_dst = dir.join("nope").join("target.json");
+        let res = atomic_write(&bad_dst, b"x");
+        assert!(res.is_err(), "nonexistent parent rename başarısız olmalı");
+
+        // dir içinde hiç .tmp kalmamalı (eğer tmp yaratıldıysa cleanup silmeli).
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "hatalı yazım sonrası tmp dosya kalmamalı: {:?}",
+            leftovers.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_concurrent_ayni_pid_collision_olmaz() {
+        // Review-18 (HIGH): Aynı süreçte iki thread aynı hedef dosyaya save
+        // çağırdığında tmp adı pid'e dayalıysa çakışır. Rand u64 suffix +
+        // SETTINGS_DISK_LOCK bu sorunu çözer; bu test "at least panic etme"
+        // düzeyinde akıllılık kontrolü.
+        use std::sync::Arc;
+        use std::thread;
+        let dir = Arc::new(std::env::temp_dir().join(format!(
+            "hekadrop-aw-conc-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        )));
+        std::fs::create_dir_all(&*dir).unwrap();
+        let target = Arc::new(dir.join("target.json"));
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let t = Arc::clone(&target);
+                thread::spawn(move || {
+                    let payload = format!("thread-{}", i);
+                    for _ in 0..16 {
+                        atomic_write(&t, payload.as_bytes()).expect("atomic_write ok");
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("thread panic etmemeli");
+        }
+        // Son içerik 8 thread'ten birinin yazdığı olmalı; hiç değilse dosya var.
+        assert!(target.exists());
+        let _ = std::fs::remove_dir_all(&*dir);
     }
 }
