@@ -41,6 +41,7 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 /// Tek chunk'ta gönderilecek maksimum dosya baytı.
@@ -162,9 +163,12 @@ pub async fn send(req: SendRequest) -> Result<()> {
     let mut sent_paired_result = false;
     let peer_label = req.device.name.clone();
     state::clear_cancel();
+    let transfer_id = format!("out:{}:{}", req.device.addr, req.device.port);
+    let _guard = state::TransferGuard::new(&transfer_id);
+    let cancel_token: CancellationToken = _guard.token.clone();
 
     loop {
-        if state::is_cancelled() {
+        if cancel_token.is_cancelled() {
             info!("[sender] kullanıcı iptal etti");
             let cancel = connection::build_sharing_cancel();
             connection::send_sharing_frame(&mut socket, &mut ctx, &cancel)
@@ -173,7 +177,6 @@ pub async fn send(req: SendRequest) -> Result<()> {
             connection::send_disconnection(&mut socket, &mut ctx)
                 .await
                 .ok();
-            state::clear_cancel();
             state::set_progress(ProgressState::Idle);
             bail!("kullanıcı aktarımı iptal etti");
         }
@@ -267,6 +270,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                                 &plan.name,
                                 bytes_sent,
                                 total_bytes,
+                                &cancel_token,
                             )
                             .await?;
                             bytes_sent += plan.size;
@@ -345,6 +349,7 @@ async fn send_file_chunks(
     file_name: &str,
     bytes_sent_before: i64,
     total_bytes: i64,
+    cancel: &CancellationToken,
 ) -> Result<()> {
     let mut file = tokio::fs::File::open(path).await?;
     let mut buf = vec![0u8; CHUNK_SIZE];
@@ -352,7 +357,7 @@ async fn send_file_chunks(
     let mut hasher = Sha256::new();
 
     loop {
-        if state::is_cancelled() {
+        if cancel.is_cancelled() {
             bail!("chunk gönderim sırasında iptal");
         }
         let n = file.read(&mut buf).await?;

@@ -411,7 +411,7 @@ fn run_app() -> ! {
                     rt.spawn(initiate_send_flow());
                 }
             } else if ev.id == cancel_item_id {
-                state::request_cancel();
+                state::request_cancel_all();
                 ui::notify(
                     i18n::t("notify.app_name"),
                     i18n::t("notify.cancel_requested"),

@@ -38,6 +38,13 @@ use tokio::net::TcpStream;
 use tracing::{info, warn};
 
 pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
+    // Broadcast cancel sonrası root süresi dolduysa taze root üret; sonra bu
+    // bağlantıya özel child token al. `TransferGuard` scope sonunda
+    // active_transfers map'inden çıkarır — early-return yollarında bile.
+    state::clear_cancel();
+    let guard = state::TransferGuard::new(format!("in:{}", peer));
+    let cancel = guard.token.clone();
+
     // 1) plain ConnectionRequest
     // SECURITY: Handshake fazındaki tüm frame okumaları slow-loris DoS'a karşı
     // 30 sn timeout ile sarmalanır; aksi halde saldırgan TCP bağlantı açıp
@@ -162,10 +169,9 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     // kullanılır. Peer spec'e uymazsa `None` kalır ve legacy fallback
     // devreye girer.
     let mut peer_secret_id_hash: Option<[u8; 6]> = None;
-    state::clear_cancel();
 
     loop {
-        if state::is_cancelled() {
+        if cancel.is_cancelled() {
             info!(
                 "[{}] kullanıcı iptal — Cancel + Disconnect gönderiliyor",
                 peer
@@ -381,7 +387,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     Ok(())
 }
 
-/// Yarım kalan alıcı state'ini — hem yerel hem global — temizler.
+/// Yarım kalan alıcı state'ini temizler.
 ///
 /// Reject, kullanıcı Cancel, peer Disconnect, I/O hatası veya socket
 /// kopması durumlarının hepsinde güvenli biçimde çağrılır; idempotent'tir.
@@ -390,8 +396,12 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
 ///     çağrılır — yarım yazılmış dosyalar ve açık dosya kulpları temizlenir,
 ///     disk sızıntısı önlenir.
 ///   * `pending_texts` ve `pending_names` tamamen boşaltılır.
-///   * Global `cancel_flag` sıfırlanır (bir sonraki bağlantıyı etkilemesin).
 ///   * Progress durumu `Idle` yapılır (UI "alınıyor…" takılı kalmasın).
+///
+/// Not: Global cancel root'a DOKUNULMAZ (H#1). Paralel koşan diğer handler'ların
+/// child token'ları aynı root'tan türediği için burada sıfırlama, bir tarafın
+/// tamamlanması esnasında diğer tarafa gelen cancel'i kaybetmeye yol açardı.
+/// Per-transfer map temizliği `TransferGuard::drop` ile yapılır.
 fn cleanup_transfer_state(
     peer: &SocketAddr,
     assembler: &mut PayloadAssembler,
@@ -399,7 +409,6 @@ fn cleanup_transfer_state(
     pending_texts: &mut HashMap<i64, TextType>,
 ) {
     let n = drain_pending(assembler, pending_names, pending_texts);
-    state::clear_cancel();
     state::set_progress(ProgressState::Idle);
 
     if n > 0 {
