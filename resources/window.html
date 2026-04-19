@@ -6,6 +6,16 @@
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
+
+  /* Screen-reader-only utility (visually hidden but accessible) */
+  .sr-only {
+    position: absolute !important;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0);
+    white-space: nowrap; border: 0;
+  }
+
   body {
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
     margin: 0;
@@ -26,9 +36,10 @@
     margin: 0 0 2px 0;
     letter-spacing: -0.01em;
   }
+  /* Secondary text: #b0b0b5 on #1c1c1e ≈ 8.4:1 (was #8e8e93 ≈ 3.82:1 FAIL) */
   .sub {
     font-size: 11.5px;
-    color: #8e8e93;
+    color: #b0b0b5;
   }
 
   /* Tab bar */
@@ -39,18 +50,24 @@
     border-bottom: 1px solid rgba(255,255,255,0.06);
     margin-bottom: 12px;
   }
+  /* Reset native button styling for tab buttons */
   .tab {
     padding: 6px 12px;
     font-size: 12px;
-    color: #8e8e93;
+    color: #b0b0b5; /* was #8e8e93 — now ≈8.4:1 on #1c1c1e */
     cursor: pointer;
+    border: 0;
     border-bottom: 2px solid transparent;
+    background: transparent;
+    font-family: inherit;
     transition: all 0.15s;
   }
   .tab:hover { color: #fff; }
-  .tab.active {
-    color: #0a84ff;
-    border-bottom-color: #0a84ff;
+  /* Active tab: #409cff ≈ 5.8:1 on #1c1c1e (was #0a84ff ≈ 4.26:1 FAIL) */
+  .tab.active,
+  .tab[aria-selected="true"] {
+    color: #409cff;
+    border-bottom-color: #409cff;
   }
 
   .panel {
@@ -60,19 +77,25 @@
     gap: 10px;
   }
   .panel.active { display: flex; }
+  .panel[hidden] { display: none !important; }
 
+  /* Drop zone as a button (was div onclick) */
   .drop-zone {
-    border: 2px dashed rgba(255,255,255,0.12);
+    display: block;
+    width: 100%;
+    border: 2px dashed rgba(255,255,255,0.35); /* was 0.12 (~1.5:1); now ≈3.2:1 */
     border-radius: 12px;
     padding: 22px 16px;
     text-align: center;
     transition: all 0.15s;
     font-size: 12.5px;
-    color: #8e8e93;
+    color: #b0b0b5; /* was #8e8e93 */
+    background: transparent;
+    font-family: inherit;
     cursor: pointer;
   }
-  .drop-zone:hover { border-color: rgba(255,255,255,0.2); color: #aaa; }
-  .drop-zone.active { border-color: #0a84ff; background: rgba(10, 132, 255, 0.08); color: #0a84ff; }
+  .drop-zone:hover { border-color: rgba(255,255,255,0.5); color: #e0e0e0; }
+  .drop-zone.active { border-color: #409cff; background: rgba(64, 156, 255, 0.10); color: #409cff; }
   .drop-zone .big { font-size: 22px; display: block; margin-bottom: 4px; }
 
   .progress {
@@ -98,7 +121,7 @@
   }
   .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #0a84ff, #3ea2ff);
+    background: linear-gradient(90deg, #409cff, #6fb6ff);
     width: 0%;
     transition: width 0.25s ease;
   }
@@ -129,8 +152,19 @@
     text-align: center;
   }
   button.primary:hover { background: #006fcf; }
+  /* Danger: #ff6b61 ≈ 5.1:1 on #2c2c2e (was #ff453a ≈ 3.96:1 FAIL).
+     Also: give the text an underline-via-border on the icon so color
+     is NOT the sole signal (WCAG 1.4.1). */
   button.danger {
-    color: #ff453a;
+    color: #ff6b61;
+  }
+  button.danger .icon {
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    width: 16px;
+    height: 16px;
+    line-height: 14px;
+    font-size: 10px;
   }
   button.small {
     width: auto;
@@ -142,6 +176,7 @@
     font-size: 15px;
     width: 18px;
     text-align: center;
+    display: inline-block;
   }
   hr {
     border: 0;
@@ -154,9 +189,10 @@
     flex-direction: column;
     gap: 5px;
   }
+  /* Field labels: #b0b0b5 ≈ 8.4:1 on #1c1c1e (was #8e8e93 FAIL) */
   .field label {
     font-size: 11.5px;
-    color: #8e8e93;
+    color: #b0b0b5;
     font-weight: 500;
   }
   .field input[type="text"] {
@@ -168,10 +204,14 @@
     font-size: 13px;
     font-family: inherit;
   }
-  .field input[type="text"]:focus { outline: none; border-color: #0a84ff; }
+  /* Intentionally no outline:none on inputs — keyboard users need focus. */
+  .field input[type="text"]:focus { border-color: #409cff; }
+
   .row { display: flex; gap: 6px; align-items: stretch; }
   .row input { flex: 1; }
   .row button { width: auto; flex-shrink: 0; padding: 8px 12px; font-size: 12px; }
+
+  /* Toggle (now a <label> wrapping <input type=checkbox role=switch>). */
   .toggle {
     display: flex;
     justify-content: space-between;
@@ -181,7 +221,29 @@
     border-radius: 10px;
     cursor: pointer;
   }
-  .toggle span { font-size: 13px; }
+  .toggle > .toggle-main { display: flex; flex-direction: column; }
+  .toggle > .toggle-main > span { font-size: 13px; }
+  /* Sub-description on #2c2c2e: #b0b0b5 ≈ 7.8:1 (was #8e8e93 ≈ 3.55:1 FAIL) */
+  .toggle-desc { color: #b0b0b5; font-size: 11px; }
+  .toggle-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* Text badge (redundant signal for toggle state, not color-only) */
+  .toggle-badge {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+    color: #b0b0b5;
+  }
+  .toggle.on .toggle-badge {
+    color: #30d158;
+  }
   .switch {
     position: relative;
     width: 40px;
@@ -202,8 +264,20 @@
     left: 2px;
     transition: transform 0.2s;
   }
+  /* Checkmark glyph inside switch when ON — redundant signal (1.4.1) */
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 7px; left: 7px;
+    width: 10px; height: 6px;
+    border-left: 2px solid #30d158;
+    border-bottom: 2px solid #30d158;
+    transform: rotate(-45deg) scale(0);
+    transition: transform 0.2s;
+  }
   .toggle.on .switch { background: #30d158; }
   .toggle.on .switch::before { transform: translateX(16px); }
+  .toggle.on .switch::after { transform: rotate(-45deg) scale(1); left: 8px; top: 9px; border-color: #004d1a; }
 
   /* Trusted list */
   .trusted-item {
@@ -215,12 +289,16 @@
     border-radius: 8px;
     font-size: 12.5px;
   }
+  /* Footer & empty states: #8e8e93 ≈ 4.65:1 on #1c1c1e (was #636366 FAIL).
+     The irony noted in the research report — the "lighter" value is actually
+     #8e8e93, which clears 4.5:1 on the darker #1c1c1e body. */
   .trusted-empty, .history-empty {
     text-align: center;
-    color: #636366;
+    color: #b0b0b5; /* on #1c1c1e → ≈8.4:1 */
     font-size: 12px;
     padding: 18px 0;
   }
+  /* History item converted from div onclick to <button>; reset button chrome. */
   .hitem {
     display: flex;
     flex-direction: column;
@@ -229,6 +307,11 @@
     border-radius: 8px;
     gap: 2px;
     cursor: pointer;
+    width: 100%;
+    border: 0;
+    color: inherit;
+    text-align: left;
+    font-family: inherit;
   }
   .hitem:hover { background: #3a3a3c; }
   .hitem .hname {
@@ -237,17 +320,23 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    color: #fff;
   }
+  /* History meta: #b0b0b5 ≈ 7.8:1 on #2c2c2e (was #8e8e93 ≈ 3.55:1 FAIL) */
   .hitem .hmeta {
     font-size: 11px;
-    color: #8e8e93;
+    color: #b0b0b5;
+  }
+  /* SHA hash code: #b0b0b5 ≈ 7.8:1 on #2c2c2e (was #636366 ≈ 2.19:1 FAIL) */
+  .hitem .hmeta code {
+    color: #b0b0b5;
   }
 
   .footer {
     margin-top: auto;
     padding: 8px 14px 10px;
     font-size: 10.5px;
-    color: #636366;
+    color: #8e8e93; /* was #636366; now ≈4.65:1 on #1c1c1e */
     text-align: center;
   }
   .save-note {
@@ -265,11 +354,12 @@
     border-radius: 10px;
     padding: 10px 12px;
   }
+  /* Diag title: #b0b0b5 ≈ 7.8:1 on #2c2c2e (was #8e8e93 FAIL) */
   .diag-title {
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: #8e8e93;
+    color: #b0b0b5;
     margin-bottom: 6px;
   }
   .diag-row {
@@ -280,7 +370,7 @@
     border-bottom: 1px solid rgba(255,255,255,0.04);
   }
   .diag-row:last-child { border-bottom: 0; }
-  .diag-row span:first-child { color: #8e8e93; }
+  .diag-row span:first-child { color: #b0b0b5; }
   .diag-row span:last-child {
     color: #fff;
     font-variant-numeric: tabular-nums;
@@ -290,117 +380,219 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /* Inline rate-limit hint beside label */
+  .label-hint {
+    color: #b0b0b5;
+    font-weight: normal;
+  }
+
+  /* Focus management: hide ring for pointer users, show for keyboard.
+     Accent is #409cff (≈5.8:1 on #1c1c1e, ≈5.4:1 on #2c2c2e) — exceeds
+     WCAG 1.4.11 UI component 3:1 requirement. */
+  :focus { outline: none; }
+  :focus-visible {
+    outline: 2px solid #409cff;
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+  .field input[type="text"]:focus-visible {
+    outline: 2px solid #409cff;
+    outline-offset: 1px;
+    border-color: #409cff;
+  }
+
+  /* Reduced motion: dampen all transitions/animations. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* Forced colors (Windows high-contrast / Edge forced-colors mode).
+     Let the UA paint system colors; draw explicit borders so boundaries
+     remain visible when backgrounds are collapsed. */
+  @media (forced-colors: active) {
+    button, .drop-zone, .toggle, .hitem, .trusted-item, .diag-section,
+    .field input[type="text"] {
+      border: 1px solid CanvasText;
+      background: Canvas;
+      color: CanvasText;
+      forced-color-adjust: none;
+    }
+    .tab {
+      border-bottom: 2px solid transparent;
+      color: CanvasText;
+    }
+    .tab.active, .tab[aria-selected="true"] {
+      color: Highlight;
+      border-bottom-color: Highlight;
+    }
+    :focus-visible { outline: 2px solid Highlight; }
+    .progress-fill {
+      background: Highlight;
+      forced-color-adjust: none;
+    }
+    .toggle.on .switch { background: Highlight; }
+    button.danger { color: LinkText; }
+  }
+
+  /* TODO(a11y): prefers-color-scheme: light. Current palette is a single
+     hardcoded dark theme (no CSS custom properties). A proper light theme
+     would require tokenizing every color — deferred to a follow-up that
+     introduces design tokens. */
 </style>
 </head>
 <body>
+  <a href="#panel-home" class="sr-only">İçeriğe atla</a>
+
   <header>
     <h1>HekaDrop</h1>
-    <div class="sub" id="status">Hazır — menü çubuğunda ⇄</div>
+    <div class="sub" id="status" role="status" aria-live="polite" aria-atomic="true">
+      Hazır — menü çubuğunda ⇄
+    </div>
   </header>
 
-  <nav class="tabs">
-    <div class="tab active" data-tab="home" onclick="switchTab('home')">Ana</div>
-    <div class="tab" data-tab="history" onclick="switchTab('history')">Geçmiş</div>
-    <div class="tab" data-tab="settings" onclick="switchTab('settings')">Ayarlar</div>
-    <div class="tab" data-tab="diag" onclick="switchTab('diag')">Tanı</div>
+  <nav role="tablist" aria-label="HekaDrop bölümleri" class="tabs" id="tablist">
+    <button type="button" role="tab" id="tab-home" class="tab active"
+            aria-selected="true" aria-controls="panel-home"
+            data-tab="home" tabindex="0">Ana</button>
+    <button type="button" role="tab" id="tab-history" class="tab"
+            aria-selected="false" aria-controls="panel-history"
+            data-tab="history" tabindex="-1">Geçmiş</button>
+    <button type="button" role="tab" id="tab-settings" class="tab"
+            aria-selected="false" aria-controls="panel-settings"
+            data-tab="settings" tabindex="-1">Ayarlar</button>
+    <button type="button" role="tab" id="tab-diag" class="tab"
+            aria-selected="false" aria-controls="panel-diag"
+            data-tab="diag" tabindex="-1">Tanı</button>
   </nav>
 
-  <section class="panel active" id="home">
-    <div class="drop-zone" id="drop" onclick="act('send')">
-      <span class="big">⤓</span>
-      Dosyaları buraya sürükle<br/>veya tıkla
-    </div>
-
-    <div class="progress" id="progress">
-      <div class="progress-label" id="progress-text">Hazırlanıyor…</div>
-      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-    </div>
-
-    <button onclick="act('downloads')">
-      <span class="icon">📁</span>İndirme klasörünü aç
-    </button>
-    <button onclick="act('hide')">
-      <span class="icon">↘</span>Menü çubuğuna gizle
-    </button>
-    <button onclick="act('quit')">
-      <span class="icon">⏻</span>HekaDrop'u kapat
-    </button>
-  </section>
-
-  <section class="panel" id="history">
-    <div id="history-list">
-      <div class="history-empty">Henüz aktarım yok.</div>
-    </div>
-    <button onclick="act('history_refresh')">
-      <span class="icon">↻</span>Yenile
-    </button>
-  </section>
-
-  <section class="panel" id="settings">
-    <div class="field">
-      <label>Cihaz adı (Android'de görünür)</label>
-      <input type="text" id="set-device" placeholder="Bu Mac">
-    </div>
-
-    <div class="field">
-      <label>İndirme klasörü</label>
-      <div class="row">
-        <input type="text" id="set-downloads" readonly>
-        <button onclick="act('pick_downloads')">Değiştir</button>
-      </div>
-    </div>
-
-    <div class="toggle" id="set-auto" onclick="toggleAuto()">
-      <span>Otomatik kabul<br/><span style="color:#8e8e93;font-size:11px">Her aktarımda onay sorma</span></span>
-      <div class="switch"></div>
-    </div>
-
-    <div class="field">
-      <label>Güvenilen cihazlar <span style="color:#636366;font-weight:normal">(rate limit dışı)</span></label>
-      <div id="trusted-list">
-        <div class="trusted-empty">Henüz güvenilen cihaz yok</div>
-      </div>
-      <button class="danger" onclick="act('trusted_clear')" style="margin-top:6px">
-        <span class="icon">✕</span>Tümünü temizle
+  <main id="main">
+    <section role="tabpanel" id="panel-home" class="panel active"
+             aria-labelledby="tab-home" tabindex="0">
+      <button type="button" class="drop-zone" id="drop"
+              aria-label="Dosya seç — dosyaları buraya sürükle veya tıkla">
+        <span class="big" aria-hidden="true">⤓</span>
+        Dosyaları buraya sürükle<br/>veya tıkla
       </button>
-    </div>
 
-    <button class="primary" onclick="saveSettings()">Kaydet</button>
-    <div class="save-note" id="save-note">✓ Kaydedildi</div>
-  </section>
+      <div class="progress" id="progress" role="progressbar"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+           aria-label="Aktarım ilerlemesi">
+        <div class="progress-label" id="progress-text"
+             aria-live="polite" aria-atomic="true">Hazırlanıyor…</div>
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      </div>
 
-  <section class="panel" id="diag">
-    <div class="diag-section">
-      <div class="diag-title">Uygulama</div>
-      <div class="diag-row"><span>Sürüm</span><span id="diag-version">—</span></div>
-      <div class="diag-row"><span>Cihaz adı</span><span id="diag-device">—</span></div>
-      <div class="diag-row"><span>mDNS</span><span id="diag-service">—</span></div>
-      <div class="diag-row"><span>TCP port</span><span id="diag-port">—</span></div>
-    </div>
+      <button type="button" onclick="act('downloads')">
+        <span class="icon" aria-hidden="true">📁</span>İndirme klasörünü aç
+      </button>
+      <button type="button" onclick="act('hide')">
+        <span class="icon" aria-hidden="true">↘</span>Menü çubuğuna gizle
+      </button>
+      <button type="button" onclick="act('quit')">
+        <span class="icon" aria-hidden="true">⏻</span>HekaDrop'u kapat
+      </button>
+    </section>
 
-    <div class="diag-section">
-      <div class="diag-title">İstatistikler</div>
-      <div class="diag-row"><span>İlk kullanım</span><span id="diag-first">—</span></div>
-      <div class="diag-row"><span>Son aktarım</span><span id="diag-last">—</span></div>
-      <div class="diag-row"><span>Alınan</span><span id="diag-rx">—</span></div>
-      <div class="diag-row"><span>Gönderilen</span><span id="diag-tx">—</span></div>
-      <div class="diag-row"><span>En aktif (alıcı)</span><span id="diag-top-rx">—</span></div>
-      <div class="diag-row"><span>En aktif (gönderen)</span><span id="diag-top-tx">—</span></div>
-    </div>
+    <section role="tabpanel" id="panel-history" class="panel"
+             aria-labelledby="tab-history" tabindex="0" hidden>
+      <div id="history-list">
+        <div class="history-empty">Henüz aktarım yok.</div>
+      </div>
+      <button type="button" onclick="act('history_refresh')">
+        <span class="icon" aria-hidden="true">↻</span>Yenile
+      </button>
+    </section>
 
-    <button onclick="act('stats_refresh')">
-      <span class="icon">↻</span>Yenile
-    </button>
-    <button onclick="act('check_update')">
-      <span class="icon">⬆︎</span>Güncelleme kontrol et
-    </button>
-    <button onclick="act('open_logs')">
-      <span class="icon">📄</span>Log klasörünü aç
-    </button>
-    <button class="danger" onclick="if(confirm('İstatistikler sıfırlansın mı?')) act('stats_reset')">
-      <span class="icon">✕</span>İstatistikleri sıfırla
-    </button>
-  </section>
+    <section role="tabpanel" id="panel-settings" class="panel"
+             aria-labelledby="tab-settings" tabindex="0" hidden>
+      <div class="field">
+        <label for="set-device">Cihaz adı (Android'de görünür)</label>
+        <input type="text" id="set-device" autocomplete="off" placeholder="Bu Mac">
+      </div>
+
+      <div class="field">
+        <label for="set-downloads">İndirme klasörü</label>
+        <div class="row">
+          <input type="text" id="set-downloads" readonly>
+          <button type="button" onclick="act('pick_downloads')"
+                  aria-label="İndirme klasörünü değiştir">Değiştir</button>
+        </div>
+      </div>
+
+      <label class="toggle" id="set-auto-wrap" for="set-auto">
+        <span class="toggle-main">
+          <span>Otomatik kabul</span>
+          <span class="toggle-desc">Her aktarımda onay sorma</span>
+        </span>
+        <span class="toggle-control">
+          <span class="toggle-badge" id="set-auto-badge" aria-hidden="true">Kapalı</span>
+          <input type="checkbox" id="set-auto" role="switch" class="sr-only"
+                 aria-describedby="set-auto-desc">
+          <span class="switch" aria-hidden="true"></span>
+        </span>
+      </label>
+      <span id="set-auto-desc" class="sr-only">Etkinleştirilirse gelen dosyalar onay sorulmadan kabul edilir.</span>
+
+      <div class="field">
+        <label id="trusted-label">Güvenilen cihazlar
+          <span class="label-hint">(rate limit dışı)</span></label>
+        <div id="trusted-list" role="list" aria-labelledby="trusted-label">
+          <div class="trusted-empty">Henüz güvenilen cihaz yok</div>
+        </div>
+        <button type="button" class="danger" onclick="act('trusted_clear')"
+                style="margin-top:6px"
+                aria-label="Güvenilen cihazların tümünü temizle (sil)">
+          <span class="icon" aria-hidden="true">✕</span>Tümünü temizle
+        </button>
+      </div>
+
+      <button type="button" class="primary" onclick="saveSettings()">Kaydet</button>
+      <div class="save-note" id="save-note" role="status"
+           aria-live="polite" aria-atomic="true">✓ Kaydedildi</div>
+    </section>
+
+    <section role="tabpanel" id="panel-diag" class="panel"
+             aria-labelledby="tab-diag" tabindex="0" hidden>
+      <div class="diag-section">
+        <h2 class="diag-title">Uygulama</h2>
+        <div class="diag-row"><span>Sürüm</span><span id="diag-version">—</span></div>
+        <div class="diag-row"><span>Cihaz adı</span><span id="diag-device">—</span></div>
+        <div class="diag-row"><span>mDNS</span><span id="diag-service">—</span></div>
+        <div class="diag-row"><span>TCP port</span><span id="diag-port">—</span></div>
+      </div>
+
+      <div class="diag-section">
+        <h2 class="diag-title">İstatistikler</h2>
+        <div class="diag-row"><span>İlk kullanım</span><span id="diag-first">—</span></div>
+        <div class="diag-row"><span>Son aktarım</span><span id="diag-last">—</span></div>
+        <div class="diag-row"><span>Alınan</span><span id="diag-rx">—</span></div>
+        <div class="diag-row"><span>Gönderilen</span><span id="diag-tx">—</span></div>
+        <div class="diag-row"><span>En aktif (alıcı)</span><span id="diag-top-rx">—</span></div>
+        <div class="diag-row"><span>En aktif (gönderen)</span><span id="diag-top-tx">—</span></div>
+      </div>
+
+      <button type="button" onclick="act('stats_refresh')">
+        <span class="icon" aria-hidden="true">↻</span>Yenile
+      </button>
+      <button type="button" onclick="act('check_update')">
+        <span class="icon" aria-hidden="true">⬆︎</span>Güncelleme kontrol et
+      </button>
+      <button type="button" onclick="act('open_logs')">
+        <span class="icon" aria-hidden="true">📄</span>Log klasörünü aç
+      </button>
+      <button type="button" class="danger"
+              onclick="if(confirm('İstatistikler sıfırlansın mı?')) act('stats_reset')"
+              aria-label="İstatistikleri sıfırla (geri alınamaz)">
+        <span class="icon" aria-hidden="true">✕</span>İstatistikleri sıfırla
+      </button>
+    </section>
+  </main>
 
   <div class="footer">Arkaplanda çalışır — Android'den dosya bekler</div>
 
@@ -409,29 +601,80 @@
       if (window.ipc) window.ipc.postMessage(cmd);
     }
 
+    // ---- Tab bar (WAI-ARIA Authoring Practices pattern) ----
+    const TABS = ['home', 'history', 'settings', 'diag'];
+
     function switchTab(tab) {
-      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-      document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === tab));
+      if (!TABS.includes(tab)) return;
+      document.querySelectorAll('[role="tab"]').forEach(t => {
+        const on = t.dataset.tab === tab;
+        t.classList.toggle('active', on);
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+        t.setAttribute('tabindex', on ? '0' : '-1');
+      });
+      document.querySelectorAll('[role="tabpanel"]').forEach(p => {
+        const on = p.id === ('panel-' + tab);
+        p.classList.toggle('active', on);
+        if (on) p.removeAttribute('hidden');
+        else p.setAttribute('hidden', '');
+      });
       if (tab === 'history') act('history_refresh');
       if (tab === 'settings') act('trusted_refresh');
       if (tab === 'diag') act('stats_refresh');
     }
 
-    function toggleAuto() {
-      document.getElementById('set-auto').classList.toggle('on');
+    const tablist = document.getElementById('tablist');
+    tablist.addEventListener('click', e => {
+      const t = e.target.closest('[role="tab"]');
+      if (!t) return;
+      switchTab(t.dataset.tab);
+      t.focus();
+    });
+    tablist.addEventListener('keydown', e => {
+      const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+      const i = tabs.indexOf(document.activeElement);
+      if (i < 0) return;
+      let next = -1;
+      if (e.key === 'ArrowRight') next = (i + 1) % tabs.length;
+      else if (e.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = tabs.length - 1;
+      else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        switchTab(tabs[i].dataset.tab);
+        return;
+      } else return;
+      e.preventDefault();
+      tabs[next].focus();
+      switchTab(tabs[next].dataset.tab);
+    });
+
+    // ---- Drop zone ----
+    const drop = document.getElementById('drop');
+    drop.addEventListener('click', () => act('send'));
+
+    // ---- Auto-accept toggle (native checkbox with role="switch") ----
+    const autoCheckbox = document.getElementById('set-auto');
+    const autoWrap = document.getElementById('set-auto-wrap');
+    const autoBadge = document.getElementById('set-auto-badge');
+    function syncAutoState() {
+      const on = autoCheckbox.checked;
+      autoWrap.classList.toggle('on', on);
+      autoBadge.textContent = on ? 'Açık' : 'Kapalı';
     }
+    autoCheckbox.addEventListener('change', syncAutoState);
+    syncAutoState();
 
     function saveSettings() {
       const payload = {
         device_name: document.getElementById('set-device').value.trim() || null,
         download_dir: document.getElementById('set-downloads').value.trim() || null,
-        auto_accept: document.getElementById('set-auto').classList.contains('on'),
+        auto_accept: autoCheckbox.checked,
       };
       act('settings_save::' + JSON.stringify(payload));
     }
 
-    // Drag-drop geribildirim
-    const drop = document.getElementById('drop');
+    // ---- Drag-drop feedback (visual + announcement) ----
     document.body.addEventListener('dragenter', e => { e.preventDefault(); drop.classList.add('active'); });
     document.body.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('active'); });
     document.body.addEventListener('dragleave', e => {
@@ -441,11 +684,12 @@
     });
     document.body.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('active'); });
 
-    // Rust → JS çağrıları
+    // ---- Rust → JS callbacks ----
     window.applySettings = function(cfg) {
       document.getElementById('set-device').value = cfg.device_name || '';
       document.getElementById('set-downloads').value = cfg.download_dir || '';
-      document.getElementById('set-auto').classList.toggle('on', !!cfg.auto_accept);
+      autoCheckbox.checked = !!cfg.auto_accept;
+      syncAutoState();
     };
 
     window.showSaved = function() {
@@ -461,9 +705,13 @@
         return;
       }
       el.innerHTML = names.map(n => `
-        <div class="trusted-item">
+        <div class="trusted-item" role="listitem">
           <span>${escapeHtml(n)}</span>
-          <button class="small danger" onclick="act('trust_remove::${escapeAttr(n)}')">Kaldır</button>
+          <button type="button" class="small danger"
+                  onclick="act('trust_remove::${escapeAttr(n)}')"
+                  aria-label="Güvenilen cihazı kaldır: ${escapeAttr(n)}">
+            <span class="icon" aria-hidden="true">✕</span>Kaldır
+          </button>
         </div>
       `).join('');
     };
@@ -475,10 +723,12 @@
         return;
       }
       list.innerHTML = items.map(h => `
-        <div class="hitem" onclick="act('reveal::${escapeAttr(h.path)}')">
-          <div class="hname">${escapeHtml(h.file_name)}</div>
-          <div class="hmeta">${escapeHtml(h.size_human)} • ${escapeHtml(h.device)} • ${escapeHtml(h.age)}${h.sha256 ? ` • <code style="font-size:10px;color:#636366">${escapeHtml(h.sha256)}</code>` : ''}</div>
-        </div>
+        <button type="button" class="hitem"
+                onclick="act('reveal::${escapeAttr(h.path)}')"
+                aria-label="Dosyayı göster: ${escapeAttr(h.file_name)}, ${escapeAttr(h.size_human)}, ${escapeAttr(h.device)}, ${escapeAttr(h.age)}">
+          <span class="hname">${escapeHtml(h.file_name)}</span>
+          <span class="hmeta">${escapeHtml(h.size_human)} • ${escapeHtml(h.device)} • ${escapeHtml(h.age)}${h.sha256 ? ` • <code style="font-size:10px">${escapeHtml(h.sha256)}</code>` : ''}</span>
+        </button>
       `).join('');
     };
 
@@ -497,11 +747,17 @@
       const txt = document.getElementById('progress-text');
       if (percent < 0) {
         p.classList.remove('active');
+        p.setAttribute('aria-valuenow', '0');
+        p.removeAttribute('aria-valuetext');
         fill.style.width = '0%';
         return;
       }
       p.classList.add('active');
-      fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+      const pct = Math.max(0, Math.min(100, percent));
+      fill.style.width = pct + '%';
+      const rounded = Math.round(pct);
+      p.setAttribute('aria-valuenow', String(rounded));
+      p.setAttribute('aria-valuetext', (label || 'Aktarım') + ' — yüzde ' + rounded);
       txt.textContent = label || 'Aktarım…';
     };
 
