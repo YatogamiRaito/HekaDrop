@@ -19,8 +19,10 @@
 //! let msg = tf("notify.received", &[&filename, &size_human]);
 //! ```
 //!
-//! Bilinmeyen key'ler ve eksik çeviriler key string'i olarak döner — görünür
-//! bir fallback, böylece test/debug sırasında eksiklikler gözükür.
+//! Bilinmeyen key'ler ve eksik çeviriler **key string'inin kendisi** olarak döner
+//! — böylece "tray.status.ready" gibi bir ifade UI'da gözükür ve eksik çeviri
+//! gözden kaçmaz. `t()`/`tf()` `&'static str` key alır (çağrılar genelde
+//! literal), fallback lifetime problemsiz çalışır.
 
 use std::sync::OnceLock;
 
@@ -63,35 +65,70 @@ fn parse_lang(raw: &str) -> Option<Lang> {
     }
 }
 
-/// Basit key → çeviri. Bilinmeyen key veya eksik çeviri için `"?"` döner
-/// (caller'ın key'inin `'static` garantisi olmadığından güvenli fallback).
-/// Debug build'de eksik key paniklemez, UI'da görünür — böylece eksikler
-/// test sırasında fark edilir.
-pub fn t(key: &str) -> &'static str {
-    // Öncelik: seçilen dil → diğer dil → sabit "?"
+/// Key → çeviri. Sıra: seçilen dil → diğer dil → key'in kendisi.
+///
+/// `key` `&'static str` — çağrı siteleri literal olduğundan (`t("tray.xxx")`)
+/// bu kısıt sorun değil ve fallback olarak key'i dönmeyi güvenli kılar.
+/// Eksik çeviri varsa UI'da key string'i görünür, dev fark eder.
+pub fn t(key: &'static str) -> &'static str {
     let lang = current();
-    let primary = match lang {
-        Lang::Tr => lookup_tr(key),
-        Lang::En => lookup_en(key),
-    };
-    primary
-        .or_else(|| match lang {
-            Lang::Tr => lookup_en(key),
-            Lang::En => lookup_tr(key),
-        })
-        .unwrap_or("?")
+    match lang {
+        Lang::Tr => lookup_tr(key).or_else(|| lookup_en(key)).unwrap_or(key),
+        Lang::En => lookup_en(key).or_else(|| lookup_tr(key)).unwrap_or(key),
+    }
 }
 
 /// Formatlı çeviri. `{0}`, `{1}` yer tutucularını sırayla `args` ile değiştirir.
 ///
 /// Rust'ın compile-time `format!` makrosu runtime format string kabul etmez;
-/// bu yüzden basit `.replace()` tabanlı bir formatter yeterli. `{0}` / `{1}`
-/// her dil dosyasında aynı sırada olmak ZORUNDA değil — yer tutucular indeksli,
-/// çeviriler cümle yapısına göre yerleri değiştirebilir.
-pub fn tf(key: &str, args: &[&str]) -> String {
-    let mut out = t(key).to_string();
-    for (i, a) in args.iter().enumerate() {
-        out = out.replace(&format!("{{{}}}", i), a);
+/// bu yüzden template'i tek-geçişli kendimiz parse ediyoruz. Çoklu `.replace()`
+/// çağrısı "double-replace" bug'ına açık olurdu (args içinde `{N}` varsa
+/// sonraki iterasyonda tekrar değiştiriliyordu) — single-pass parser bundan
+/// bağışık.
+///
+/// Placeholder olmayan `{` karakterleri literal bırakılır (kullanıcıya
+/// gösterilen metinde `{X}` geçmesi tipik değil ama güvenli).
+pub fn tf(key: &'static str, args: &[&str]) -> String {
+    apply_args(t(key), args)
+}
+
+/// Template stringinde `{N}` yer tutucularını args ile doldurur (single-pass).
+/// Public `tf()`'nin test edilebilir yan yüzü — `current()` OnceLock'una
+/// bağımlı değil, saf deterministik fonksiyon.
+pub(crate) fn apply_args(template: &str, args: &[&str]) -> String {
+    let bytes = template.as_bytes();
+    let mut out = String::with_capacity(bytes.len() + 32);
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            // `{N}` olup olmadığına bak (N = 1+ ASCII digit, sonra `}`).
+            let start = i + 1;
+            let mut j = start;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > start && j < bytes.len() && bytes[j] == b'}' {
+                // Geçerli `{N}` — index'i parse et ve arg'ı yaz.
+                if let Ok(idx) = template[start..j].parse::<usize>() {
+                    if let Some(arg) = args.get(idx) {
+                        out.push_str(arg);
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+            // Geçersiz/indeks aralık dışı — `{` karakterini literal bırak.
+            out.push('{');
+            i += 1;
+        } else {
+            // Bir sonraki `{`'e kadar toplu kopyala (hızlı path).
+            let end = template[i..]
+                .find('{')
+                .map(|p| i + p)
+                .unwrap_or(bytes.len());
+            out.push_str(&template[i..end]);
+            i = end;
+        }
     }
     out
 }
@@ -124,6 +161,7 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "notify.auto_accept_on" => "Otomatik kabul açık",
         "notify.auto_accept_off" => "Otomatik kabul kapalı",
         "notify.cancel_requested" => "İptal istendi, aktif transferler sonlandırılıyor…",
+        "notify.transfer_cancelled" => "Aktarım iptal edildi",
         "notify.background" => "Arkaplanda çalışıyor — menü çubuğundan devam edebilirsin",
         "notify.hidden" => "Arkaplana gizlendi — menü çubuğundan aç",
         "notify.sending_to" => "{0} hedefine gönderiliyor: {1}",
@@ -204,6 +242,7 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "notify.auto_accept_on" => "Auto accept enabled",
         "notify.auto_accept_off" => "Auto accept disabled",
         "notify.cancel_requested" => "Cancel requested — active transfers are ending…",
+        "notify.transfer_cancelled" => "Transfer cancelled",
         "notify.background" => "Running in background — continue from the tray",
         "notify.hidden" => "Hidden to tray — open from the menu bar",
         "notify.sending_to" => "Sending to {0}: {1}",
@@ -286,17 +325,47 @@ mod tests {
     }
 
     #[test]
-    fn tf_yer_tutuculari_doldurur() {
-        // Direkt lookup_tr / lookup_en test ederek static LANG'den bağımsız ol.
-        let tr = lookup_tr("notify.received").unwrap();
-        let mut s = tr.to_string();
-        s = s.replace("{0}", "dosya.pdf").replace("{1}", "1.2 MB");
-        assert_eq!(s, "İndirildi: dosya.pdf (1.2 MB)");
+    fn apply_args_basit_iki_yer_tutucu() {
+        // Deterministik test — `current()` OnceLock'una bağlı değil.
+        assert_eq!(
+            apply_args("İndirildi: {0} ({1})", &["dosya.pdf", "1.2 MB"]),
+            "İndirildi: dosya.pdf (1.2 MB)"
+        );
+    }
 
-        let en = lookup_en("notify.received").unwrap();
-        let mut s = en.to_string();
-        s = s.replace("{0}", "file.pdf").replace("{1}", "1.2 MB");
-        assert_eq!(s, "Received: file.pdf (1.2 MB)");
+    #[test]
+    fn apply_args_yer_degistirme_baglantisiz() {
+        // Placeholders her dilde aynı sırada olmak zorunda değil.
+        assert_eq!(
+            apply_args("{1} to {0}", &["alpha", "beta"]),
+            "beta to alpha"
+        );
+    }
+
+    #[test]
+    fn apply_args_double_replace_bug_olmuyor() {
+        // Klasik bug senaryosu: ilk arg, sonraki placeholder'ı içeriyor.
+        // Çoklu .replace() ile "{1}" tekrar değiştirilirdi. Single-pass
+        // parser'da arg içeriği template olarak yorumlanmaz.
+        assert_eq!(apply_args("{0} and {1}", &["{1}", "val"]), "{1} and val");
+        assert_eq!(apply_args("{0} / {1}", &["{0}", "x"]), "{0} / x");
+    }
+
+    #[test]
+    fn apply_args_indeks_disi_literal_kalir() {
+        // args'ta olmayan index → `{5}` literal olarak yazılır.
+        assert_eq!(apply_args("hi {5}", &["a"]), "hi {5}");
+    }
+
+    #[test]
+    fn apply_args_bracket_literal_korunur() {
+        // Geçersiz placeholder ({} boş, {ab} non-digit) literal kalır.
+        assert_eq!(apply_args("{} and {ab}", &["x"]), "{} and {ab}");
+    }
+
+    #[test]
+    fn apply_args_bos_template_bos_doner() {
+        assert_eq!(apply_args("", &["x"]), "");
     }
 
     #[test]
@@ -324,6 +393,7 @@ mod tests {
             "notify.auto_accept_on",
             "notify.auto_accept_off",
             "notify.cancel_requested",
+            "notify.transfer_cancelled",
             "notify.background",
             "notify.hidden",
             "notify.sending_to",

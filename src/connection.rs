@@ -159,7 +159,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
             );
             ui::notify(
                 crate::i18n::t("notify.app_name"),
-                crate::i18n::t("notify.cancel_requested"),
+                crate::i18n::t("notify.transfer_cancelled"),
             );
             break;
         }
@@ -299,16 +299,11 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 path.display(),
                                 total_size
                             );
-                            let fname = path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("file")
-                                .to_string();
                             ui::notify_file_received(
                                 crate::i18n::t("notify.app_name"),
                                 &crate::i18n::tf(
                                     "notify.received",
-                                    &[&fname, &human_size(total_size)],
+                                    &[&file_name, &human_size(total_size)],
                                 ),
                                 path.clone(),
                             );
