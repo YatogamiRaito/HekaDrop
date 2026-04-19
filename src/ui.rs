@@ -291,6 +291,10 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
                 // (wait_for_action Linux-özel). Toast otomatik kapanır.
                 #[cfg(target_os = "windows")]
                 {
+                    // path closure'a move ile geldi ama şimdilik Windows
+                    // branch'inde toast callback bağlanmadığı için kullanılmıyor.
+                    // Unused-variable warning'ini bastır.
+                    let _ = &path;
                     let _ = handle;
                 }
             });
@@ -394,7 +398,7 @@ pub fn show_info(title: &str, body: &str) {
                 let title_w = to_wide(&title);
                 unsafe {
                     MessageBoxW(
-                        HWND::default(),
+                        Some(HWND::default()),
                         PCWSTR(body_w.as_ptr()),
                         PCWSTR(title_w.as_ptr()),
                         MB_OK | MB_ICONINFORMATION | MB_SYSTEMMODAL,
