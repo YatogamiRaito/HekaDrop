@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-19
+
+İkinci platform — Linux. Çekirdek Quick Share protokolü değişmedi; UI / path /
+autostart katmanları `cfg`-gated cross-platform hale geldi.
+
 ### Added
 - Integration test suite (unit + protocol-compliance) kapsayan end-to-end senaryolar
 - Strict clippy + coverage + rustdoc CI workflow'ları (`ci.yml`, `coverage.yml`, `docs.yml`)
@@ -23,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - mDNS yayın filtresi: Docker/virbr/tailscale sanal arayüzleri hariç bırakılır (yanlış IP çözümlenmesini önler)
 - Makefile'a Linux hedefleri: `install-linux`, `install-linux-system`, `uninstall-linux`, `deb`
 - Cargo.toml `[package.metadata.deb]` — cargo-deb ile paket üretimi
+- Ubuntu `test-linux` CI job'u + `.deb` artifact upload
 
 ### Changed
 - `Settings` yapısı JSON migration ile geri uyumlu (eski alanlar opsiyonel)
@@ -30,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Progress yayınları debounce (UI'ya yansıyan event sayısı azaltıldı)
 - Config/log yolları XDG uyumlu (`~/.config/HekaDrop`, `~/.local/state/HekaDrop/logs`); macOS'ta `~/Library/...` aynı kalır
 - Cihaz adı platform-aware: macOS'ta `scutil`, Linux'ta `/etc/hostname`
+- mDNS `advertise` artık `Result<Option<MdnsHandle>>` döner — uygun IPv4 yoksa UI çalışır, mDNS sessizce devre dışı
+- `toggle_login_item` artık Linux ve macOS destekli (systemd `--user` + launchd); Windows ve diğer platformlar için no-op stub
 
 ### Fixed
 - Reject sonrası pending destination temizliği (orphan dosyalar geride kalmıyordu)
@@ -37,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unknown trusted device isim çakışması (endpoint ID hash ile ayrıştırıldı)
 - `FileSink.written` ölü kod temizliği
 - mDNS kapatılırken servis kaydı düşürülmeyen nadir race condition
+- D-Bus `FileManager1.ShowItems` URI'si RFC 3986 percent-encoding — boşluk / `#` / `?` / `%` / Türkçe karakterli dosya adları için doğru URI üretilir
+- `HEKADROP_PORT=0` değeri artık filtrelenir — "sabit port" semantiği korunur
 
 ### Security
 - Sequence number doğrulaması çift yönlü (hem alıcı hem gönderici tarafında)
@@ -73,5 +83,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replay koruması: sequence counter ile HMAC doğrulaması
 - Trafik hiçbir sunucuya uğramaz — yalnız yerel ağ
 
-[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/YatogamiRaito/HekaDrop/releases/tag/v0.1.0
