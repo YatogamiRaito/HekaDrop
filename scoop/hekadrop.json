@@ -1,0 +1,30 @@
+{
+  "version": "0.4.0",
+  "description": "Google Quick Share (Nearby Share) client — Rust, cross-platform",
+  "homepage": "https://github.com/YatogamiRaito/HekaDrop",
+  "license": "MIT",
+  "url": "https://github.com/YatogamiRaito/HekaDrop/releases/download/v0.4.0/HekaDrop-0.4.0.exe",
+  "hash": "01a98c98d42a05d8e0215edb73dfda77bbf82533ec44ca4a22dfcebf4f92e7fb",
+  "bin": [
+    [
+      "HekaDrop-0.4.0.exe",
+      "hekadrop"
+    ]
+  ],
+  "shortcuts": [
+    [
+      "HekaDrop-0.4.0.exe",
+      "HekaDrop"
+    ]
+  ],
+  "checkver": {
+    "github": "https://github.com/YatogamiRaito/HekaDrop"
+  },
+  "autoupdate": {
+    "url": "https://github.com/YatogamiRaito/HekaDrop/releases/download/v$version/HekaDrop-$version.exe",
+    "hash": {
+      "url": "$baseurl/v$version",
+      "regex": "(?s)<code>([a-f0-9]{64})\\s+HekaDrop-$version\\.exe"
+    }
+  }
+}
