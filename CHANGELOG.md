@@ -7,12 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<<<<<<< HEAD
+### Changed (accessibility)
+- Webview CSS tokenized via CSS custom properties (`--bg-*`, `--fg-*`,
+  `--accent`, `--danger`, `--border*`). Dark palette unchanged by
+  default; `prefers-color-scheme: light` now renders a WCAG 2.1 AA
+  conformant light theme. `forced-colors: active` uses system colors.
+  Explicit override via `<html data-theme="light|dark">` for future
+  Settings-driven toggle.
+=======
 ### Documentation
 - `docs/design/017-trusted-id-hardening.md` — Issue #17 tasarım belgesi:
   trusted cihaz kimliğinin `endpoint_id` (4 byte, spoofable) yerine
   `PairedKeyEncryption.secret_id_hash` (6 byte, device-stable) + 7 gün
   TTL üzerine bağlanması önerisi. Implementation v0.6.0 hedefli; belge
   review için açık sorular + risk register + migration planı içeriyor.
+>>>>>>> origin/main
 
 ### Changed (release infrastructure)
 - Release workflow now publishes Windows `.exe` + Linux `.deb` in
