@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-19
+
+**⚠️ Security hotfix** — v0.5.0 kullanıcıları hemen güncellemelidir.
+
+### Security
+- **[Critical security fix] Path traversal**: Uzak cihazdan gelen
+  `FileMetadata.name` alanı sanitize edilmeden kullanılıyordu; `..\..\..\path`
+  veya absolute path'lerle `~/Downloads` dışına dosya yazılabiliyordu.
+  `auto_accept=true` veya trusted device yolunda autostart konumlarına
+  yazılarak RCE'ye çevrilebilirdi. `sanitize_received_name()` eklendi:
+  basename-only, reserved adlar (+ `CONIN$`/`CONOUT$`/`CLOCK$`, çoklu
+  uzantı + trailing dot bypass), NUL/control + Windows yasaklı
+  karakterler (`<>:"/\\|?*` — özellikle NTFS ADS için `:`), 200-byte
+  UTF-8 limit.
+- **[Critical security fix] URL scheme allow-list**: `TextType::Url`
+  payload `open_url()`'a doğrudan gidiyordu; `javascript:`, `file://`,
+  `smb://` (NTLM leak), `ms-msdt:` ve özel protocol handler'lar
+  exploit'e açık idi. `is_safe_url_scheme()` yalnız `http://`/`https://`
+  kabul eder; diğerleri clipboard'a kopyalanır ve kullanıcıya bildirilir.
+- CVE ID'leri GitHub Security Advisory publish edildikten sonra bu
+  entry'ye eklenecek.
+
+### Added
+- 16 birim test: sanitize (Unix/Windows traversal, NUL, reserved names
+  + çoklu uzantı, CONIN$/CONOUT$/CLOCK$, trailing dot/space bypass,
+  NTFS ADS + Windows yasaklı karakterler, UTF-8 boundary, Türkçe);
+  url scheme (safe http/https + unsafe javascript/file/smb/data/
+  vbscript/ms-msdt/zoom-us).
+
+### Changed (post-review hardening)
+- Reserved device adı kontrolü **ilk** nokta öncesi stem üzerinde
+  (`split_name`'in son-nokta mantığı `CON.tar.gz` gibi çoklu uzantılı
+  adları kaçırıyordu)
+- Trailing dot/space sondan kırpılır (`CON.` / `CON ` Windows'ta `CON`
+  açar, bypass engellendi)
+- NTFS ADS karakteri `:` ve diğer Windows yasaklı `<>"/\\|?*`
+  karakterleri filter listesinde
+- Ek reserved device adları: CONIN$, CONOUT$, CLOCK$
+
 ## [0.5.0] - 2026-04-19
 
 Projenin public yayın sürümü. Paketleme, lokalizasyon ve UX
@@ -153,7 +192,8 @@ autostart katmanları `cfg`-gated cross-platform hale geldi.
 - Replay koruması: sequence counter ile HMAC doğrulaması
 - Trafik hiçbir sunucuya uğramaz — yalnız yerel ağ
 
-[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.1.0...v0.3.0
