@@ -18,6 +18,7 @@ mod crypto;
 mod discovery;
 mod error;
 mod frame;
+mod i18n;
 mod mdns;
 mod payload;
 mod platform;
@@ -234,18 +235,19 @@ fn run_app() -> ! {
 
     // Menü (tray)
     let tray_menu = Menu::new();
-    let title_item = MenuItem::new(format!("HekaDrop — {}", device_name), false, None);
-    let status_item = MenuItem::new("Hazır", false, None);
-    let show_window_item = MenuItem::new("Pencereyi göster", true, None);
-    let send_item = MenuItem::new("Dosya gönder…", true, None);
-    let cancel_item = MenuItem::new("Aktarımı iptal et", false, None);
-    let auto_accept_item = CheckMenuItem::new("Otomatik kabul", true, auto_accept_initial, None);
-    let history_item = MenuItem::new("Son aktarımları göster", true, None);
-    let open_downloads = MenuItem::new("İndirme klasörünü aç", true, None);
-    let open_config = MenuItem::new("Yapılandırma dosyasını göster", true, None);
-    let login_item = MenuItem::new("Başlangıçta aç (Launchd)", true, None);
-    let about_item = MenuItem::new("Hakkında", true, None);
-    let quit_item = MenuItem::new("Çıkış", true, None);
+    let title_item = MenuItem::new(i18n::tf("tray.title_format", &[&device_name]), false, None);
+    let status_item = MenuItem::new(i18n::t("tray.status.ready"), false, None);
+    let show_window_item = MenuItem::new(i18n::t("tray.show_window"), true, None);
+    let send_item = MenuItem::new(i18n::t("tray.send_file"), true, None);
+    let cancel_item = MenuItem::new(i18n::t("tray.cancel"), false, None);
+    let auto_accept_item =
+        CheckMenuItem::new(i18n::t("tray.auto_accept"), true, auto_accept_initial, None);
+    let history_item = MenuItem::new(i18n::t("tray.history"), true, None);
+    let open_downloads = MenuItem::new(i18n::t("tray.open_downloads"), true, None);
+    let open_config = MenuItem::new(i18n::t("tray.open_config"), true, None);
+    let login_item = MenuItem::new(i18n::t("tray.login_item"), true, None);
+    let about_item = MenuItem::new(i18n::t("tray.about"), true, None);
+    let quit_item = MenuItem::new(i18n::t("tray.quit"), true, None);
 
     tray_menu.append(&title_item).ok();
     tray_menu.append(&status_item).ok();
@@ -348,10 +350,7 @@ fn run_app() -> ! {
         {
             // Kapatma yerine gizle — uygulama arkaplanda çalışmaya devam eder.
             window.set_visible(false);
-            ui::notify(
-                "HekaDrop",
-                "Arkaplanda çalışıyor — menü çubuğundan devam edebilirsin",
-            );
+            ui::notify(i18n::t("notify.app_name"), i18n::t("notify.background"));
             return;
         }
 
@@ -376,7 +375,7 @@ fn run_app() -> ! {
         let status_text = progress_label(&progress);
         if status_text != last_status_text {
             status_item.set_text(&status_text);
-            let _ = tray.set_tooltip(Some(format!("HekaDrop — {}", status_text)));
+            let _ = tray.set_tooltip(Some(i18n::tf("tray.tooltip_format", &[&status_text])));
             last_status_text = status_text.clone();
         }
 
@@ -406,8 +405,8 @@ fn run_app() -> ! {
             } else if ev.id == cancel_item_id {
                 state::request_cancel();
                 ui::notify(
-                    "HekaDrop",
-                    "İptal istendi, aktif transferler sonlandırılıyor…",
+                    i18n::t("notify.app_name"),
+                    i18n::t("notify.cancel_requested"),
                 );
             } else if ev.id == open_downloads_id {
                 open_downloads_folder();
@@ -423,11 +422,11 @@ fn run_app() -> ! {
                 }
                 info!("auto_accept → {}", new_val);
                 ui::notify(
-                    "HekaDrop",
+                    i18n::t("notify.app_name"),
                     if new_val {
-                        "Otomatik kabul açık"
+                        i18n::t("notify.auto_accept_on")
                     } else {
-                        "Otomatik kabul kapalı"
+                        i18n::t("notify.auto_accept_off")
                     },
                 );
             } else if ev.id == login_item_id {
@@ -435,7 +434,7 @@ fn run_app() -> ! {
             } else if ev.id == history_item_id {
                 show_history();
             } else if ev.id == about_item_id {
-                ui::notify("HekaDrop", "Quick Share alıcısı/göndericisi — Rust/macOS");
+                ui::notify(i18n::t("notify.app_name"), i18n::t("notify.about"));
             }
         }
     });
@@ -458,7 +457,10 @@ fn handle_ipc(cmd: &str) {
         let _ = s.save();
         drop(s);
         push_trusted_to_ui();
-        ui::notify("HekaDrop", &format!("Güven kaldırıldı: {}", name));
+        ui::notify(
+            i18n::t("notify.app_name"),
+            &i18n::tf("notify.trust_removed", &[name]),
+        );
         return;
     }
     match cmd {
@@ -480,7 +482,7 @@ fn handle_ipc(cmd: &str) {
             let _ = s.save();
             drop(s);
             push_stats_to_ui();
-            ui::notify("HekaDrop", "İstatistikler sıfırlandı");
+            ui::notify(i18n::t("notify.app_name"), i18n::t("notify.stats_reset"));
         }
         "open_logs" => {
             platform::open_path(&platform::logs_dir());
@@ -497,7 +499,7 @@ fn handle_ipc(cmd: &str) {
             let _ = s.save();
             drop(s);
             push_trusted_to_ui();
-            ui::notify("HekaDrop", "Tüm güvenilen cihazlar temizlendi");
+            ui::notify(i18n::t("notify.app_name"), i18n::t("notify.trust_cleared"));
         }
         "history_refresh" => push_history_to_ui(),
         "pick_downloads" => {
@@ -517,7 +519,7 @@ fn handle_ipc(cmd: &str) {
         "config" => open_config_file(),
         "hide" => {
             state::request_hide_window();
-            ui::notify("HekaDrop", "Arkaplana gizlendi — menü çubuğundan aç");
+            ui::notify(i18n::t("notify.app_name"), i18n::t("notify.hidden"));
         }
         "quit" => std::process::exit(0),
         other => tracing::warn!("bilinmeyen ipc: {}", other),
@@ -548,7 +550,7 @@ fn handle_settings_save(json: &str) {
     }
     info!("[ui] ayarlar güncellendi");
     state::enqueue_js("window.showSaved && window.showSaved()".into());
-    ui::notify("HekaDrop", "Ayarlar kaydedildi");
+    ui::notify(i18n::t("notify.app_name"), i18n::t("notify.settings_saved"));
 }
 
 fn push_settings_to_ui() {
@@ -579,12 +581,12 @@ fn push_stats_to_ui() {
     let first_use_human = if s.first_use_epoch > 0 {
         relative_time(now.saturating_sub(s.first_use_epoch))
     } else {
-        "henüz yok".to_string()
+        i18n::t("time.none").to_string()
     };
     let last_use_human = if s.last_use_epoch > 0 {
         relative_time(now.saturating_sub(s.last_use_epoch))
     } else {
-        "henüz yok".to_string()
+        i18n::t("time.none").to_string()
     };
 
     let top_rx = s
@@ -722,13 +724,16 @@ fn push_progress_to_ui(webview: &wry::WebView, p: &state::ProgressState) {
 
 fn progress_label(p: &state::ProgressState) -> String {
     match p {
-        state::ProgressState::Idle => "Hazır".to_string(),
+        state::ProgressState::Idle => i18n::t("tray.status.ready").to_string(),
         state::ProgressState::Receiving {
             device,
             file,
             percent,
-        } => format!("Alınıyor ({}): {} %{}", device, file, percent),
-        state::ProgressState::Completed { file } => format!("Tamamlandı: {}", file),
+        } => i18n::tf(
+            "tray.status.receiving",
+            &[device, file, &percent.to_string()],
+        ),
+        state::ProgressState::Completed { file } => i18n::tf("tray.status.completed", &[file]),
     }
 }
 
@@ -745,22 +750,19 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
     }
     info!("[send_flow] {} dosya ile başlatılıyor", files.len());
 
-    ui::notify("HekaDrop", "Yakındaki cihazlar taranıyor…");
+    ui::notify(i18n::t("notify.app_name"), i18n::t("notify.scanning"));
 
     let own_port = state::listen_port();
     let devices = match discovery::scan(Duration::from_secs(3), own_port).await {
         Ok(v) => v,
         Err(e) => {
-            ui::show_info("HekaDrop — keşif hatası", &format!("{:#}", e));
+            ui::show_info(i18n::t("send.discovery_error"), &format!("{:#}", e));
             return;
         }
     };
 
     if devices.is_empty() {
-        ui::show_info(
-            "HekaDrop",
-            "Yakında Quick Share cihazı bulunamadı.\n\nAndroid'de: Ayarlar → Bağlı cihazlar → Quick Share → görünürlüğü \"Herkes\" yap ve ekranı açık tut.",
-        );
+        ui::show_info(i18n::t("notify.app_name"), i18n::t("dialog.no_devices"));
         return;
     }
 
@@ -783,8 +785,8 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
         format!("{} dosya", files.len())
     };
     ui::notify(
-        "HekaDrop",
-        &format!("{} hedefine gönderiliyor: {}", device.name, summary),
+        i18n::t("notify.app_name"),
+        &i18n::tf("notify.sending_to", &[&device.name, &summary]),
     );
 
     let req = sender::SendRequest {
@@ -794,13 +796,13 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
     match sender::send(req).await {
         Ok(_) => {
             ui::notify(
-                "HekaDrop",
-                &format!("Gönderim tamamlandı → {}", device.name),
+                i18n::t("notify.app_name"),
+                &i18n::tf("notify.sent_to", &[&device.name]),
             );
         }
         Err(e) => {
             tracing::warn!("send hatası: {:#}", e);
-            ui::show_info("HekaDrop — gönderim", &format!("{:#}", e));
+            ui::show_info(i18n::t("send.send_error"), &format!("{:#}", e));
         }
     }
 }
@@ -808,7 +810,10 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
 fn show_history() {
     let items = state::read_history();
     if items.is_empty() {
-        ui::show_info("Son aktarımlar", "Henüz aktarım yok.");
+        ui::show_info(
+            i18n::t("dialog.history.title"),
+            i18n::t("dialog.history.empty"),
+        );
         return;
     }
     let now = std::time::SystemTime::now();
@@ -831,7 +836,7 @@ fn show_history() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    ui::show_info("Son aktarımlar", &body);
+    ui::show_info(i18n::t("dialog.history.title"), &body);
 }
 
 async fn check_update_async() {
@@ -867,23 +872,18 @@ async fn check_update_async() {
             let latest = tag.trim_start_matches('v');
             if semver_less(current, latest) {
                 ui::show_info(
-                    "HekaDrop — Güncelleme var",
-                    &format!("Mevcut: v{}\nYeni sürüm: {}\n\n{}", current, tag, url),
+                    i18n::t("dialog.update.title"),
+                    &i18n::tf("dialog.update.available", &[current, &tag, &url]),
                 );
             } else {
                 ui::show_info(
-                    "HekaDrop",
-                    &format!("En güncel sürümü kullanıyorsun (v{}).", current),
+                    i18n::t("notify.app_name"),
+                    &i18n::tf("dialog.update.latest", &[current]),
                 );
             }
         }
         None => {
-            ui::show_info(
-                "HekaDrop",
-                "Güncelleme kontrolü başarısız.\n\n\
-                 Henüz yayınlanmış bir release yoksa (repo özel ise) bu normal.\n\
-                 İnternet bağlantını kontrol edip tekrar dene.",
-            );
+            ui::show_info(i18n::t("notify.app_name"), i18n::t("dialog.update.failed"));
         }
     }
 }
@@ -940,15 +940,16 @@ fn expand_folder_drops(dropped: Vec<std::path::PathBuf>) -> Vec<std::path::PathB
 }
 
 fn relative_time(secs: u64) -> String {
-    if secs < 60 {
-        format!("{} sn önce", secs)
+    let (key, val) = if secs < 60 {
+        ("time.seconds_ago", secs)
     } else if secs < 3600 {
-        format!("{} dk önce", secs / 60)
+        ("time.minutes_ago", secs / 60)
     } else if secs < 86400 {
-        format!("{} sa önce", secs / 3600)
+        ("time.hours_ago", secs / 3600)
     } else {
-        format!("{} gün önce", secs / 86400)
-    }
+        ("time.days_ago", secs / 86400)
+    };
+    i18n::tf(key, &[&val.to_string()])
 }
 
 fn human_size(bytes: i64) -> String {
