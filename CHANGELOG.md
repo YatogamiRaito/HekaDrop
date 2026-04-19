@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-19
+
+Projenin public yayın sürümü. Paketleme, lokalizasyon ve UX
+iyileştirmeleriyle v0.4.0 üzerine birikmiş işleri topluyor.
+
+### Added
+- **i18n**: Türkçe + İngilizce UI (`src/i18n.rs`); `HEKADROP_LANG` /
+  `LC_ALL` / `LC_MESSAGES` / `LANG` üzerinden dil algılama; `t()` / `tf()`
+  API; 60+ key; tray menu, dialog, bildirim ve zaman gösterimi çevrilmiş
+- **Klasör drag-drop**: pencereye bırakılan klasörler recursive olarak
+  düzleştirilip transfer listesine eklenir (symlink döngüsü koruması var)
+- **Paketleme**: Homebrew cask (`Casks/hekadrop.rb`) v0.5.0 ile güncel,
+  Scoop manifest (`scoop/hekadrop.json`) — Windows için
+- **Community health**: `SECURITY.md` + `.en.md`, `CODE_OF_CONDUCT.md` +
+  `.en.md` (iki dilli), issue template'leri (bug / feature) + PR template,
+  `config.yml` (Advisories / Discussions yönlendirme, blank issue kapalı)
+
+### Changed
+- `dialog.update.failed` metni nötrleştirildi — "repo özel ise bu normal"
+  ifadesi public repo için geçerli değil artık
+- `notify.transfer_cancelled` yeni key — "iptal istendi" yerine tamamen
+  iptal edilmiş durumlar için ayrı mesaj
+- osascript onay dialog'u buton metni `"button returned:"` prefix ile
+  kontrol ediliyor — lokalize label'larda substring collision olmuyor
+- i18n `tf()` single-pass parser — args içinde `{N}` olması durumunda
+  double-replace bug'ı yok
+
+### Fixed
+- Linux zenity `--column=` device header artık lokalize
+- Windows MessageBoxW hint redundancy ("Kabul et + Kabul + güven" gibi
+  çift yazımlar giderildi)
+
 ## [0.4.0] - 2026-04-19
 
 Üçüncü platform — Windows. HekaDrop artık macOS / Linux / Windows üzerinde
@@ -121,7 +153,8 @@ autostart katmanları `cfg`-gated cross-platform hale geldi.
 - Replay koruması: sequence counter ile HMAC doğrulaması
 - Trafik hiçbir sunucuya uğramaz — yalnız yerel ağ
 
-[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/YatogamiRaito/HekaDrop/releases/tag/v0.1.0
