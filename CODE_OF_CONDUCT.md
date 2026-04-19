@@ -1,5 +1,7 @@
 # Katılımcı Sözleşmesi — Davranış Kuralları
 
+> 🇬🇧 English version: [`CODE_OF_CONDUCT.en.md`](CODE_OF_CONDUCT.en.md)
+
 ## Sözümüz
 
 HekaDrop sürdürücüleri ve topluluk üyeleri olarak; yaş, beden ölçüsü,

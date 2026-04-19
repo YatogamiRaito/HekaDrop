@@ -62,7 +62,10 @@ body:
         Linux: `~/.local/state/HekaDrop/logs/`
         Windows: `%LOCALAPPDATA%\HekaDrop\logs\`
 
-        `RUST_LOG=hekadrop=debug hekadrop` ile detaylı log alabilirsiniz.
+        Detaylı log için:
+          - macOS/Linux: `RUST_LOG=hekadrop=debug hekadrop`
+          - Windows (PowerShell): `$env:RUST_LOG='hekadrop=debug'; .\hekadrop.exe`
+          - Windows (CMD): `set RUST_LOG=hekadrop=debug && hekadrop.exe`
       render: shell
   - type: checkboxes
     id: checks

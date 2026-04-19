@@ -1,5 +1,7 @@
 # Güvenlik politikası
 
+> 🇬🇧 English version: [`SECURITY.en.md`](SECURITY.en.md)
+
 ## Desteklenen sürümler
 
 Yalnızca son minor sürüm güvenlik düzeltmeleri alır. 0.x serisi "early access"
