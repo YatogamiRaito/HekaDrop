@@ -13,8 +13,13 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  release:
-    name: Build + Release DMG
+  # ─────────────────────────────────────────────────────────────────────────
+  # Platform build jobs — her biri yalnız artefakt üretir, release upload'ı
+  # publish-release job'u yapar (tek CHECKSUMS.txt + tek release sayfası).
+  # ─────────────────────────────────────────────────────────────────────────
+
+  build-macos:
+    name: Build macOS (.dmg + src tarball)
     runs-on: macos-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -47,46 +52,174 @@ jobs:
       #     APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       #     APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       #   run: |
-      #     xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
+      #     xcrun notarytool submit "$(ls target/HekaDrop-*.dmg | head -1)" \
       #       --apple-id "$APPLE_ID" \
       #       --password "$APPLE_APP_SPECIFIC_PASSWORD" \
       #       --team-id "$APPLE_TEAM_ID" \
       #       --wait
-      #     xcrun stapler staple "${{ steps.dmg.outputs.path }}"
-
-      - name: Locate DMG
-        id: dmg
-        run: echo "path=$(ls target/HekaDrop-*.dmg | head -1)" >> "$GITHUB_OUTPUT"
+      #     xcrun stapler staple "$(ls target/HekaDrop-*.dmg | head -1)"
 
       - name: Create source tarball
-        id: tarball
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           TARBALL="target/HekaDrop-${VERSION}-src.tar.gz"
           git archive --format=tar.gz --prefix="HekaDrop-${VERSION}/" -o "$TARBALL" HEAD
-          echo "path=$TARBALL" >> "$GITHUB_OUTPUT"
+          ls -la "$TARBALL"
 
-      - name: Generate SHA-256 checksums
-        id: checksums
+      - name: Stage macOS artifacts
         run: |
-          cd target
-          CHECKSUMS="CHECKSUMS.txt"
-          : > "$CHECKSUMS"
-          for f in HekaDrop-*.dmg HekaDrop-*-src.tar.gz; do
-            if [ -f "$f" ]; then
-              shasum -a 256 "$f" >> "$CHECKSUMS"
+          mkdir -p release-artifacts
+          cp target/HekaDrop-*.dmg release-artifacts/
+          cp target/HekaDrop-*-src.tar.gz release-artifacts/
+          ls -la release-artifacts/
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-macos
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 1
+
+  build-linux:
+    name: Build Linux (.deb + raw binary)
+    runs-on: ubuntu-22.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            protobuf-compiler \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            zenity
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Build .deb package
+        run: |
+          chmod +x scripts/make-deb.sh
+          ./scripts/make-deb.sh
+
+      - name: Stage Linux artifacts
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release-artifacts
+          # make-deb.sh proje köküne HekaDrop-<version>.deb kopyalıyor
+          cp HekaDrop-"${VERSION}".deb release-artifacts/
+          # Raw binary — .deb istemeyenler için fallback
+          cp target/release/hekadrop "release-artifacts/hekadrop-${VERSION}-linux-x86_64"
+          ls -la release-artifacts/
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-linux
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 1
+
+  build-windows:
+    name: Build Windows (.exe)
+    runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        run: choco install protoc -y --no-progress
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Stage Windows artifact
+        shell: pwsh
+        run: |
+          $Version = "${env:GITHUB_REF_NAME}" -replace '^v',''
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          # Scoop manifest HekaDrop-$version.exe bekliyor (scoop/hekadrop.json)
+          Copy-Item "target/release/hekadrop.exe" "release-artifacts/HekaDrop-$Version.exe"
+          Get-ChildItem release-artifacts
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-windows
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 1
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Finalize: bütün platformların çıktısını birleştirir, tek CHECKSUMS.txt
+  # üretir ve GitHub Release'e yükler.
+  # ─────────────────────────────────────────────────────────────────────────
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: release-macos
+          path: release-assets/
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: release-linux
+          path: release-assets/
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: release-windows
+          path: release-assets/
+
+      - name: Generate unified CHECKSUMS.txt
+        run: |
+          cd release-assets
+          : > CHECKSUMS.txt
+          # Deterministik sıralama (platform bağımsız okunabilirlik için).
+          for f in $(ls | sort); do
+            if [ -f "$f" ] && [ "$f" != "CHECKSUMS.txt" ]; then
+              sha256sum "$f" >> CHECKSUMS.txt
             fi
           done
-          cat "$CHECKSUMS"
-          echo "path=target/$CHECKSUMS" >> "$GITHUB_OUTPUT"
+          echo "── CHECKSUMS.txt ──"
+          cat CHECKSUMS.txt
+          echo "── release-assets/ ──"
+          ls -la
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ steps.dmg.outputs.path }}
-            ${{ steps.tarball.outputs.path }}
-            ${{ steps.checksums.outputs.path }}
+          files: release-assets/*
           generate_release_notes: true
           draft: false
           prerelease: false

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (release infrastructure)
+- Release workflow now publishes Windows `.exe` + Linux `.deb` in
+  addition to macOS `.dmg` (+ source tarball). Scoop install
+  (`scoop/hekadrop.json`) becomes functional for the next tag.
+- `CHECKSUMS.txt` consolidated across platforms by a `publish-release`
+  job that waits for all three build jobs.
+
 ### Changed (performance)
 - `payload.rs`: file I/O migrated to `tokio::fs` — receiver thread no
   longer blocks on disk writes; large-file transfers don't starve the
