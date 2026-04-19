@@ -3,6 +3,7 @@
 //! `OnceLock` ile tek seferlik init, `parking_lot::RwLock` ile lock-free-ish okuma.
 //! Connection handler'ları progress ve history'yi günceller, tray thread'i okur.
 
+use crate::identity::DeviceIdentity;
 use crate::settings::Settings;
 use crate::stats::Stats;
 use parking_lot::RwLock;
@@ -51,6 +52,11 @@ pub struct HistoryItem {
 
 pub struct AppState {
     pub settings: RwLock<Settings>,
+    /// Cihaz-kalıcı kriptografik kimlik — `identity.key`'den yüklenir ya da
+    /// ilk çalıştırmada üretilir. `PairedKeyEncryption.secret_id_hash` için
+    /// kullanılır (Issue #17). Process boyunca immutable; `&DeviceIdentity`
+    /// olarak paylaşılır.
+    pub identity: DeviceIdentity,
     pub progress: RwLock<ProgressState>,
     /// Her progress mutasyonunda artan jeneratör. Gecikmeli reset görevleri bu sayıyı
     /// kendileri önce okur, zamanlayıcı dolduğunda aynı değeri görürlerse reset ederler —
@@ -117,8 +123,14 @@ impl RateLimiter {
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
 
 pub fn init(settings: Settings) {
+    // Issue #17: cihaz-kalıcı kimlik — bozuk / yazılamıyor senaryosunda
+    // paniğe düşüp kullanıcıyı ikaz et; trust kararını güvenli şekilde
+    // veremeyeceğimiz bir state ile devam etmeyelim.
+    let identity = DeviceIdentity::load_or_create()
+        .expect("DeviceIdentity yüklenemedi/oluşturulamadı — identity.key kontrol edin");
     let _ = STATE.set(Arc::new(AppState {
         settings: RwLock::new(settings),
+        identity,
         progress: RwLock::new(ProgressState::Idle),
         progress_gen: AtomicU64::new(0),
         history: RwLock::new(VecDeque::with_capacity(HISTORY_CAP)),

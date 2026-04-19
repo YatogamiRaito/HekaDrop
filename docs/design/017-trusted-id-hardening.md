@@ -1,6 +1,6 @@
 # Design 017 — Trusted device identity hardening
 
-**Status**: Draft · **Target**: v0.6.0 · **Severity**: HIGH (protocol)
+**Status**: Accepted (2026-04-20) · **Shipped**: v0.6.0 · **Severity**: HIGH (protocol)
 **Refs**: [Issue #17](https://github.com/YatogamiRaito/HekaDrop/issues/17),
 `/tmp/research/security.md` (first-round audit)
 
@@ -381,27 +381,31 @@ v0.6.0 release notes **güvenlik advisory'si içerir**:
 
 CVE ID ve GHSA draft advisory v0.6.0 release ile publish.
 
-## 9. Açık sorular — review öncesi yanıt gerekli
+## 9. Açık sorular — reviewer onayıyla karar
 
-1. **TTL süresi 7 gün mü, 30 gün mü?** 30 günün UX avantajı var (yılda 12
-   kez prompt, yerine 52). 7 gün security-first. Kullanıcı görüşü
-   gerekir — belki ayar olsun.
-2. **`signed_data` clear-text hash leakage'ı mitigate etmek için hash'i
-   ilk-frame sonrası secure layer'dan göndermek mümkün mü?** Quick Share
-   spec'e aykırı olur; peer'lar plain `PairedKeyEncryption` bekler.
-   Mitigation olarak pairing (v0.7) daha doğru.
-3. **Sender tarafında** trust kararını secret_id_hash ile yapmak mantıklı
-   mı? Gönderirken peer'ı tanımıyoruz — sadece kullanıcı "gönder" dediği
-   cihazı UI'dan seçiyor. Sender'ın "trusted" kavramı daha zayıf (yalnız
-   **peer spoofing** değil **kendi peer bilgisini hafızada tutma**
-   bağlamında). Sender'da TTL istemeyebiliriz.
-4. **Migration log level**: legacy kayıtları `warn!` mi `info!` mi? Üç
-   sürüm boyunca yayılacak bir uyarı → `info!` yeterli, kullanıcıyı
-   telaşlandırmayalım.
-5. **Hash algoritması**: HKDF(long_term_key, "HekaDrop v1", "paired_key/secret_id", 6)
-   yerine SHA-256(long_term_key)[..6] yeterli mi? HKDF domain separation
-   sağladığı için gelecekte başka hash'ler aynı key'den türetmek güvenli
-   olur — **HKDF tercih**.
+1. **TTL süresi** — ✅ **Kabul**: 7 gün varsayılan; `Settings.trust_ttl_secs`
+   ile kullanıcı override edebilir (30 gün veya daha fazlası için).
+   Gerekçe: 7 gün security-first default, ama kullanıcı UX önceliği
+   istiyorsa config.json üzerinden serbest. Webview toggle v0.7 hedefli.
+2. **`signed_data` clear-text leak** — ✅ **Deferred to v0.7 pairing
+   protocol**. v0.6 hash-only; mitigation TTL + aktif-dinleme saldırısının
+   darlığı (yerel ağ + aktif MITM gerekir). Long-term pairing (QR / OOB
+   fingerprint) + ECDSA `signed_data` doğrulaması v0.7'de.
+3. **Sender tarafı trust semantiği** — ✅ **Sender'da TTL yok**. Sadece
+   receiver tarafı TTL uygular; sender kullanıcı-seçimi odaklı (her
+   gönderimde hedefi UI'dan seçer). Sender kendi hash'ini `PairedKey-
+   Encryption` ile gönderir ama kabul/red kararı peer'a aittir.
+4. **Legacy migration log level** — ✅ **`info!`** — kullanıcıyı
+   telaşlandırma. Üç sürüm boyunca yayılacak uyarı; `warn!` gürültü
+   yaratırdı. Log mesajı kullanıcıya aksiyon gerektirmediği için info
+   yeterli.
+5. **Hash algoritması** — ✅ **HKDF-SHA256** (domain separation).
+   `HKDF(ikm=long_term_key, salt=b"HekaDrop v1", info=b"paired_key/
+   secret_id", 6)`. Aynı master key'den ileride `signing_key`,
+   `device_pub_id` gibi child key'leri çakışmasız türetmek için gerekli.
+   `SHA-256(long_term_key)[..6]` basitliği HKDF'nin domain separation
+   garantisine karşı fırsat maliyeti çok yüksek — hatta aynı kullanım
+   için de HKDF güvenli tarafta.
 
 ## 10. Risk register
 
@@ -427,14 +431,16 @@ CVE ID ve GHSA draft advisory v0.6.0 release ile publish.
 - [ ] CHANGELOG + SECURITY.md advisory paragraph
 - [ ] GHSA draft (v0.6.0 merge öncesi)
 
-## 12. Sign-off — pre-merge review gerekir
+## 12. Sign-off
 
-Bu design doc'un 9. bölümdeki açık soruların cevaplanması gerekir
-implementation başlatmadan önce. Ayrıca:
+✅ Reviewer (@YatogamiRaito) approved 2026-04-20 — §9 açık soruların
+tamamı cevaplandı (TTL=7 gün override'lı, signed_data v0.7'ye ertelendi,
+sender TTL'siz, legacy log=info!, HKDF-SHA256).
 
-- **@YatogamiRaito** sign-off: özellikle TTL süresi + migration log level
-- Potansiyel external reviewer (Rust kripto topluluğu / Google Quick
-  Share bilen biri): §5.5 signed_data erteleme kararı
+✅ Implementation shipped in **v0.6.0** — PR: `feat/trusted-id-hardening-v06`,
+closes Issue #17. Integration test `tests/trust_hijack.rs` T2
+senaryosunu regresyon olarak yakalar.
 
-Onay sonrası `docs/design/017-trusted-id-hardening.md` status → "Accepted",
-Issue #17 implementation PR'ına link verilir.
+External reviewer (Rust kripto topluluğu / Quick Share protokolü) görüşü
+v0.7 pairing protokolü tasarlanırken alınacak — §5.5'teki `signed_data`
+doğrulama kararı için.

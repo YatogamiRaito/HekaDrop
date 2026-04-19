@@ -19,6 +19,7 @@ mod discovery;
 mod error;
 mod frame;
 mod i18n;
+mod identity;
 mod log_redact;
 mod mdns;
 mod payload;
@@ -615,6 +616,9 @@ fn push_i18n_to_ui() {
         "webview.settings.save",
         "webview.settings.saved",
         "webview.settings.trust_remove",
+        "webview.settings.trust_ttl_days",
+        "webview.trusted.ttl_label",
+        "webview.trusted.ttl_expired",
         "webview.diag.section.app",
         "webview.diag.version",
         "webview.diag.device",
@@ -728,12 +732,27 @@ fn st_settings_resolved_name() -> String {
 
 fn push_trusted_to_ui() {
     let st = state::get();
-    // Bug #32: Settings artık TrustedDevice struct listesi tutar; UI'ya
-    // `name (id_kisa)` biçiminde görünüm string'leri gönderilir (applyTrusted
-    // JS sözleşmesi string[] olarak korundu).
-    let names: Vec<String> = st.settings.read().trusted_display_list();
-    let payload =
-        serde_json::Value::Array(names.into_iter().map(serde_json::Value::String).collect());
+    // Issue #17: `applyTrusted` JS artık zengin nesne dizisi kabul eder —
+    // her kayıt `{display, trusted_at_epoch, ttl_secs, has_hash}` yapısında;
+    // UI TTL rozetini ve "süresi doldu" uyarısını burada hesaplar.
+    // Backward: eski HTML boolean olmayan obje alanlarına girmeyeceği için
+    // string array kısmı "display" alanında kalır.
+    let s = st.settings.read();
+    let ttl_secs = s.trust_ttl_secs;
+    let items: Vec<serde_json::Value> = s
+        .trusted_devices
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "display": d.display(),
+                "trusted_at_epoch": d.trusted_at_epoch,
+                "ttl_secs": ttl_secs,
+                "has_hash": d.secret_id_hash.is_some(),
+            })
+        })
+        .collect();
+    drop(s);
+    let payload = serde_json::Value::Array(items);
     let js = format!("window.applyTrusted && window.applyTrusted({})", payload);
     state::enqueue_js(js);
 }
