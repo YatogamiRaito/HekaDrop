@@ -117,3 +117,44 @@ jobs:
             HekaDrop-*.deb
           if-no-files-found: ignore
           retention-days: 7
+
+  test-windows:
+    name: Test + Build (Windows)
+    runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        # windows-latest'te chocolatey önceden kurulu; protoc yaygın paket.
+        run: choco install protoc -y --no-progress
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --all
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Upload .exe artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: HekaDrop-exe-windows
+          path: target/release/hekadrop.exe
+          if-no-files-found: error
+          retention-days: 7

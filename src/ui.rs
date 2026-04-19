@@ -1,17 +1,17 @@
 //! Kullanıcı arayüzü yardımcıları — cross-platform dialog ve bildirimler.
 //!
-//! macOS'ta `osascript` (AppKit dialog'u), Linux'ta `zenity` tercih edilir.
-//! Zenity yoksa `kdialog`'a düşer; ikisi de yoksa stderr'e log bırakıp kalıcı
-//! başarısızlık yerine "Reject/None" döner — böylece uygulama headless
-//! ortamda bile çökmez.
+//! - macOS: `osascript` (AppKit dialog)
+//! - Linux: `zenity` (yoksa `kdialog`)
+//! - Windows: native `MessageBoxW` / `windows-rs`, file/folder dialog'u için
+//!   PowerShell (`System.Windows.Forms`) fallback
 //!
-//! tray-icon / objc2 yerine external process tercih edildi çünkü tokio
-//! runtime ile sürtünmesi az, tek komutla native dialog açar.
+//! Dialog aracı yoksa veya headless ortamsa `Reject`/`None` döner; uygulama
+//! çökmek yerine güvenli default davranışa geçer.
 
 use anyhow::Result;
 #[cfg(target_os = "macos")]
 use std::process::Command;
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::process::{Command, Stdio};
 use tokio::task;
 
@@ -97,7 +97,62 @@ fn prompt_accept_blocking(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn prompt_accept_blocking(
+    device: &str,
+    pin: &str,
+    files: &[(String, i64)],
+    text_count: usize,
+) -> AcceptResult {
+    // Windows MessageBoxW ile 3 seçenekli dialog:
+    //   Evet  = Kabul + güven   (MB_YESNOCANCEL → IDYES)
+    //   Hayır = Kabul            (→ IDNO)
+    //   İptal = Reddet           (→ IDCANCEL)
+    //
+    // Not: Sistem dilini takip eden buton etiketleri "Evet/Hayır/İptal"
+    // olur. Mesaj metninde kullanıcıya hangi butonun ne anlama geldiği
+    // açıkça yazılır.
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDCANCEL, IDNO, IDYES, MB_ICONINFORMATION, MB_SYSTEMMODAL, MB_YESNOCANCEL,
+    };
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        let mut v: Vec<u16> = s.encode_utf16().collect();
+        v.push(0);
+        v
+    }
+
+    let files_str = format_payload_lines(files, text_count);
+    let message = format!(
+        "{} cihazından dosya gönderiliyor.\n\nPIN: {}\n\n{}\n\n\
+         Evet  = Kabul et + güven listesine ekle\n\
+         Hayır = Sadece bu seferlik kabul et\n\
+         İptal = Reddet",
+        device, pin, files_str
+    );
+    let title = "HekaDrop";
+    let msg_w = to_wide(&message);
+    let title_w = to_wide(title);
+
+    let result = unsafe {
+        MessageBoxW(
+            Some(HWND::default()),
+            PCWSTR(msg_w.as_ptr()),
+            PCWSTR(title_w.as_ptr()),
+            MB_YESNOCANCEL | MB_ICONINFORMATION | MB_SYSTEMMODAL,
+        )
+    };
+    match result {
+        r if r == IDYES => AcceptResult::AcceptAndTrust,
+        r if r == IDNO => AcceptResult::Accept,
+        r if r == IDCANCEL => AcceptResult::Reject,
+        _ => AcceptResult::Reject,
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn prompt_accept_blocking(
     device: &str,
     pin: &str,
@@ -180,40 +235,43 @@ fn prompt_accept_blocking(
 /// macOS'ta aksiyon butonu desteklenmez — düz bildirim + tıklanınca Finder'da
 /// açma için fallback uygulanır (bkz. `NotificationCenter` gelecek iş).
 pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = path; // macOS/Windows: şimdilik plain notify.
+        let _ = path; // macOS'ta aksiyon butonlu notify henüz yok.
         notify(title, body);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
         // notify-rust blocking API'si var; ayrı thread'de başlatıp dialog
         // kapanana kadar bekletiyoruz. Fire-and-forget — tokio runtime'ı
         // bloklamaz.
         //
-        // `default` aksiyonu freedesktop spec'inde bildirim gövdesine
-        // tıklayınca tetiklenir (buton göstermez); "Klasörde göster" tek
-        // ek buton olarak kalır — aksi halde iki "Aç" butonu duplike görünür.
+        // Linux (freedesktop): `default` aksiyonu body tıklamasına, `reveal`
+        // ek butona bağlanır (duplicate "Aç" butonu oluşmasın diye tek buton).
+        //
+        // Windows (WinRT Toast): notify-rust WinRT backend action butonlarını
+        // destekler; modern Windows 10+ toast stili gösterir.
         let title = title.to_string();
         let body = body.to_string();
+        #[cfg(target_os = "linux")]
         let spawned = std::thread::Builder::new()
             .name("hekadrop-notify".into())
             .spawn(move || {
                 use notify_rust::Notification;
-                let handle = Notification::new()
+                let handle = match Notification::new()
                     .appname("HekaDrop")
                     .summary(&title)
                     .body(&body)
                     .action("default", "Aç")
                     .action("reveal", "Klasörde göster")
                     .timeout(10_000)
-                    .show();
-                let handle = match handle {
+                    .show()
+                {
                     Ok(h) => h,
                     Err(e) => {
                         tracing::warn!("notify-rust gösterim hatası: {}", e);
-                        // notify-send fallback'i — aksiyonsuz ama en azından görünsün.
+                        // Linux: notify-send aksiyonsuz ama en azından görünsün.
                         let _ = std::process::Command::new("notify-send")
                             .args(["--app-name=HekaDrop", &title, &body])
                             .status();
@@ -221,18 +279,36 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
                     }
                 };
                 handle.wait_for_action(|action| match action {
-                    "default" => {
-                        crate::platform::open_path(&path);
-                    }
-                    "reveal" => {
-                        crate::platform::reveal_path(&path);
-                    }
+                    "default" => crate::platform::open_path(&path),
+                    "reveal" => crate::platform::reveal_path(&path),
                     _ => {}
                 });
             });
+
+        // Windows: notify-rust WinRT backend `show()` unit döner; `wait_for_action`
+        // Linux-özel. Toast otomatik kapanır. Action callback (Aç/Reveal
+        // tıklama) ileride COM ile bağlanacak — şimdilik toast görünür,
+        // tıklanınca HekaDrop'a bir şey iletmez.
+        #[cfg(target_os = "windows")]
+        let spawned = std::thread::Builder::new()
+            .name("hekadrop-notify".into())
+            .spawn(move || {
+                let _ = &path; // ileride callback için korunuyor
+                use notify_rust::Notification;
+                if let Err(e) = Notification::new()
+                    .appname("HekaDrop")
+                    .summary(&title)
+                    .body(&body)
+                    .action("default", "Aç")
+                    .action("reveal", "Klasörde göster")
+                    .timeout(10_000)
+                    .show()
+                {
+                    tracing::warn!("notify-rust gösterim hatası: {}", e);
+                }
+            });
+
         if let Err(e) = spawned {
-            // title/body closure'a taşındı; fallback için kullanamayız. Thread
-            // spawn'ı sistemsel bir hata — sadece warn ve geç.
             tracing::warn!("bildirim thread'i başlatılamadı: {}", e);
         }
     }
@@ -249,7 +325,7 @@ pub fn notify(title: &str, body: &str) {
         );
         let _ = Command::new("osascript").arg("-e").arg(&script).spawn();
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
         // notify-send en yaygın; yoksa sessizce log'a yaz.
         let spawned = Command::new("notify-send")
@@ -258,6 +334,20 @@ pub fn notify(title: &str, body: &str) {
             .spawn();
         if spawned.is_err() {
             tracing::info!("[notify] {}: {}", title, body);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Windows Toast — notify-rust'ın WinRT backend'i. Win 10+'da çalışır.
+        use notify_rust::Notification;
+        let r = Notification::new()
+            .appname("HekaDrop")
+            .summary(title)
+            .body(body)
+            .timeout(7_000)
+            .show();
+        if let Err(e) = r {
+            tracing::info!("[notify-toast hata] {}: {} ({})", title, body, e);
         }
     }
 }
@@ -273,7 +363,7 @@ pub fn show_info(title: &str, body: &str) {
         );
         let _ = Command::new("osascript").arg("-e").arg(&script).spawn();
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     {
         if have("zenity") {
             let _ = Command::new("zenity")
@@ -293,6 +383,36 @@ pub fn show_info(title: &str, body: &str) {
             // Dialog yoksa en azından bir masaüstü bildirimi gönder.
             notify(title, body);
         }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // MessageBoxW blocks; fire-and-forget için ayrı thread'de çalıştır.
+        let title = title.to_string();
+        let body = body.to_string();
+        let _ = std::thread::Builder::new()
+            .name("hekadrop-showinfo".into())
+            .spawn(move || {
+                use windows::core::PCWSTR;
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    MessageBoxW, MB_ICONINFORMATION, MB_OK, MB_SYSTEMMODAL,
+                };
+                fn to_wide(s: &str) -> Vec<u16> {
+                    let mut v: Vec<u16> = s.encode_utf16().collect();
+                    v.push(0);
+                    v
+                }
+                let body_w = to_wide(&body);
+                let title_w = to_wide(&title);
+                unsafe {
+                    MessageBoxW(
+                        Some(HWND::default()),
+                        PCWSTR(body_w.as_ptr()),
+                        PCWSTR(title_w.as_ptr()),
+                        MB_OK | MB_ICONINFORMATION | MB_SYSTEMMODAL,
+                    );
+                }
+            });
     }
 }
 
@@ -341,7 +461,48 @@ pathList
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
+    // PowerShell + System.Windows.Forms.OpenFileDialog — cargo-install'suz,
+    // her Windows 10/11'de hazır gelir. Multi-select, ardından path'leri
+    // satır satır yazdırır. Hata durumunda None.
+    let script = r#"
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+$dlg = New-Object System.Windows.Forms.OpenFileDialog
+$dlg.Title = 'Gönderilecek dosyaları seçin'
+$dlg.Multiselect = $true
+if ($dlg.ShowDialog() -eq 'OK') { $dlg.FileNames -join "`n" }
+"#;
+    let out = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let paths: Vec<_> = text
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(std::path::PathBuf::from)
+        .collect();
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
     if have("zenity") {
         let out = Command::new("zenity")
@@ -430,7 +591,39 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn choose_folder_blocking() -> Option<std::path::PathBuf> {
+    let script = r#"
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+$dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+$dlg.Description = 'İndirme klasörünü seçin'
+$dlg.ShowNewFolderButton = $true
+if ($dlg.ShowDialog() -eq 'OK') { $dlg.SelectedPath }
+"#;
+    let out = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(path))
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn choose_folder_blocking() -> Option<std::path::PathBuf> {
     if have("zenity") {
         let out = Command::new("zenity")
@@ -511,7 +704,75 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
     Some(result)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn choose_device_blocking(labels: &[String]) -> Option<String> {
+    // PowerShell ile minimal ListBox dialog'u. `Out-GridView -PassThru` de
+    // kullanılabilirdi ama standart PowerShell'da ayrı modül gerekir;
+    // System.Windows.Forms her kurulumda hazır.
+    let items = labels
+        .iter()
+        .map(|s| format!("'{}'", s.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",");
+    let script = format!(
+        r#"
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+Add-Type -AssemblyName System.Drawing | Out-Null
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'HekaDrop'
+$form.Size = New-Object System.Drawing.Size(480, 360)
+$form.StartPosition = 'CenterScreen'
+$form.TopMost = $true
+$label = New-Object System.Windows.Forms.Label
+$label.Text = 'Hedef cihaz'
+$label.Location = New-Object System.Drawing.Point(10, 10)
+$label.Size = New-Object System.Drawing.Size(440, 20)
+$form.Controls.Add($label)
+$listbox = New-Object System.Windows.Forms.ListBox
+$listbox.Location = New-Object System.Drawing.Point(10, 35)
+$listbox.Size = New-Object System.Drawing.Size(440, 230)
+@({items}) | ForEach-Object {{ [void]$listbox.Items.Add($_) }}
+if ($listbox.Items.Count -gt 0) {{ $listbox.SelectedIndex = 0 }}
+$form.Controls.Add($listbox)
+$ok = New-Object System.Windows.Forms.Button
+$ok.Text = 'Gönder'
+$ok.Location = New-Object System.Drawing.Point(280, 280)
+$ok.DialogResult = 'OK'
+$form.AcceptButton = $ok
+$form.Controls.Add($ok)
+$cancel = New-Object System.Windows.Forms.Button
+$cancel.Text = 'İptal'
+$cancel.Location = New-Object System.Drawing.Point(370, 280)
+$cancel.DialogResult = 'Cancel'
+$form.CancelButton = $cancel
+$form.Controls.Add($cancel)
+if ($form.ShowDialog() -eq 'OK') {{ $listbox.SelectedItem }}
+"#
+    );
+    let out = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let result = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn choose_device_blocking(labels: &[String]) -> Option<String> {
     if have("zenity") {
         // zenity --list --radiolist: her satır [TRUE/FALSE, label]
@@ -583,7 +844,9 @@ fn escape_applescript(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Bir ikili (binary) PATH'te mevcut mu? Linux-only helper (zenity/kdialog
+/// varlık kontrolü). Windows'ta kullanılmaz — MessageBoxW her zaman var.
+#[cfg(target_os = "linux")]
 fn have(bin: &str) -> bool {
     Command::new("sh")
         .arg("-c")
