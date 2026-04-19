@@ -1,6 +1,9 @@
 # Rust
 /target
 
+# Claude Code isolated worktrees (subagent scratch — not part of the repo)
+/.claude/
+
 # macOS
 .DS_Store
 
