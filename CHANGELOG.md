@@ -37,7 +37,7 @@ autostart katmanları `cfg`-gated cross-platform hale geldi.
 - Config/log yolları XDG uyumlu (`~/.config/HekaDrop`, `~/.local/state/HekaDrop/logs`); macOS'ta `~/Library/...` aynı kalır
 - Cihaz adı platform-aware: macOS'ta `scutil`, Linux'ta `/etc/hostname`
 - mDNS `advertise` artık `Result<Option<MdnsHandle>>` döner — uygun IPv4 yoksa UI çalışır, mDNS sessizce devre dışı
-- `toggle_login_item` `cfg(target_os = "linux")` ile sınırlı; Windows/diğer platformlar no-op stub
+- `toggle_login_item` artık Linux ve macOS destekli (systemd `--user` + launchd); Windows ve diğer platformlar için no-op stub
 
 ### Fixed
 - Reject sonrası pending destination temizliği (orphan dosyalar geride kalmıyordu)
@@ -83,5 +83,6 @@ autostart katmanları `cfg`-gated cross-platform hale geldi.
 - Replay koruması: sequence counter ile HMAC doğrulaması
 - Trafik hiçbir sunucuya uğramaz — yalnız yerel ağ
 
-[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/YatogamiRaito/HekaDrop/releases/tag/v0.1.0
