@@ -325,11 +325,9 @@ pub fn open_url(url: &str) {
 pub fn copy_to_clipboard(text: &str) {
     #[cfg(target_os = "windows")]
     {
-        if win::clipboard_set(text).is_ok() {
-            return;
+        if win::clipboard_set(text).is_err() {
+            tracing::warn!("panoya kopyalama başarısız — Win32 SetClipboardData hata döndü");
         }
-        tracing::warn!("panoya kopyalama başarısız — Win32 SetClipboardData hata döndü");
-        return;
     }
 
     #[cfg(not(target_os = "windows"))]

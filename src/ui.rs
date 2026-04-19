@@ -254,53 +254,61 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
         // destekler; modern Windows 10+ toast stili gösterir.
         let title = title.to_string();
         let body = body.to_string();
+        #[cfg(target_os = "linux")]
         let spawned = std::thread::Builder::new()
             .name("hekadrop-notify".into())
             .spawn(move || {
                 use notify_rust::Notification;
-                let handle = Notification::new()
+                let handle = match Notification::new()
                     .appname("HekaDrop")
                     .summary(&title)
                     .body(&body)
                     .action("default", "Aç")
                     .action("reveal", "Klasörde göster")
                     .timeout(10_000)
-                    .show();
-                let handle = match handle {
+                    .show()
+                {
                     Ok(h) => h,
                     Err(e) => {
                         tracing::warn!("notify-rust gösterim hatası: {}", e);
-                        #[cfg(target_os = "linux")]
-                        {
-                            // Linux: notify-send aksiyonsuz ama en azından görünsün.
-                            let _ = std::process::Command::new("notify-send")
-                                .args(["--app-name=HekaDrop", &title, &body])
-                                .status();
-                        }
+                        // Linux: notify-send aksiyonsuz ama en azından görünsün.
+                        let _ = std::process::Command::new("notify-send")
+                            .args(["--app-name=HekaDrop", &title, &body])
+                            .status();
                         return;
                     }
                 };
-                // `wait_for_action` hem Linux hem Windows'ta aynı API.
-                #[cfg(target_os = "linux")]
                 handle.wait_for_action(|action| match action {
                     "default" => crate::platform::open_path(&path),
                     "reveal" => crate::platform::reveal_path(&path),
                     _ => {}
                 });
-                // Windows'ta action handler'ları farklı API ile bağlanır
-                // (wait_for_action Linux-özel). Toast otomatik kapanır.
-                #[cfg(target_os = "windows")]
+            });
+
+        // Windows: notify-rust WinRT backend `show()` unit döner; `wait_for_action`
+        // Linux-özel. Toast otomatik kapanır. Action callback (Aç/Reveal
+        // tıklama) ileride COM ile bağlanacak — şimdilik toast görünür,
+        // tıklanınca HekaDrop'a bir şey iletmez.
+        #[cfg(target_os = "windows")]
+        let spawned = std::thread::Builder::new()
+            .name("hekadrop-notify".into())
+            .spawn(move || {
+                let _ = &path; // ileride callback için korunuyor
+                use notify_rust::Notification;
+                if let Err(e) = Notification::new()
+                    .appname("HekaDrop")
+                    .summary(&title)
+                    .body(&body)
+                    .action("default", "Aç")
+                    .action("reveal", "Klasörde göster")
+                    .timeout(10_000)
+                    .show()
                 {
-                    // path closure'a move ile geldi ama şimdilik Windows
-                    // branch'inde toast callback bağlanmadığı için kullanılmıyor.
-                    // Unused-variable warning'ini bastır.
-                    let _ = &path;
-                    let _ = handle;
+                    tracing::warn!("notify-rust gösterim hatası: {}", e);
                 }
             });
+
         if let Err(e) = spawned {
-            // title/body closure'a taşındı; fallback için kullanamayız. Thread
-            // spawn'ı sistemsel bir hata — sadece warn ve geç.
             tracing::warn!("bildirim thread'i başlatılamadı: {}", e);
         }
     }
