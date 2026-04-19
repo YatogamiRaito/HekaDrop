@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (supply chain)
+- Added Dependabot config for cargo + github-actions weekly updates.
+- Added `cargo-audit` GitHub Actions workflow (weekly + on Cargo.lock change).
+- Added `cargo-deny` config (`deny.toml`) + workflow for license/advisory/source policy.
+
 ### Security (research v2 hotfix batch)
 - **[High] Slow-loris DoS**: `frame::read_frame` deadline'sız `read_exact`
   kullanıyordu; saldırgan bağlantı açıp hiçbir şey göndermezsen tokio task'ı
