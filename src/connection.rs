@@ -662,15 +662,18 @@ fn unique_downloads_path(name: &str) -> Result<PathBuf> {
 ///    hem `/` hem `\` ele alınır (Windows'ta `\` da separator).
 /// 2. `.` ve `..` tek başına ya da başta/sonda olduğunda geçersizdir; böyle
 ///    adlar `dosya`'ya düşer.
-/// 3. NUL byte, control karakterler (`< 0x20`, `0x7F`) filtrelenir.
-/// 4. Windows reserved device adları (CON, PRN, AUX, NUL, COM1..COM9,
-///    LPT1..LPT9) case-insensitive eşleşirse prefix'li hale getirilir
-///    (`CON` → `_CON`).
-/// 5. 200 bayttan uzun adlar truncate edilir; ext sonrası eklenirken
-///    unique_downloads_path zaten ` (N)` suffix'i ekleyebildiğinden
-///    konservatif kesim.
-/// 6. Sonuç boşsa `dosya` döner.
-pub(crate) fn sanitize_received_name(name: &str) -> String {
+/// 3. NUL + control (`< 0x20`, `0x7F`) **+ Windows yasaklı karakterler**
+///    (`< > : " / \ | ? *`) filtrelenir. `:` özellikle NTFS Alternate Data
+///    Stream (ADS) vektörüdür (`ok.txt:evil`).
+/// 4. Trailing dot/space Windows tarafından yok sayılır (`CON.` → `CON`
+///    açar, reserved check bypass'ı); bu yüzden sondan kırpılır.
+/// 5. Windows reserved adları **ilk** nokta öncesi stem üzerinde kontrol
+///    edilir (`split_name`'in son-nokta mantığı `CON.tar.gz`'yi kaçırır).
+///    Kapsam: CON, PRN, AUX, NUL, COM1..9, LPT1..9, CONIN$, CONOUT$,
+///    CLOCK$. Eşleşme → `_` prefix (`CON.tar.gz` → `_CON.tar.gz`).
+/// 6. 200 bayttan uzun adlar UTF-8 boundary'de truncate edilir.
+/// 7. Sonuç boşsa `dosya` döner.
+fn sanitize_received_name(name: &str) -> String {
     // 1. Basename: her iki separator için rightmost sonrası.
     let after_fwd = name.rsplit('/').next().unwrap_or(name);
     let base = after_fwd.rsplit('\\').next().unwrap_or(after_fwd);
@@ -681,37 +684,49 @@ pub(crate) fn sanitize_received_name(name: &str) -> String {
         return "dosya".into();
     }
 
-    // 3. NUL + control karakterleri filtrele.
+    // 3. NUL + control + Windows yasaklı karakterleri filtrele.
     let cleaned: String = trimmed
         .chars()
-        .filter(|&c| c >= ' ' && c != '\x7f')
+        .filter(|&c| {
+            c >= ' '
+                && c != '\x7f'
+                && !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+        })
         .collect();
     if cleaned.is_empty() {
         return "dosya".into();
     }
 
-    // 4. Windows reserved device adları (stem bazlı).
-    let (stem_before, ext_before) = split_name(&cleaned);
+    // 4. Trailing dot/space'i kırp — Windows'un reserved check bypass'ına
+    //    karşı koruma (`CON.` / `CON ` Windows'ta `CON` açar).
+    let cleaned = cleaned
+        .trim_end_matches(|c: char| c == '.' || c.is_whitespace())
+        .to_string();
+    if cleaned.is_empty() {
+        return "dosya".into();
+    }
+
+    // 5. Reserved device names — **ilk** nokta öncesi stem üzerinde kontrol.
+    let stem_for_reserved = cleaned.split('.').next().unwrap_or(&cleaned);
     let reserved = [
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "CONIN$",
+        "CONOUT$", "CLOCK$",
     ];
-    let cleaned = if reserved.iter().any(|r| stem_before.eq_ignore_ascii_case(r)) {
-        if ext_before.is_empty() {
-            format!("_{}", cleaned)
-        } else {
-            format!("_{}.{}", stem_before, ext_before)
-        }
+    let cleaned = if reserved
+        .iter()
+        .any(|r| stem_for_reserved.eq_ignore_ascii_case(r))
+    {
+        format!("_{}", cleaned)
     } else {
         cleaned
     };
 
-    // 5. Uzunluk limiti (UTF-8 boundary'ye saygılı).
+    // 6. Uzunluk limiti (UTF-8 boundary'ye saygılı).
     let max_bytes = 200usize;
     if cleaned.len() <= max_bytes {
         return cleaned;
     }
-    // Char boundary'de kes.
     let mut cut = max_bytes;
     while cut > 0 && !cleaned.is_char_boundary(cut) {
         cut -= 1;
@@ -727,15 +742,10 @@ pub(crate) fn sanitize_received_name(name: &str) -> String {
 /// credential leak'e çevrilir, özel protocol handler'lar (zoom-us, steam,
 /// registry custom protokoller) arbitrary app tetikler. Yalnız http/https
 /// kabul et.
-pub(crate) fn is_safe_url_scheme(url: &str) -> bool {
-    let lower = url.trim_start();
-    // ASCII case-insensitive başlangıç kontrolü.
+fn is_safe_url_scheme(url: &str) -> bool {
+    let trimmed = url.trim_start();
     let starts = |prefix: &str| {
-        lower.len() >= prefix.len()
-            && lower.as_bytes()[..prefix.len()]
-                .iter()
-                .map(|b| b.to_ascii_lowercase())
-                .eq(prefix.bytes())
+        trimmed.len() >= prefix.len() && trimmed[..prefix.len()].eq_ignore_ascii_case(prefix)
     };
     starts("http://") || starts("https://")
 }
@@ -1101,6 +1111,47 @@ mod tests {
         // Reserved olmayan
         assert_eq!(sanitize_received_name("CONSOLE.txt"), "CONSOLE.txt");
         assert_eq!(sanitize_received_name("COMMAND"), "COMMAND");
+    }
+
+    #[test]
+    fn sanitize_reserved_coklu_uzanti_bypass_engellenir() {
+        // `split_name` son-nokta alır → `CON.tar` stem'i; ilk-nokta taramasıyla
+        // `CON` yakalanır. Bu testler 0.5.1 Gemini/Copilot review'ından geldi.
+        assert_eq!(sanitize_received_name("CON.tar.gz"), "_CON.tar.gz");
+        assert_eq!(sanitize_received_name("nul.tar.bz2"), "_nul.tar.bz2");
+        assert_eq!(sanitize_received_name("aux.tar"), "_aux.tar");
+    }
+
+    #[test]
+    fn sanitize_reserved_ek_device_adlari() {
+        assert_eq!(sanitize_received_name("CONIN$"), "_CONIN$");
+        assert_eq!(sanitize_received_name("CONOUT$"), "_CONOUT$");
+        assert_eq!(sanitize_received_name("CLOCK$.txt"), "_CLOCK$.txt");
+        // Case-insensitive
+        assert_eq!(sanitize_received_name("conin$"), "_conin$");
+    }
+
+    #[test]
+    fn sanitize_trailing_dot_space_bypass_engellenir() {
+        // Windows trailing `.` ve space'i yok sayar → `CON.` aslında `CON`
+        // açar. Trim edilmeli, sonra reserved check yakalanmalı.
+        assert_eq!(sanitize_received_name("CON."), "_CON");
+        assert_eq!(sanitize_received_name("CON "), "_CON");
+        assert_eq!(sanitize_received_name("CON.txt."), "_CON.txt");
+        assert_eq!(sanitize_received_name("CON...  "), "_CON");
+        // Normal dosyada da trailing dot kaybolur
+        assert_eq!(sanitize_received_name("rapor.pdf."), "rapor.pdf");
+    }
+
+    #[test]
+    fn sanitize_windows_yasakli_karakterler_filtrelenir() {
+        // ADS vektörü: `:`
+        assert_eq!(sanitize_received_name("ok.txt:evil"), "ok.txtevil");
+        // Diğer Windows yasakları
+        assert_eq!(sanitize_received_name("a<b>c.txt"), "abc.txt");
+        assert_eq!(sanitize_received_name("wild*card?.dat"), "wildcard.dat");
+        assert_eq!(sanitize_received_name(r#"say"hi""#), "sayhi");
+        assert_eq!(sanitize_received_name("a|b.txt"), "ab.txt");
     }
 
     #[test]
