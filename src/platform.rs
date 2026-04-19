@@ -371,17 +371,20 @@ pub fn copy_to_clipboard(text: &str) {
 // Windows helpers (windows-rs ile native API)
 // ---------------------------------------------------------------------------
 #[cfg(target_os = "windows")]
-mod win {
+pub(crate) mod win {
     use super::*;
+    use std::cell::Cell;
     use windows::core::{Result, GUID, PCWSTR, PWSTR};
-    use windows::Win32::Foundation::{HANDLE, HWND};
+    use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::Com::{
         CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
     };
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows::Win32::System::Memory::{
+        GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+    };
     use windows::Win32::System::SystemInformation::{ComputerNameDnsHostname, GetComputerNameExW};
     use windows::Win32::UI::Shell::{
         ILCreateFromPathW, ILFree, SHGetKnownFolderPath, SHOpenFolderAndSelectItems, ShellExecuteW,
@@ -390,12 +393,15 @@ mod win {
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     /// UTF-16 LE null-terminated vektör üretir.
-    fn to_wide(s: &str) -> Vec<u16> {
+    /// `pub(crate)` — ui.rs (MessageBoxW) ve main.rs (Registry) de kullanır.
+    pub(crate) fn to_wide(s: &str) -> Vec<u16> {
         let mut v: Vec<u16> = s.encode_utf16().collect();
         v.push(0);
         v
     }
 
+    /// `OsStr` → UTF-16 LE null-terminated. `encode_wide()` lossless (path'te
+    /// non-UTF8 byte'lar da doğru kodlanır); `path.display()` lossy olabilir.
     fn to_wide_os(s: &std::ffi::OsStr) -> Vec<u16> {
         use std::os::windows::ffi::OsStrExt;
         let mut v: Vec<u16> = s.encode_wide().collect();
@@ -412,8 +418,8 @@ mod win {
             if pwstr.is_null() {
                 return None;
             }
-            // PWSTR → &[u16] → OsString
-            let len = (0..).take_while(|&i| *pwstr.0.add(i) != 0).count();
+            // PCWSTR::from_raw(...).len() — null'a kadar sayan idiomatic yol.
+            let len = windows::core::PCWSTR::from_raw(pwstr.0).len();
             let slice = std::slice::from_raw_parts(pwstr.0, len);
             let os = {
                 use std::os::windows::ffi::OsStringExt;
@@ -448,12 +454,29 @@ mod win {
         }
     }
 
-    /// COM'u apartment-threaded modda başlatır (idempotent). Hata değeri
-    /// `S_FALSE`/`RPC_E_CHANGED_MODE` yoksayılabilir — zaten init edilmiş demek.
+    thread_local! {
+        /// Bu thread'de `CoInitializeEx` çağrıldı mı?
+        ///
+        /// `CoInitializeEx` S_OK/S_FALSE döndüğünde thread-başına ref count
+        /// artırıyor. Tekrar çağrı ref count'u şişirir; `CoUninitialize`
+        /// çağırmadığımız için birikmesin diye flag tutup bir kez çağırıyoruz.
+        static COM_INITED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// COM'u apartment-threaded modda thread başına bir kez başlatır.
+    /// Hata değeri (`S_FALSE`/`RPC_E_CHANGED_MODE`) zaten init edilmiş anlamına
+    /// gelir — sessizce geçeriz. Process yaşam süresi boyunca init kalır;
+    /// `CoUninitialize` çağırmayız (uygulama kapanışında OS temizler).
     fn ensure_com_init() {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-        }
+        COM_INITED.with(|flag| {
+            if flag.get() {
+                return;
+            }
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            }
+            flag.set(true);
+        });
     }
 
     /// `ShellExecuteW` ile "open" verb'ü çağır. URL / dosya / klasör hepsi kabul.
@@ -462,7 +485,7 @@ mod win {
         let verb = to_wide("open");
         unsafe {
             let _ = ShellExecuteW(
-                Some(HWND::default()),
+                None,
                 PCWSTR(verb.as_ptr()),
                 PCWSTR(wide.as_ptr()),
                 PCWSTR::null(),
@@ -489,14 +512,14 @@ mod win {
         }
     }
 
-    /// Clipboard'a UTF-16 metin koyar. Standart pattern:
-    /// OpenClipboard → EmptyClipboard → GlobalAlloc+Lock → copy → Unlock →
-    /// SetClipboardData(CF_UNICODETEXT) → CloseClipboard.
+    /// Clipboard'a UTF-16 metin koyar.
     ///
-    /// SetClipboardData başarılı olduğunda hafızanın sahipliği clipboard'a
-    /// geçer; biz free etmemeliyiz. Hata yolunda pragmatik olarak hafıza
-    /// leak'i kabul edilir (windows-rs 0.60'ta `GlobalFree` feature'ı bu
-    /// modülde sağlanmıyor; her hata ~ metin boyutu kadar küçük).
+    /// Akış: OpenClipboard → EmptyClipboard → GlobalAlloc+Lock → copy →
+    /// Unlock → SetClipboardData(CF_UNICODETEXT) → CloseClipboard.
+    ///
+    /// SetClipboardData başarılıysa hafızanın sahipliği clipboard'a geçer —
+    /// biz free ETMEYİZ. Her hata yolunda `GlobalFree` ile kaynak serbest
+    /// bırakılır; `OpenClipboard` başarısız olursa da alloc'u temizleriz.
     pub(super) fn clipboard_set(text: &str) -> Result<()> {
         const CF_UNICODETEXT: u32 = 13;
         let wide = to_wide(text);
@@ -510,18 +533,33 @@ mod win {
 
             let dst = GlobalLock(hmem) as *mut u16;
             if dst.is_null() {
+                let _ = GlobalFree(Some(hmem));
                 return Err(windows::core::Error::from_win32());
             }
             std::ptr::copy_nonoverlapping(wide.as_ptr(), dst, wide.len());
             let _ = GlobalUnlock(hmem);
 
-            // Clipboard sahipliğini al (owner HWND = None, process-wide).
-            OpenClipboard(None)?;
+            // Clipboard sahipliğini al. Başarısızsa hafıza sızmasın diye
+            // GlobalFree ile kapat.
+            if let Err(e) = OpenClipboard(None) {
+                let _ = GlobalFree(Some(hmem));
+                return Err(e);
+            }
             let _ = EmptyClipboard();
             // windows-rs 0.60: hmem `Option<HANDLE>` (NULL = clear format data).
-            let result = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0 as _)));
-            let _ = CloseClipboard();
-            result.map(|_| ())
+            match SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0 as _))) {
+                Ok(_) => {
+                    // Sahipliği clipboard aldı; free ETMEYİZ.
+                    let _ = CloseClipboard();
+                    Ok(())
+                }
+                Err(e) => {
+                    // Sahipliği transfer başarısız — biz free ederiz.
+                    let _ = CloseClipboard();
+                    let _ = GlobalFree(Some(hmem));
+                    Err(e)
+                }
+            }
         }
     }
 }
