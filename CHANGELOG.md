@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-19
+
+Üçüncü platform — Windows. HekaDrop artık macOS / Linux / Windows üzerinde
+çalışır; çekirdek Quick Share protokolü üç platformda da aynı.
+
+### Added
+- Windows portu: native Win32 / WinRT katmanı
+  - `windows-rs` 0.60 ile `SHGetKnownFolderPath` (config/logs/downloads),
+    `GetComputerNameExW` (cihaz adı), `ShellExecuteW` (open/url),
+    `SHOpenFolderAndSelectItems` + `ILCreateFromPathW` (reveal),
+    `OpenClipboard` + `SetClipboardData(CF_UNICODETEXT)` (UTF-16 doğru,
+    `clip.exe`'nin ANSI bozulması yok), `RegOpenKeyExW`/`RegSetValueExW`
+    (autostart)
+  - UI: `MessageBoxW` PIN onay dialog; `notify-rust` WinRT toast
+  - File/folder/device seçimi: PowerShell + `System.Windows.Forms` (UTF-8
+    stdout encoding ile Türkçe karakterler bozulmaz)
+  - `thread_local!` guard ile `CoInitializeEx` thread başına tek çağrı
+- Windows CI job'u (`windows-latest`): fmt / clippy / test / release build
+  + `.exe` artifact upload
+- Windows'a özgü `notify-rust` + `windows` crate `[target.'cfg(...)']`
+  dependency bölümü
+
+### Changed
+- Platform abstraction `mod win` `pub(crate)` — Windows helper'ları
+  (`to_wide`, known folder, clipboard) crate genelinde kullanılabilir
+- `toggle_login_item` artık üç platformda: macOS launchd, Linux systemd
+  `--user`, Windows Registry `HKCU\...\Run`
+
+### Fixed
+- `path_to_file_uri` — D-Bus `ShowItems` URI'sinde RFC 3986 encoding
+  (0.3.0 commit'i) buraya taşındı (doğru cfg altında)
+- Proto modüllerine `rustdoc::invalid_html_tags` ve
+  `rustdoc::broken_intra_doc_links` allow — auto-generated `<TYPE>`
+  etiketleri rustdoc'u kırmasın
+- `settings.rs` intra-doc link'leri `Self::` prefix'i ile explicit
+- `config.rs` `endpoint_info` byte layout brackets backticks içinde
+  (rustdoc `[17]`'yi intra-doc link sanmasın)
+
 ## [0.3.0] - 2026-04-19
 
 İkinci platform — Linux. Çekirdek Quick Share protokolü değişmedi; UI / path /
@@ -83,6 +121,7 @@ autostart katmanları `cfg`-gated cross-platform hale geldi.
 - Replay koruması: sequence counter ile HMAC doğrulaması
 - Trafik hiçbir sunucuya uğramaz — yalnız yerel ağ
 
-[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/YatogamiRaito/HekaDrop/releases/tag/v0.1.0
