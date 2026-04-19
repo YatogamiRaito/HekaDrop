@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (v0.6 hotfix #2 — PR #35 review aftermath)
+- **[HIGH] Legacy spoofing vektörü kapatıldı** (`connection.rs` —
+  PR #35 review, Copilot). PR #35'in ilk fix'i trust kararını
+  `is_trusted_by_hash(h) || is_trusted_legacy(name, id)` yapıyordu;
+  bu attacker'ın kurbanın (name, id)'sini spoof edip kendi hash'ini
+  auto-accept + opportunistic upgrade ile legacy kayda kalıcı olarak
+  bağlamasına izin veriyordu. Trust kararı artık **strict hash-first**:
+  peer hash gönderdiyse YALNIZ hash eşleşmesi trusted sayılır; legacy
+  fallback yalnız pre-v0.6 peer (hash göndermeyen) için geçerli.
+  Legacy kullanıcıların migration bedeli: ilk v0.6 bağlantısında
+  one-time dialog — Accept sonrası opportunistic upgrade hash'i bağlar,
+  sonraki bağlantılar dialog'suz.
+- **[MED] HTML attribute escape fix** (`resources/window.html` —
+  PR #35 review, Gemini). `escapeAttr()` önceden tek tırnakları `\'`
+  (JS string escape syntax'ı) ile kaçırıyordu — HTML için yanlış.
+  Ekran okuyucular ters bölüyü okuyabiliyordu. Doğru HTML entity
+  escape'ine (`&amp; &quot; &lt; &gt;`) geçildi.
+- **[MED] `tf()` placeholder dedup** (`resources/window.html` —
+  PR #35 review, Gemini). `tf()` artık `t.apply` ile `t()`'nin regex
+  tabanlı substitution'ına delege eder; iki ayrı implementasyon bakımı
+  bitti.
+- **[MED] `0o600` test umask-tolerant** (`src/settings.rs` — PR #35
+  review, Copilot). `atomic_write_mode` testi exact `0o600` yerine
+  "group/world erişim yok" (`mode & 0o077 == 0`) invariant'ını
+  kontrol eder — hardened umask ortamlarında (0o077/0o277) owner
+  bitleri daha da kısıtlansa bile security invariant'ı doğrular.
+
 ### Security (MAJOR — v0.6.0)
 - **[HIGH] Trusted device identity hardening** (Issue #17): trust
   kararı artık `PairedKeyEncryption.secret_id_hash` (6 byte,

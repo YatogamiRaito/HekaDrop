@@ -1136,6 +1136,21 @@ mod tests {
     ///
     /// Bu test connection.rs'teki `trusted` ifadesini Settings seviyesinde
     /// simüle eder — tam flow (prompt_accept) için test harness yok.
+    /// PR #35 review (Copilot HIGH, discussion_r3107564927) regression:
+    /// Legacy `(name, id)` kaydı olan cihaz **unknown/mismatched** bir hash
+    /// ile bağlandığında trusted sayılMAMALI — dialog ZORUNLU. Aksi halde
+    /// legacy spoofing vektörü açıktır: attacker kurbanın (name, id)'sini
+    /// öğrenir, kendi hash'i ile gelir, OR fallback nedeniyle auto-accept
+    /// olur, Accept branch'indeki opportunistic upgrade attacker'ın hash'ini
+    /// legacy kayda bağlar → kalıcı silent bypass.
+    ///
+    /// Doğru trust karar mantığı (connection.rs handle_sharing_frame):
+    ///   Some(h) => is_trusted_by_hash(h)          // YALNIZ hash
+    ///   None    => is_trusted_legacy(name, id)    // pre-v0.6 peer
+    ///
+    /// Legacy kullanıcı migration UX: ilk v0.6 bağlantısında one-time
+    /// dialog kabul edilir (bu test o davranışı doğrular). Accept sonrası
+    /// opportunistic upgrade hash'i bağlar, sonraki bağlantılar dialog'suz.
     #[test]
     fn v06_legacy_kayit_hash_ile_gelirse_dialog_yok() {
         let mut s = Settings::default();
@@ -1143,19 +1158,49 @@ mod tests {
         s.add_trusted("Pixel 7", "endpoint-abc");
         let peer_hash = [0xAB; 6];
 
-        // connection.rs'teki trusted hesabı (yeni fix):
-        //   Some(h) => is_trusted_by_hash(h) OR is_trusted_legacy(name, id)
-        let trusted =
-            s.is_trusted_by_hash(&peer_hash) || s.is_trusted_legacy("Pixel 7", "endpoint-abc");
+        // connection.rs'teki trusted hesabı (strict hash-first):
+        //   Some(h) => is_trusted_by_hash(h)  — legacy fallback YOK.
+        let trusted = s.is_trusted_by_hash(&peer_hash);
         assert!(
-            trusted,
-            "legacy kaydı olan cihaz ilk hash-gönderi ile silent kabul edilmeli"
+            !trusted,
+            "peer hash gönderdi ama kayıtta yok → trusted=false olmalı, \
+             dialog çıkmalı (legacy (name,id) match'i bypass'a çevrilMEMELİ)"
         );
 
-        // Önceki (hatalı) davranış: yalnız is_trusted_by_hash → false → dialog.
+        // Legacy kayıt hâlâ duruyor (migration için). Kullanıcı dialog'a
+        // Accept derse connection.rs'in opportunistic upgrade bloğu
+        // add_trusted_with_hash ile hash'i legacy'ye yerleştirir; sonraki
+        // bağlantıda is_trusted_by_hash true döner.
+        assert!(s.is_trusted_legacy("Pixel 7", "endpoint-abc"));
+        assert!(!s.is_trusted_by_hash(&peer_hash));
+    }
+
+    /// PR #35 review (Copilot HIGH) regression — spoofing vektörü açıkça:
+    /// Attacker kurbanın legacy (name, id)'sini öğrenir, keyfi bir hash
+    /// gönderir. Trust kararı hash-first olduğu için attacker HİÇBİR zaman
+    /// auto-trusted olmamalı; kullanıcı dialog görmeli.
+    #[test]
+    fn v06_legacy_match_hash_mismatch_spoofing_engellenir() {
+        let mut s = Settings::default();
+        s.add_trusted("Pixel 7", "endpoint-abc");
+
+        // Attacker: aynı (name, id), farklı hash.
+        let attacker_hash = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01];
+
+        // Strict hash-first karar.
+        assert!(!s.is_trusted_by_hash(&attacker_hash));
+
+        // Legacy eşleşmesi var — ama trust kararı artık OR'lamıyor.
+        assert!(s.is_trusted_legacy("Pixel 7", "endpoint-abc"));
+
+        // Auto-trust olmaması gerekir → dialog zorunlu.
+        // Eski OR'lu kodda bu assertion false döner (attacker auto-accept).
+        let auto_trusted_under_strict_rule = s.is_trusted_by_hash(&attacker_hash);
         assert!(
-            !s.is_trusted_by_hash(&peer_hash),
-            "hash henüz kayıtta olmamalı (pre-upgrade durumu)"
+            !auto_trusted_under_strict_rule,
+            "legacy (name, id) match + unknown hash kombinasyonu auto-accept \
+             üretmemeli — aksi halde PR #35 review'da raporlanan spoofing \
+             vektörü geri gelir"
         );
     }
 
@@ -1225,9 +1270,21 @@ mod tests {
 
     /// Review #34 MED regression: `atomic_write_mode(path, data, Some(0o600))`
     /// tmp dosyayı baştan `O_EXCL | mode(0o600)` ile açmalı ve rename sonucu
-    /// final path da 0600 olmalı — umask ne olursa olsun. Önceki akışta tmp
-    /// default (0644) ile açılıp rename SONRASI set_permissions ile düzeltiliyordu;
-    /// bu pencerede dosya world-readable'dı.
+    /// final path da group/world-accessible OLMAMALI — umask ne olursa olsun.
+    /// Önceki akışta tmp default (0644) ile açılıp rename SONRASI
+    /// set_permissions ile düzeltiliyordu; bu pencerede dosya
+    /// world-readable'dı.
+    ///
+    /// Assertion fix (PR #35 review, Copilot MED, discussion_r3107564937):
+    /// Önceki test `mode == 0o600` exact eşitliğini kontrol ediyordu.
+    /// `OpenOptionsExt::mode(0o600)` umask ile AND'lenir — yalnız daha
+    /// **restrictive** hale gelebilir. Hardened ortamlarda (umask 0o077
+    /// veya 0o277) owner bitleri daha da kısıtlanıp dosya 0o400 olabilir;
+    /// bu durumda güvenlik invariant'ı (group/world erişim yok) hâlâ
+    /// sağlanır ama eski assertion false-negative verirdi. Invariant
+    /// olarak "group/world için hiçbir izin yok" (`mode & 0o077 == 0`)
+    /// kontrol ediyoruz; owner bitleri 0o000..=0o700 aralığında herhangi
+    /// bir değer olabilir.
     #[cfg(unix)]
     #[test]
     fn atomic_write_mode_0600_baslangictan_itibaren_uygular() {
@@ -1242,10 +1299,23 @@ mod tests {
         atomic_write_mode(&p, b"secret-bytes", Some(0o600)).expect("write");
         let meta = std::fs::metadata(&p).expect("stat");
         let mode = meta.permissions().mode() & 0o777;
+        // Security invariant: group + world için hiçbir rwx biti yok.
         assert_eq!(
-            mode, 0o600,
-            "atomic_write_mode Some(0o600) → final dosya 0600 olmalı, bulunan: 0o{:o}",
-            mode
+            mode & 0o077,
+            0,
+            "atomic_write_mode Some(0o600) → dosya group/world erişilebilir \
+             olmamalı (bulunan mode: 0o{:o}, group+world bits: 0o{:o})",
+            mode,
+            mode & 0o077
+        );
+        // Owner bitleri umask tarafından daha da kısıtlanmış olabilir
+        // (hardened setup). 0o600 tavan, 0o000 taban — arası kabul.
+        let owner_bits = mode & 0o700;
+        assert!(
+            owner_bits <= 0o600,
+            "owner bitleri 0o600'den fazla olmamalı (mode(0o600) umask'i gevşetmez): \
+             0o{:o}",
+            owner_bits
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -529,27 +529,46 @@ async fn handle_sharing_frame(
             }
 
             // Karar mantığı (Issue #17):
-            //   1) Peer secret_id_hash gönderdiyse → (hash eşleşir VEYA legacy
-            //      kayıt eşleşir) trusted sayılır. Birinci sürüm review sonrası
-            //      fix (Gemini review #34): legacy kaydı olan cihaz ilk kez
-            //      hash gönderdiğinde dialog sormadan silent upgrade olmalı.
-            //      Önceden yalnız `is_trusted_by_hash` bakılıyordu → hash
-            //      henüz kaydedilmediği için false dönüyor, kullanıcıya
-            //      gereksiz dialog çıkıyordu.
-            //   2) Peer hash yoksa → legacy `(name, id)` eşleşmesi (fallback,
-            //      3 sürümlük uyumluluk penceresi).
+            //   1) Peer secret_id_hash gönderdiyse → YALNIZ hash eşleşmesi
+            //      trust'a yeterlidir. Legacy `(name, id)` fallback bu yolda
+            //      devreye alınmaz.
+            //   2) Peer hash göndermediyse (pre-v0.6 peer) → legacy
+            //      `(name, id)` eşleşmesi (3 sürümlük uyumluluk penceresi).
             //   3) Settings.auto_accept → dialog atla.
             //   4) Aksi halde dialog göster (3 seçenek: reddet/kabul/kabul+güven).
+            //
+            // SECURITY (PR #35 review — Copilot HIGH, discussion_r3107564927):
+            // PR #35'in ilk fix'i `Some(h) => is_trusted_by_hash(h) ||
+            // is_trusted_legacy(name, id)` kullanıyordu. Bu OR fallback
+            // legacy `(name, id)` spoofing vektörünü geri açmıştı: attacker
+            // kurbanın endpoint-id + cihaz adını öğrenir → hash gönderir →
+            // legacy kaydı OR ile eşleşir → auto-accept → "opportunistic
+            // upgrade" attacker'ın hash'ini kalıcı olarak kayda bağlar.
+            // Bundan sonra legacy fallback kaldırılsa bile attacker sessiz
+            // bypass ile trusted kalır.
+            //
+            // Legacy kullanıcı migration UX: v0.5 → v0.6 geçişinde legitimate
+            // cihazın ilk hash-gönderili bağlantısında dialog ONE-TIME çıkar
+            // (çünkü hash henüz kayıtta yok). Kullanıcı Accept / Accept+Trust
+            // dediğinde aşağıdaki opportunistic upgrade hash'i legacy kayda
+            // bağlar; sonraki bağlantılar hash-first trusted, dialog yok.
+            // Bu migration-dialog-cost spoofing engelinin doğru bedelidir.
             let trusted = {
                 let st = state::get();
                 let s = st.settings.read();
                 match peer_secret_id_hash {
-                    Some(h) => {
-                        s.is_trusted_by_hash(h) || s.is_trusted_legacy(remote_name, remote_id)
-                    }
+                    Some(h) => s.is_trusted_by_hash(h),
                     None => s.is_trusted_legacy(remote_name, remote_id),
                 }
             };
+
+            // TODO(ux): peer hash gönderdiği halde is_trusted_by_hash false ama
+            // is_trusted_legacy true ise — bu "v0.5 legacy kullanıcı ilk v0.6
+            // bağlantısı" senaryosudur. Dialog prompt'unu customize etmek
+            // kullanıcıya one-time dialog'un nedenini açıklar
+            // ("Önceki güvenilir cihazın yeni kimliği doğrulanıyor…").
+            // prompt_accept() imzası şu an custom prompt kabul etmediği için
+            // (macOS/Windows/Linux 3 ayrı blocking fn) bu polish atlandı.
 
             let auto_accept = state::get().settings.read().auto_accept;
 

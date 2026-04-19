@@ -1026,7 +1026,7 @@
             ${ttlBadge}
           </div>
           <button type="button" class="small danger"
-                  onclick="act('trust_remove::${escapeAttr(rawName)}')"
+                  onclick="act('trust_remove::${escapeJsInAttr(rawName)}')"
                   aria-label="Güvenilen cihazı kaldır: ${escapeAttr(label)}">
             <span class="icon" aria-hidden="true">✕</span>${removeLabel}
           </button>
@@ -1035,20 +1035,18 @@
       }).join('');
     };
 
-    // tf() — basit formatlayıcı: window.__I18N__ sözlüğünden çeviriyi alıp
-    // `{0}` `{1}` vb. yer tutucuları args ile değiştirir (Rust tarafındaki
-    // `apply_args` ile aynı semantik — tüm eşleşmeleri değiştirir).
+    // tf() — array-argüman wrapper: çağrı sitelerinde `tf(key, [a, b])`
+    // kullanımı JS variadic `t(key, a, b)`'ye dönüştürülür. `t()` zaten
+    // regex ile tüm `{N}` eşleşmelerini değiştirir ve null/undefined'ı boş
+    // string'e çevirir; `tf` bu mantığı yeniden implemente etmez.
     //
-    // Bug (review #34 MED): önceden `String.replace(string, string)` yalnız
-    // ilk eşleşmeyi değiştiriyordu; "Dosya {0} alındı. {0} aç?" gibi aynı
-    // argümanı iki kez kullanan çeviriler ikinci `{0}`'ı literal bırakıyordu.
-    // `split/join` ile tüm eşleşmeler tek pasada değişir.
+    // Refactor (PR #35 review, Gemini MED, discussion_r3107561278):
+    // Önceki implementasyon split/join ile manuel substitution yapıyordu —
+    // `t()`'nin regex tabanlı değiştirmesinin duplicate'i. Çağrı sitelerini
+    // kırmamak için `tf(key, args)` API'si korundu ama içerik `t.apply`'a
+    // delege edildi; böylece tek bir substitution kaynağı kalır.
     function tf(key, args) {
-      let s = t(key);
-      for (let i = 0; i < args.length; i++) {
-        s = s.split('{' + i + '}').join(args[i]);
-      }
-      return s;
+      return t.apply(null, [key].concat(args || []));
     }
 
     window.applyHistory = function(items) {
@@ -1059,7 +1057,7 @@
       }
       list.innerHTML = items.map(h => `
         <button type="button" class="hitem"
-                onclick="act('reveal::${escapeAttr(h.path)}')"
+                onclick="act('reveal::${escapeJsInAttr(h.path)}')"
                 aria-label="Dosyayı göster: ${escapeAttr(h.file_name)}, ${escapeAttr(h.size_human)}, ${escapeAttr(h.device)}, ${escapeAttr(h.age)}">
           <span class="hname">${escapeHtml(h.file_name)}</span>
           <span class="hmeta">${escapeHtml(h.size_human)} • ${escapeHtml(h.device)} • ${escapeHtml(h.age)}${h.sha256 ? ` • <code style="font-size:10px">${escapeHtml(h.sha256)}</code>` : ''}</span>
@@ -1072,8 +1070,37 @@
         '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
       }[c]));
     }
+    // escapeAttr — HTML attribute value escape (çift-tırnaklı attr'lar için).
+    //
+    // Bug (PR #35 review, Gemini MED, discussion_r3107561275):
+    // Önceki implementasyon tek tırnakları `\'` ile kaçırıyordu — bu JS
+    // string literal escape syntax'ı, HTML attribute syntax'ı değil. Sonuç
+    // DOM'a `aria-label="O\'Brian"` olarak düşüyordu; screen reader'lar
+    // ters bölü karakterini "O backslash Brian" gibi okuyabiliyordu.
+    //
+    // Doğru HTML çift-tırnaklı attribute escape'i yalnız şu karakterlere
+    // ihtiyaç duyar: `&` → &amp;, `"` → &quot;, `<` → &lt;, `>` → &gt;.
+    // Tek tırnak çift-tırnaklı attr içinde literal kalabilir (escape
+    // gerekmez).
     function escapeAttr(s) {
-      return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      return String(s).replace(/[&<>"]/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'
+      }[c]));
+    }
+    // escapeJsInAttr — `onclick="act('${x}')"` gibi "HTML attr içinde tek
+    // tırnaklı JS string" bağlamı için iki-katmanlı escape. Önce JS
+    // string-literal düzeyinde ters bölü + tek tırnak + newline + </script>
+    // kaçırılır; sonra HTML attribute düzeyinde `&` + `<` + `>` + `"`
+    // entity'lerine dönüşür. `escapeAttr` saf HTML için (aria-label vb.),
+    // bu helper JS-mixed bağlam için.
+    function escapeJsInAttr(s) {
+      const jsEscaped = String(s)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n')
+        .replace(/</g, '\\u003C');
+      return escapeAttr(jsEscaped);
     }
 
     window.updateProgress = function(percent, label) {
