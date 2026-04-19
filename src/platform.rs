@@ -431,9 +431,13 @@ mod win {
         unsafe {
             let mut size: u32 = 256;
             let mut buf = vec![0u16; size as usize];
-            // windows-rs 0.60: PWSTR doğrudan geçilir (Option değil).
-            if GetComputerNameExW(ComputerNameDnsHostname, PWSTR(buf.as_mut_ptr()), &mut size)
-                .is_err()
+            // windows-rs 0.60: lpbuffer `Option<PWSTR>` (NULL desteği için).
+            if GetComputerNameExW(
+                ComputerNameDnsHostname,
+                Some(PWSTR(buf.as_mut_ptr())),
+                &mut size,
+            )
+            .is_err()
             {
                 return None;
             }
@@ -516,8 +520,8 @@ mod win {
             // Clipboard sahipliğini al (owner HWND = None, process-wide).
             OpenClipboard(None)?;
             let _ = EmptyClipboard();
-            // windows-rs 0.60 Param<HANDLE> — HANDLE doğrudan geçilir, Option DEĞİL.
-            let result = SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0 as _));
+            // windows-rs 0.60: hmem `Option<HANDLE>` (NULL = clear format data).
+            let result = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0 as _)));
             let _ = CloseClipboard();
             result.map(|_| ())
         }

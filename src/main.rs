@@ -1007,7 +1007,7 @@ fn toggle_login_item() {
         let rc = RegOpenKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR(subkey_w.as_ptr()),
-            0,
+            None,
             KEY_READ,
             &mut hkey,
         );
@@ -1034,7 +1034,7 @@ fn toggle_login_item() {
             let rc = RegOpenKeyExW(
                 HKEY_CURRENT_USER,
                 PCWSTR(subkey_w.as_ptr()),
-                0,
+                None,
                 KEY_WRITE,
                 &mut hkey,
             );
@@ -1076,7 +1076,7 @@ fn toggle_login_item() {
         let rc = RegOpenKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR(subkey_w.as_ptr()),
-            0,
+            None,
             KEY_WRITE,
             &mut hkey,
         );
@@ -1090,7 +1090,7 @@ fn toggle_login_item() {
         let set_rc = RegSetValueExW(
             hkey,
             PCWSTR(value_w.as_ptr()),
-            0,
+            None,
             REG_SZ,
             Some(std::slice::from_raw_parts(
                 cmdline_w.as_ptr() as *const u8,

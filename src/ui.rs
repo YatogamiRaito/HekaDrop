@@ -138,7 +138,7 @@ fn prompt_accept_blocking(
 
     let result = unsafe {
         MessageBoxW(
-            HWND::default(),
+            Some(HWND::default()),
             PCWSTR(msg_w.as_ptr()),
             PCWSTR(title_w.as_ptr()),
             MB_YESNOCANCEL | MB_ICONINFORMATION | MB_SYSTEMMODAL,
