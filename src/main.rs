@@ -967,14 +967,149 @@ fn toggle_login_item() {
     );
 }
 
-/// macOS/Linux dışındaki platformlarda (ör. Windows) otomatik başlatma henüz
-/// uygulanmadı; UI'yi kırmayacak şekilde stub bildirim gösterilir.
-#[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+/// macOS / Linux / Windows dışındaki platformlar için stub.
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn toggle_login_item() {
     ui::show_info(
         "HekaDrop — otomatik başlatma",
         "Bu platformda otomatik başlatma henüz desteklenmiyor.",
     );
+}
+
+/// Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` Registry
+/// anahtarına "HekaDrop" değerini yazar ya da kaldırır. Binary yolu
+/// `current_exe()` ile alınır (tırnak içine alınarak; Program Files gibi
+/// boşluklu yollara dayanıklı).
+#[cfg(target_os = "windows")]
+fn toggle_login_item() {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
+        HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_SZ,
+    };
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        let mut v: Vec<u16> = s.encode_utf16().collect();
+        v.push(0);
+        v
+    }
+
+    const SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const VALUE: &str = "HekaDrop";
+
+    let subkey_w = to_wide(SUBKEY);
+    let value_w = to_wide(VALUE);
+
+    // Mevcut durumu yokla (varsa sil → toggle off).
+    let mut hkey = HKEY::default();
+    let exists = unsafe {
+        let rc = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey_w.as_ptr()),
+            0,
+            KEY_READ,
+            &mut hkey,
+        );
+        if rc != ERROR_SUCCESS {
+            false
+        } else {
+            let mut size: u32 = 0;
+            let q = RegQueryValueExW(
+                hkey,
+                PCWSTR(value_w.as_ptr()),
+                None,
+                None,
+                None,
+                Some(&mut size),
+            );
+            let _ = RegCloseKey(hkey);
+            q == ERROR_SUCCESS
+        }
+    };
+
+    if exists {
+        let mut hkey = HKEY::default();
+        unsafe {
+            let rc = RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                PCWSTR(subkey_w.as_ptr()),
+                0,
+                KEY_WRITE,
+                &mut hkey,
+            );
+            if rc == ERROR_SUCCESS {
+                let _ = RegDeleteValueW(hkey, PCWSTR(value_w.as_ptr()));
+                let _ = RegCloseKey(hkey);
+                ui::notify(
+                    "HekaDrop",
+                    "Otomatik başlatma kapatıldı (Registry Run anahtarı kaldırıldı)",
+                );
+                return;
+            }
+        }
+        ui::show_info(
+            "HekaDrop",
+            "Registry anahtarına yazma hakkı yok (HKCU normalde açık olur).",
+        );
+        return;
+    }
+
+    // Yoksa ekle — current_exe path'ini tırnak içine al.
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            ui::show_info(
+                "HekaDrop — otomatik başlatma",
+                &format!("current_exe alınamadı: {}", e),
+            );
+            return;
+        }
+    };
+    let cmdline = format!("\"{}\"", exe.display());
+    let cmdline_w = to_wide(&cmdline);
+    // REG_SZ: byte uzunluğu (null dahil).
+    let byte_len = cmdline_w.len() * std::mem::size_of::<u16>();
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        let rc = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey_w.as_ptr()),
+            0,
+            KEY_WRITE,
+            &mut hkey,
+        );
+        if rc != ERROR_SUCCESS {
+            ui::show_info(
+                "HekaDrop",
+                &format!("Registry Run anahtarı açılamadı (err={:?})", rc),
+            );
+            return;
+        }
+        let set_rc = RegSetValueExW(
+            hkey,
+            PCWSTR(value_w.as_ptr()),
+            0,
+            REG_SZ,
+            Some(std::slice::from_raw_parts(
+                cmdline_w.as_ptr() as *const u8,
+                byte_len,
+            )),
+        );
+        let _ = RegCloseKey(hkey);
+        if set_rc == ERROR_SUCCESS {
+            ui::notify(
+                "HekaDrop",
+                "Otomatik başlatma açıldı (Registry Run anahtarı yazıldı)",
+            );
+        } else {
+            ui::show_info(
+                "HekaDrop",
+                &format!("Registry değeri yazılamadı (err={:?})", set_rc),
+            );
+        }
+    }
 }
 
 /// Linux: systemd --user tabanlı otomatik başlatma.
