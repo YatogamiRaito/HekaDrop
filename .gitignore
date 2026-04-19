@@ -16,3 +16,7 @@
 
 # Çalışma zamanı logları
 *.log
+
+# Üretilen paket artefaktları (kaynakta yok; make-deb.sh çıktıları)
+/HekaDrop-*.deb
+/HekaDrop-*.dmg
