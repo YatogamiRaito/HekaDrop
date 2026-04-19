@@ -110,6 +110,24 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
         .ok_or_else(|| anyhow!("server_init.data yok"))?;
     let server_init = Ukey2ServerInit::decode(&server_init_data[..])?;
 
+    // SECURITY (downgrade koruması): Peer'ın seçtiği cipher bizim öne
+    // sürdüğümüz P256_SHA512 olmalı. Aksi halde tanımsız/zayıf cipher'a
+    // yönlendirme saldırısına maruz kalırız. ClientInit sadece
+    // P256_SHA512 önerdi — ServerInit farklı değer dönerse reddet.
+    if server_init.handshake_cipher != Some(Ukey2HandshakeCipher::P256Sha512 as i32) {
+        bail!(
+            "ServerInit cipher downgrade reddedildi: {:?} (beklenen P256_SHA512)",
+            server_init.handshake_cipher
+        );
+    }
+    // Protocol version kontrolü — V1 dışında bir şey bekleme.
+    if server_init.version != Some(1) {
+        bail!(
+            "ServerInit version={:?} — yalnız V1 destekleniyor",
+            server_init.version
+        );
+    }
+
     // 5) ClientFinished gönder
     frame::write_frame(socket, &client_finished_bytes).await?;
 

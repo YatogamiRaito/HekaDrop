@@ -213,6 +213,19 @@ impl PayloadAssembler {
                 data: Vec::new(),
                 last_chunk_at: now,
             });
+            // SECURITY: BYTES payload'ı clipboard/URL/kısa metin için; limitsiz
+            // büyümesi memory exhaustion (OOM DoS) vektörüdür. 4 MiB'lik sert
+            // bir üst sınır uyguluyoruz — gerçek kullanım için fazlasıyla
+            // yeterli (clipboard metni tipik <100 KB, URL <4 KB).
+            const MAX_BYTES_BUFFER: usize = 4 * 1024 * 1024;
+            if buf.data.len().saturating_add(body.len()) > MAX_BYTES_BUFFER {
+                self.bytes_buffers.remove(&id);
+                return Err(anyhow!(
+                    "BYTES payload limiti aşıldı (id={}, {} MB üstü)",
+                    id,
+                    MAX_BYTES_BUFFER / (1024 * 1024)
+                ));
+            }
             buf.data.extend_from_slice(body);
             buf.last_chunk_at = now;
         }

@@ -102,7 +102,14 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
         .await
         .context("Ukey2ClientFinished okunamadı")?;
     let keys = ukey2::process_client_finish(&cf, &state).context("ClientFinish")?;
-    info!("[{}] ✓ UKEY2 tamam — PIN: {}", peer, keys.pin_code);
+    // SECURITY: PIN clear-text log'a yazılmaz (3 gün retention ile disk
+    // forensics riski). Fingerprint sender + receiver log'larını handshake
+    // boyunca ilişkilendirmek için yeterli.
+    info!(
+        "[{}] ✓ UKEY2 tamam — PIN fingerprint: {}",
+        peer,
+        crate::crypto::pin_fingerprint(&keys.pin_code)
+    );
 
     // 5) plain ConnectionResponse (karşı taraftan)
     let resp_in = frame::read_frame(&mut socket)

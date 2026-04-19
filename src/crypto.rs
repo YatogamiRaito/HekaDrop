@@ -47,6 +47,18 @@ pub fn pin_code_from_auth_key(key: &[u8]) -> String {
     format!("{:04}", hash.abs())
 }
 
+/// PIN'in log-güvenli özeti: SHA-256 hash'inin ilk 6 hex karakteri.
+///
+/// **Neden:** Clear-text PIN log'da 3 gün saklanıyordu (`setup_logging`
+/// rolling appender); disk forensics + handshake audit için ciddi leak.
+/// Fingerprint client + sender log'larını handshake-boyunca ilişkilendirmek
+/// için yeterli ama PIN'i ifşa etmez (4 basamaklı PIN uzayı 10k, 6-hex
+/// fingerprint 16.7M).
+pub fn pin_fingerprint(pin: &str) -> String {
+    let digest = sha256(pin.as_bytes());
+    hex::encode(&digest[..3]) // 6 hex karakter
+}
+
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC anahtar boyu");
     mac.update(data);
