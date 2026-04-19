@@ -102,7 +102,14 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
         .await
         .context("Ukey2ClientFinished okunamadı")?;
     let keys = ukey2::process_client_finish(&cf, &state).context("ClientFinish")?;
-    info!("[{}] ✓ UKEY2 tamam — PIN: {}", peer, keys.pin_code);
+    // SECURITY: PIN clear-text log'a yazılmaz. 4-basamaklı PIN'in hash'i
+    // brute-force olur; onun yerine 256-bit auth_key fingerprint'i
+    // kullanıyoruz (bkz. `session_fingerprint`).
+    info!(
+        "[{}] ✓ UKEY2 tamam — session fingerprint: {}",
+        peer,
+        crate::crypto::session_fingerprint(&keys.auth_key)
+    );
 
     // 5) plain ConnectionResponse (karşı taraftan)
     let resp_in = frame::read_frame(&mut socket)

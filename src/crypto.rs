@@ -47,6 +47,20 @@ pub fn pin_code_from_auth_key(key: &[u8]) -> String {
     format!("{:04}", hash.abs())
 }
 
+/// Oturumun log-güvenli özeti: `auth_key`'in SHA-256 hash'inin ilk 6 hex
+/// karakteri.
+///
+/// **Neden:** PIN sadece 4 basamak (10k olasılık); SHA-256 özeti bile
+/// rainbow-table / brute-force ile saniyeler içinde geri döndürülür.
+/// Log audit için bunun yerine UKEY2 handshake'ten türeyen `auth_key`
+/// (256-bit entropi) kullanıyoruz — brute-force mümkün değil, fingerprint
+/// sender + receiver log'larını handshake boyunca ilişkilendirmeye
+/// yeter ama zayıf PIN uzayını hedef almaz.
+pub fn session_fingerprint(auth_key: &[u8]) -> String {
+    let digest = sha256(auth_key);
+    hex::encode(&digest[..3]) // 6 hex karakter
+}
+
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC anahtar boyu");
     mac.update(data);
