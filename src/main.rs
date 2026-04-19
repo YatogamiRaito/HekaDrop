@@ -290,9 +290,17 @@ fn run_app() -> ! {
         .with_drag_drop_handler(|event| {
             if let DragDropEvent::Drop { paths, .. } = event {
                 if !paths.is_empty() {
-                    info!("[ui] drop: {} dosya", paths.len());
-                    if let Some(rt) = RUNTIME.get() {
-                        rt.spawn(initiate_send_flow_with(paths));
+                    // Klasör bırakıldıysa recursive olarak içindeki tüm
+                    // dosyaları düzleştir (flatten). Symlink'leri takip ETMEZ
+                    // (döngü koruması).
+                    let files = expand_folder_drops(paths);
+                    if files.is_empty() {
+                        info!("[ui] drop: içerik yok");
+                    } else {
+                        info!("[ui] drop: {} dosya", files.len());
+                        if let Some(rt) = RUNTIME.get() {
+                            rt.spawn(initiate_send_flow_with(files));
+                        }
                     }
                 }
             }
@@ -886,6 +894,51 @@ fn semver_less(current: &str, latest: &str) -> bool {
     parse(current) < parse(latest)
 }
 
+/// Bırakılan path'leri düzleştir:
+///   - Dosya → olduğu gibi
+///   - Dizin → içindeki tüm dosyalar (recursive)
+///   - Symlink dizin → takip ETMEZ (döngü koruması; o path atlanır)
+///
+/// Okuma hatası olan alt dizinler sessizce atlanır (tracing::warn log'u ile).
+/// Stack-based BFS; rekürsif çağrı yok, derin ağaçlarda stack overflow yok.
+fn expand_folder_drops(dropped: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack: Vec<std::path::PathBuf> = dropped;
+
+    while let Some(p) = stack.pop() {
+        // symlink_metadata symbolik bağları takip ETMEZ — dizin gibi görünen
+        // symlink'ler "symlink" olarak kalır, aşağıda elendirilir.
+        let meta = match std::fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("[drop] stat hatası atlanıyor: {} ({})", p.display(), e);
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            tracing::warn!("[drop] symlink atlanıyor: {}", p.display());
+            continue;
+        }
+        if meta.is_dir() {
+            match std::fs::read_dir(&p) {
+                Ok(entries) => {
+                    for entry in entries.flatten() {
+                        stack.push(entry.path());
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[drop] dizin okuma hatası: {} ({})", p.display(), e);
+                }
+            }
+        } else if meta.is_file() {
+            out.push(p);
+        }
+        // Diğer durumlar (socket, device vb.) atla.
+    }
+
+    out
+}
+
 fn relative_time(secs: u64) -> String {
     if secs < 60 {
         format!("{} sn önce", secs)
@@ -1247,5 +1300,104 @@ fn toggle_login_item() {
             ),
         ),
         Err(e) => ui::show_info("HekaDrop", &format!("systemctl çalıştırılamadı: {}", e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn tmp_dir(name: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("hekadrop-test-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn expand_drops_duz_dosya_listesi_aynen_doner() {
+        let dir = tmp_dir("expand-files");
+        let f1 = dir.join("a.txt");
+        let f2 = dir.join("b.txt");
+        fs::write(&f1, b"a").unwrap();
+        fs::write(&f2, b"b").unwrap();
+
+        let out = expand_folder_drops(vec![f1.clone(), f2.clone()]);
+        assert_eq!(out.len(), 2);
+        assert!(out.contains(&f1));
+        assert!(out.contains(&f2));
+    }
+
+    #[test]
+    fn expand_drops_klasoru_acar_recursive() {
+        let root = tmp_dir("expand-dir");
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(root.join("top.txt"), b"t").unwrap();
+        fs::write(sub.join("inner.txt"), b"i").unwrap();
+
+        let out = expand_folder_drops(vec![root.clone()]);
+        assert_eq!(out.len(), 2);
+        let names: Vec<String> = out
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert!(names.contains(&"top.txt".to_string()));
+        assert!(names.contains(&"inner.txt".to_string()));
+    }
+
+    #[test]
+    fn expand_drops_karma_dosya_klasor_birlikte() {
+        let root = tmp_dir("expand-mixed");
+        let plain = root.join("plain.txt");
+        let dir = root.join("folder");
+        fs::write(&plain, b"p").unwrap();
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("in1.txt"), b"1").unwrap();
+        fs::write(dir.join("in2.txt"), b"2").unwrap();
+
+        let out = expand_folder_drops(vec![plain.clone(), dir.clone()]);
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn expand_drops_symlink_atlar_dongu_olusmaz() {
+        // Unix-only test — Windows'ta junction/symlink yaratmak farklı API.
+        #[cfg(unix)]
+        {
+            let root = tmp_dir("expand-symlink");
+            let real = root.join("real");
+            fs::create_dir(&real).unwrap();
+            fs::write(real.join("file.txt"), b"f").unwrap();
+
+            // Symlink real → root (döngü yaratır, işlenirse sonsuz recursion)
+            let link = root.join("link");
+            std::os::unix::fs::symlink(&root, &link).unwrap();
+
+            let out = expand_folder_drops(vec![root.clone()]);
+            // file.txt sayılmalı; symlink (link) atlanmalı → sonsuz değil
+            let names: Vec<String> = out
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+                .collect();
+            assert!(names.contains(&"file.txt".to_string()));
+            // link'in kendisi file olarak eklenmemeli (symlink, atlandı)
+            assert!(!names.contains(&"link".to_string()));
+        }
+    }
+
+    #[test]
+    fn expand_drops_bos_listeden_bos_doner() {
+        let out = expand_folder_drops(vec![]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn expand_drops_mevcut_olmayan_path_atlar() {
+        let fake = std::path::PathBuf::from("/tmp/hekadrop-nonexistent-xyzzy-123");
+        let out = expand_folder_drops(vec![fake]);
+        assert!(out.is_empty());
     }
 }
