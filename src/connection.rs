@@ -544,12 +544,28 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
     };
     match kind {
         TextType::Url => {
-            crate::platform::open_url(&text);
-            info!("[{}] URL açıldı: {}", peer, text);
-            ui::notify(
-                crate::i18n::t("notify.app_name"),
-                &crate::i18n::tf("notify.url_opened", &[&preview(&text, 80)]),
-            );
+            if is_safe_url_scheme(&text) {
+                crate::platform::open_url(&text);
+                info!("[{}] URL açıldı: {}", peer, text);
+                ui::notify(
+                    crate::i18n::t("notify.app_name"),
+                    &crate::i18n::tf("notify.url_opened", &[&preview(&text, 80)]),
+                );
+            } else {
+                // SECURITY: http/https dışı şemalar (javascript:, file://, smb://
+                // vb.) exfiltration / RCE / NTLM leak riskidir. Otomatik
+                // açılmaz; metin clipboard'a kopyalanır ve kullanıcıya bildirilir.
+                warn!(
+                    "[{}] güvensiz şemalı URL reddedildi (yalnız http/https açılır): {}",
+                    peer,
+                    preview(&text, 120)
+                );
+                crate::platform::copy_to_clipboard(&text);
+                ui::notify(
+                    crate::i18n::t("notify.app_name"),
+                    &crate::i18n::tf("notify.text_clipboard", &[&preview(&text, 80)]),
+                );
+            }
         }
         _ => {
             crate::platform::copy_to_clipboard(&text);
@@ -608,11 +624,17 @@ fn unique_downloads_path(name: &str) -> Result<PathBuf> {
     let base = state::get().settings.read().resolved_download_dir();
     std::fs::create_dir_all(&base).ok();
 
-    let mut candidate = base.join(name);
+    // SECURITY: Uzak cihazdan gelen dosya adı saldırgan kontrolünde; doğrudan
+    // `base.join(name)` path traversal'a açıktır — sanitize ile yalnız
+    // basename kalır, `..`/`/`/`\`/NUL/control char silinir, Windows
+    // reserved adları (CON, PRN…) yeniden adlandırılır.
+    let safe = sanitize_received_name(name);
+
+    let mut candidate = base.join(&safe);
     if !candidate.exists() {
         return Ok(candidate);
     }
-    let (stem, ext) = split_name(name);
+    let (stem, ext) = split_name(&safe);
     let mut n = 1;
     loop {
         let filename = if ext.is_empty() {
@@ -626,6 +648,96 @@ fn unique_downloads_path(name: &str) -> Result<PathBuf> {
         }
         n += 1;
     }
+}
+
+/// Uzak cihazdan gelen dosya adını güvenli hale getirir.
+///
+/// **Neden gerekli:** `FileMetadata.name` attacker-controlled. Sanitize
+/// edilmediğinde `../../../.bashrc` veya `C:\Windows\System32\drivers\...`
+/// gibi path traversal saldırıları `File::create` ile silent overwrite'a
+/// çevrilir (özellikle `auto_accept=true` veya trusted device yolunda).
+///
+/// Kurallar:
+/// 1. Path separator'a kadar tüm prefix atılır (yalnız basename kalır) —
+///    hem `/` hem `\` ele alınır (Windows'ta `\` da separator).
+/// 2. `.` ve `..` tek başına ya da başta/sonda olduğunda geçersizdir; böyle
+///    adlar `dosya`'ya düşer.
+/// 3. NUL byte, control karakterler (`< 0x20`, `0x7F`) filtrelenir.
+/// 4. Windows reserved device adları (CON, PRN, AUX, NUL, COM1..COM9,
+///    LPT1..LPT9) case-insensitive eşleşirse prefix'li hale getirilir
+///    (`CON` → `_CON`).
+/// 5. 200 bayttan uzun adlar truncate edilir; ext sonrası eklenirken
+///    unique_downloads_path zaten ` (N)` suffix'i ekleyebildiğinden
+///    konservatif kesim.
+/// 6. Sonuç boşsa `dosya` döner.
+pub(crate) fn sanitize_received_name(name: &str) -> String {
+    // 1. Basename: her iki separator için rightmost sonrası.
+    let after_fwd = name.rsplit('/').next().unwrap_or(name);
+    let base = after_fwd.rsplit('\\').next().unwrap_or(after_fwd);
+
+    // 2. `.`/`..` geçersiz.
+    let trimmed = base.trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        return "dosya".into();
+    }
+
+    // 3. NUL + control karakterleri filtrele.
+    let cleaned: String = trimmed
+        .chars()
+        .filter(|&c| c >= ' ' && c != '\x7f')
+        .collect();
+    if cleaned.is_empty() {
+        return "dosya".into();
+    }
+
+    // 4. Windows reserved device adları (stem bazlı).
+    let (stem_before, ext_before) = split_name(&cleaned);
+    let reserved = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let cleaned = if reserved.iter().any(|r| stem_before.eq_ignore_ascii_case(r)) {
+        if ext_before.is_empty() {
+            format!("_{}", cleaned)
+        } else {
+            format!("_{}.{}", stem_before, ext_before)
+        }
+    } else {
+        cleaned
+    };
+
+    // 5. Uzunluk limiti (UTF-8 boundary'ye saygılı).
+    let max_bytes = 200usize;
+    if cleaned.len() <= max_bytes {
+        return cleaned;
+    }
+    // Char boundary'de kes.
+    let mut cut = max_bytes;
+    while cut > 0 && !cleaned.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    cleaned[..cut].to_string()
+}
+
+/// URL payload'ı için güvenli şema kontrolü.
+///
+/// **Neden gerekli:** `TextType::Url` gelince `open_url()` çağrılıyor;
+/// OS varsayılan tarayıcıya giderse `javascript:` browser'da kod çalıştırır,
+/// `file://` local dosyaya erişir (exfiltration), `smb://` Windows'ta NTLM
+/// credential leak'e çevrilir, özel protocol handler'lar (zoom-us, steam,
+/// registry custom protokoller) arbitrary app tetikler. Yalnız http/https
+/// kabul et.
+pub(crate) fn is_safe_url_scheme(url: &str) -> bool {
+    let lower = url.trim_start();
+    // ASCII case-insensitive başlangıç kontrolü.
+    let starts = |prefix: &str| {
+        lower.len() >= prefix.len()
+            && lower.as_bytes()[..prefix.len()]
+                .iter()
+                .map(|b| b.to_ascii_lowercase())
+                .eq(prefix.bytes())
+    };
+    starts("http://") || starts("https://")
 }
 
 fn split_name(name: &str) -> (&str, &str) {
@@ -930,5 +1042,115 @@ mod tests {
             !p.exists(),
             "yarım kalan dosya reject sonrası silinmiş olmalı"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Security: sanitize_received_name + is_safe_url_scheme
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn sanitize_normal_ad_degismez() {
+        assert_eq!(sanitize_received_name("rapor.pdf"), "rapor.pdf");
+        assert_eq!(sanitize_received_name("foto.jpg"), "foto.jpg");
+    }
+
+    #[test]
+    fn sanitize_unix_path_traversal_basename_a_duser() {
+        assert_eq!(sanitize_received_name("../../../etc/passwd"), "passwd");
+        assert_eq!(sanitize_received_name("/etc/shadow"), "shadow");
+        assert_eq!(sanitize_received_name("foo/bar.txt"), "bar.txt");
+    }
+
+    #[test]
+    fn sanitize_windows_path_traversal_basename_a_duser() {
+        assert_eq!(
+            sanitize_received_name(r"C:\Windows\System32\cmd.exe"),
+            "cmd.exe"
+        );
+        assert_eq!(
+            sanitize_received_name(r"..\..\autostart\evil.bat"),
+            "evil.bat"
+        );
+        assert_eq!(
+            sanitize_received_name(r"mixed/forward\back.txt"),
+            "back.txt"
+        );
+    }
+
+    #[test]
+    fn sanitize_null_ve_control_karakter_temizlenir() {
+        assert_eq!(sanitize_received_name("abc\0def.txt"), "abcdef.txt");
+        assert_eq!(sanitize_received_name("line1\nline2.txt"), "line1line2.txt");
+        assert_eq!(sanitize_received_name("tab\ttab.txt"), "tabtab.txt");
+    }
+
+    #[test]
+    fn sanitize_sirf_nokta_gecersiz() {
+        assert_eq!(sanitize_received_name("."), "dosya");
+        assert_eq!(sanitize_received_name(".."), "dosya");
+        assert_eq!(sanitize_received_name(""), "dosya");
+        assert_eq!(sanitize_received_name("   "), "dosya");
+    }
+
+    #[test]
+    fn sanitize_windows_reserved_adlar_prefix_alir() {
+        assert_eq!(sanitize_received_name("CON"), "_CON");
+        assert_eq!(sanitize_received_name("PRN.txt"), "_PRN.txt");
+        assert_eq!(sanitize_received_name("com1"), "_com1");
+        assert_eq!(sanitize_received_name("LPT9.log"), "_LPT9.log");
+        // Reserved olmayan
+        assert_eq!(sanitize_received_name("CONSOLE.txt"), "CONSOLE.txt");
+        assert_eq!(sanitize_received_name("COMMAND"), "COMMAND");
+    }
+
+    #[test]
+    fn sanitize_uzunluk_siniri_200_byte() {
+        let very_long = "a".repeat(500);
+        let out = sanitize_received_name(&very_long);
+        assert!(out.len() <= 200);
+    }
+
+    #[test]
+    fn sanitize_utf8_boundary_korunur() {
+        // "ş" 2 byte; toplam 300 byte. Kesim char boundary'de kalmalı
+        // (panic yapmamalı, invalid UTF-8 üretmemeli).
+        let s = "ş".repeat(150);
+        let out = sanitize_received_name(&s);
+        assert!(out.len() <= 200);
+        // Lossless UTF-8
+        let _ = out.chars().count();
+    }
+
+    #[test]
+    fn sanitize_turkce_karakterler_korunur() {
+        assert_eq!(
+            sanitize_received_name("çok önemli dosya.pdf"),
+            "çok önemli dosya.pdf"
+        );
+    }
+
+    #[test]
+    fn url_safe_scheme_http_https_evet() {
+        assert!(is_safe_url_scheme("http://example.com"));
+        assert!(is_safe_url_scheme("https://example.com"));
+        assert!(is_safe_url_scheme("HTTPS://EXAMPLE.COM"));
+        assert!(is_safe_url_scheme("  https://example.com"));
+    }
+
+    #[test]
+    fn url_unsafe_scheme_javascript_file_smb() {
+        assert!(!is_safe_url_scheme("javascript:alert(1)"));
+        assert!(!is_safe_url_scheme("JavaScript:alert(1)"));
+        assert!(!is_safe_url_scheme("file:///etc/passwd"));
+        assert!(!is_safe_url_scheme("smb://attacker/share"));
+        assert!(!is_safe_url_scheme("data:text/html,<script>"));
+        assert!(!is_safe_url_scheme("vbscript:msgbox"));
+        // Windows custom protocol handlers
+        assert!(!is_safe_url_scheme("ms-msdt:/id PCWDiagnostic"));
+        assert!(!is_safe_url_scheme("zoom-us://foo"));
+        // Boş/anlamsız
+        assert!(!is_safe_url_scheme(""));
+        assert!(!is_safe_url_scheme("http"));
+        assert!(!is_safe_url_scheme("://example.com"));
     }
 }
