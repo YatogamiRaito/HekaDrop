@@ -1404,7 +1404,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tray-icon",
- "windows 0.58.0",
+ "windows 0.60.0",
  "wry",
 ]
 

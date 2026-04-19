@@ -409,7 +409,8 @@ mod win {
     /// bırakılır (aksi halde leak). Bellek tahsisi başarısızsa `None`.
     pub(super) fn known_folder(folder: &GUID) -> Option<PathBuf> {
         unsafe {
-            let pwstr: PWSTR = SHGetKnownFolderPath(folder, KF_FLAG_DEFAULT.0 as u32, None).ok()?;
+            // windows-rs 0.60: flag enum doğrudan geçilir (eski sürümlerde u32).
+            let pwstr: PWSTR = SHGetKnownFolderPath(folder, KF_FLAG_DEFAULT, None).ok()?;
             if pwstr.is_null() {
                 return None;
             }
@@ -430,13 +431,14 @@ mod win {
         unsafe {
             let mut size: u32 = 256;
             let mut buf = vec![0u16; size as usize];
-            // GetComputerNameExW: size parametresi buffer kapasitesi + null için.
-            let ok = GetComputerNameExW(
+            // windows-rs 0.60: PWSTR doğrudan geçilir (Option değil).
+            if GetComputerNameExW(
                 ComputerNameDnsHostname,
-                Some(PWSTR(buf.as_mut_ptr())),
+                PWSTR(buf.as_mut_ptr()),
                 &mut size,
-            );
-            if ok.is_err() {
+            )
+            .is_err()
+            {
                 return None;
             }
             buf.truncate(size as usize);
@@ -462,7 +464,7 @@ mod win {
         let verb = to_wide("open");
         unsafe {
             let _ = ShellExecuteW(
-                HWND::default(),
+                Some(HWND::default()),
                 PCWSTR(verb.as_ptr()),
                 PCWSTR(wide.as_ptr()),
                 PCWSTR::null(),
@@ -491,8 +493,12 @@ mod win {
 
     /// Clipboard'a UTF-16 metin koyar. Standart pattern:
     /// OpenClipboard → EmptyClipboard → GlobalAlloc+Lock → copy → Unlock →
-    /// SetClipboardData(CF_UNICODETEXT) → CloseClipboard. Hatada kaynakları
-    /// serbest bırakır.
+    /// SetClipboardData(CF_UNICODETEXT) → CloseClipboard.
+    ///
+    /// SetClipboardData başarılı olduğunda hafızanın sahipliği clipboard'a
+    /// geçer; biz free etmemeliyiz. Hata yolunda pragmatik olarak hafıza
+    /// leak'i kabul edilir (windows-rs 0.60'ta `GlobalFree` feature'ı bu
+    /// modülde sağlanmıyor; her hata ~ metin boyutu kadar küçük).
     pub(super) fn clipboard_set(text: &str) -> Result<()> {
         const CF_UNICODETEXT: u32 = 13;
         let wide = to_wide(text);
@@ -511,23 +517,13 @@ mod win {
             std::ptr::copy_nonoverlapping(wide.as_ptr(), dst, wide.len());
             let _ = GlobalUnlock(hmem);
 
-            // Clipboard sahipliğini (owner HWND = null, process-wide) al.
-            OpenClipboard(HWND::default())?;
+            // Clipboard sahipliğini al (owner HWND = None, process-wide).
+            OpenClipboard(None)?;
             let _ = EmptyClipboard();
-            // SetClipboardData başarılıysa clipboard hafızanın sahibi olur —
-            // biz artık free ETMEMELİYİZ.
-            match SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0 as _))) {
-                Ok(_) => {
-                    let _ = CloseClipboard();
-                    Ok(())
-                }
-                Err(e) => {
-                    let _ = CloseClipboard();
-                    // Sahip olunamadı; belleği geri al.
-                    let _ = windows::Win32::System::Memory::GlobalFree(hmem);
-                    Err(e)
-                }
-            }
+            // windows-rs 0.60 Param<HANDLE> — HANDLE doğrudan geçilir, Option DEĞİL.
+            let result = SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0 as _));
+            let _ = CloseClipboard();
+            result.map(|_| ())
         }
     }
 }

@@ -54,7 +54,9 @@ notify-rust = "4"
 # Türkçe karakterleri bozuyor), Registry autostart, ShellExecute, MessageBox,
 # SHGetKnownFolderPath, GetComputerNameExW gibi native operasyonlar için
 # external process spawn etmekten daha hızlı ve doğru.
-windows = { version = "0.58", features = [
+# Versiyon wry/webview2-com ile uyumlu olsun (iki farklı windows-core sürümü
+# trait implementasyonlarında çakışıyor); wry 0.50 şu anda 0.60 kullanıyor.
+windows = { version = "0.60", features = [
     "Win32_Foundation",
     "Win32_System_Com",
     "Win32_System_DataExchange",
