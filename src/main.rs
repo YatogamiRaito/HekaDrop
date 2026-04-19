@@ -416,9 +416,12 @@ fn run_app() -> ! {
                 let new_val = auto_accept_item.is_checked();
                 {
                     let st = state::get();
-                    let mut s = st.settings.write();
-                    s.auto_accept = new_val;
-                    let _ = s.save();
+                    let snap = {
+                        let mut s = st.settings.write();
+                        s.auto_accept = new_val;
+                        s.clone()
+                    };
+                    let _ = snap.save();
                 }
                 info!("auto_accept → {}", new_val);
                 ui::notify(
@@ -452,10 +455,12 @@ fn handle_ipc(cmd: &str) {
     }
     if let Some(name) = cmd.strip_prefix("trust_remove::") {
         let st = state::get();
-        let mut s = st.settings.write();
-        s.remove_trusted(name);
-        let _ = s.save();
-        drop(s);
+        let snap = {
+            let mut s = st.settings.write();
+            s.remove_trusted(name);
+            s.clone()
+        };
+        let _ = snap.save();
         push_trusted_to_ui();
         ui::notify(
             i18n::t("notify.app_name"),
@@ -477,10 +482,12 @@ fn handle_ipc(cmd: &str) {
         "stats_refresh" => push_stats_to_ui(),
         "stats_reset" => {
             let st = state::get();
-            let mut s = st.stats.write();
-            *s = stats::Stats::default();
-            let _ = s.save();
-            drop(s);
+            let snap = {
+                let mut s = st.stats.write();
+                *s = stats::Stats::default();
+                s.clone()
+            };
+            let _ = snap.save();
             push_stats_to_ui();
             ui::notify(i18n::t("notify.app_name"), i18n::t("notify.stats_reset"));
         }
@@ -494,10 +501,12 @@ fn handle_ipc(cmd: &str) {
         }
         "trusted_clear" => {
             let st = state::get();
-            let mut s = st.settings.write();
-            s.trusted_devices.clear();
-            let _ = s.save();
-            drop(s);
+            let snap = {
+                let mut s = st.settings.write();
+                s.trusted_devices.clear();
+                s.clone()
+            };
+            let _ = snap.save();
             push_trusted_to_ui();
             ui::notify(i18n::t("notify.app_name"), i18n::t("notify.trust_cleared"));
         }
@@ -542,11 +551,14 @@ fn handle_settings_save(json: &str) {
     };
     {
         let st = state::get();
-        let mut s = st.settings.write();
-        s.device_name = parsed.device_name.filter(|x| !x.is_empty());
-        s.download_dir = parsed.download_dir.map(std::path::PathBuf::from);
-        s.auto_accept = parsed.auto_accept;
-        let _ = s.save();
+        let snap = {
+            let mut s = st.settings.write();
+            s.device_name = parsed.device_name.filter(|x| !x.is_empty());
+            s.download_dir = parsed.download_dir.map(std::path::PathBuf::from);
+            s.auto_accept = parsed.auto_accept;
+            s.clone()
+        };
+        let _ = snap.save();
     }
     info!("[ui] ayarlar güncellendi");
     state::enqueue_js("window.showSaved && window.showSaved()".into());

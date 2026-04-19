@@ -37,8 +37,15 @@ impl SecureCtx {
         }
     }
 
-    pub fn encrypt(&mut self, inner_plaintext: &[u8]) -> Vec<u8> {
-        self.server_seq += 1;
+    pub fn encrypt(&mut self, inner_plaintext: &[u8]) -> Result<Vec<u8>> {
+        // SECURITY: `i32` sequence counter overflow — release build'de wrap
+        // (negatif sayı → peer reject), debug'da panic. Pratikte 2^31 mesaj
+        // gerekir ama saldırgan crafted peer + debug build senaryosu için
+        // garantili olmak adına checked_add kullanılır.
+        self.server_seq = self
+            .server_seq
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("server_seq overflow (i32 sınırı)"))?;
         let d2d = DeviceToDeviceMessage {
             sequence_number: Some(self.server_seq),
             message: Some(inner_plaintext.to_vec()),
@@ -71,7 +78,7 @@ impl SecureCtx {
             header_and_body: hb_bytes,
             signature: sig.to_vec(),
         };
-        smsg.encode_to_vec()
+        Ok(smsg.encode_to_vec())
     }
 
     #[cfg(test)]
@@ -110,7 +117,13 @@ impl SecureCtx {
 
         let d2d = DeviceToDeviceMessage::decode(&plaintext[..])?;
         let seq = d2d.sequence_number.ok_or_else(|| anyhow!("sequence yok"))?;
-        let expected = self.client_seq + 1;
+        // SECURITY: Saldırgan crafted peer `sequence_number = i32::MAX`
+        // gönderirse `self.client_seq + 1` bir sonraki frame'de taşar —
+        // debug build'de panic. `checked_add` ile güvenli bail.
+        let expected = self
+            .client_seq
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("client_seq overflow (i32 sınırı)"))?;
         if seq != expected {
             // State'i bozma — başarısız decrypt sonrası counter artmamalı,
             // aksi halde sıralı bir retry'ı bir daha reddederdik.
@@ -145,7 +158,7 @@ mod tests {
     fn encrypt_decrypt_roundtrip() {
         let (mut a, mut b) = make_pair();
         let plaintext = b"merhaba dunya! gizli mesaj".to_vec();
-        let encrypted = a.encrypt(&plaintext);
+        let encrypted = a.encrypt(&plaintext).unwrap();
         let decrypted = b.decrypt(&encrypted).expect("decrypt");
         assert_eq!(decrypted, plaintext);
     }
@@ -155,7 +168,7 @@ mod tests {
         let (mut a, mut b) = make_pair();
         for i in 1..=5 {
             let msg = format!("mesaj {}", i);
-            let enc = a.encrypt(msg.as_bytes());
+            let enc = a.encrypt(msg.as_bytes()).unwrap();
             let dec = b.decrypt(&enc).expect("decrypt");
             assert_eq!(dec, msg.as_bytes());
         }
@@ -166,8 +179,8 @@ mod tests {
     #[test]
     fn yanlis_sira_reddedilir() {
         let (mut a, mut b) = make_pair();
-        let e1 = a.encrypt(b"first");
-        let e2 = a.encrypt(b"second");
+        let e1 = a.encrypt(b"first").unwrap();
+        let e2 = a.encrypt(b"second").unwrap();
         // İkinciyi önce decode etmeye çalış → sequence uyumsuzluğu
         assert!(b.decrypt(&e2).is_err());
         // Birinciyi yine alabiliriz (client_seq = 0 hâlâ → 1 bekler)
@@ -177,10 +190,19 @@ mod tests {
     #[test]
     fn bozulmus_hmac_reddedilir() {
         let (mut a, mut b) = make_pair();
-        let mut enc = a.encrypt(b"secret");
+        let mut enc = a.encrypt(b"secret").unwrap();
         // Son baytı bozup HMAC doğrulamasını patlat
         let last = enc.len() - 1;
         enc[last] ^= 0xFF;
         assert!(b.decrypt(&enc).is_err());
+    }
+
+    #[test]
+    fn encrypt_overflow_guardlu() {
+        // server_seq = i32::MAX iken encrypt taşma hatası döner, panic etmez.
+        let (mut a, _b) = make_pair();
+        a.server_seq = i32::MAX;
+        let err = a.encrypt(b"x").unwrap_err();
+        assert!(err.to_string().contains("overflow"));
     }
 }

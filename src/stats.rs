@@ -63,7 +63,9 @@ impl Stats {
             std::fs::create_dir_all(parent).ok();
         }
         let json = serde_json::to_string_pretty(self).context("stats JSON serialize")?;
-        std::fs::write(&path, json).context("stats.json yazılamadı")?;
+        // Atomik tmp+rename — crash sırasında yarım yazılmış JSON diske kalmaz.
+        crate::settings::atomic_write(&path, json.as_bytes())
+            .context("stats.json yazılamadı")?;
         Ok(())
     }
 

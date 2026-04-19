@@ -134,7 +134,8 @@ pub async fn send(req: SendRequest) -> Result<()> {
     // 4) Plain ConnectionResponse exchange
     let our_resp = connection::build_connection_response_accept();
     frame::write_frame(&mut socket, &our_resp.encode_to_vec()).await?;
-    let peer_resp_raw = frame::read_frame(&mut socket).await?;
+    let peer_resp_raw =
+        frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT).await?;
     let _peer_resp = OfflineFrame::decode(peer_resp_raw.as_ref())?;
     info!("[sender] ConnectionResponse değişimi tamam");
 
@@ -172,7 +173,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
             bail!("kullanıcı aktarımı iptal etti");
         }
 
-        let raw = frame::read_frame(&mut socket).await?;
+        let raw = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT).await?;
         let inner = ctx.decrypt(&raw)?;
         let offline = OfflineFrame::decode(inner.as_ref())?;
         let Some(v1) = offline.v1 else { continue };
@@ -276,13 +277,16 @@ pub async fn send(req: SendRequest) -> Result<()> {
                         // Stats'i progress güncellemesinden ÖNCE yaz — böylece UI
                         // Completed'ı gördüğünde istatistikler zaten tutarlı olur.
                         {
+                            // Save'i lock dışında çalıştır — yavaş diskte UI dondurmasın.
                             let st = state::get();
-                            let mut s = st.stats.write();
-                            for plan in &plans {
-                                // size i64 ve >= 0; `as u64` güvenli. Defansif clamp:
-                                s.record_sent(&peer_label, plan.size.max(0) as u64);
-                            }
-                            let _ = s.save();
+                            let snap = {
+                                let mut s = st.stats.write();
+                                for plan in &plans {
+                                    s.record_sent(&peer_label, plan.size.max(0) as u64);
+                                }
+                                s.clone()
+                            };
+                            let _ = snap.save();
                         }
                         // Bug #31: Completed gösteriminden sonra birkaç saniye içinde
                         // otomatik Idle'a dönsün — kullanıcı pencereyi sonra açtığında
@@ -311,7 +315,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                         ..Default::default()
                     }),
                 };
-                let enc = ctx.encrypt(&reply.encode_to_vec());
+                let enc = ctx.encrypt(&reply.encode_to_vec())?;
                 frame::write_frame(&mut socket, &enc).await?;
             }
             Some(v1_frame::FrameType::Disconnection) => {
@@ -349,7 +353,7 @@ async fn send_file_chunks(
         let n = file.read(&mut buf).await?;
         if n == 0 {
             let last = wrap_payload_transfer(payload_id, file_size, offset, 1, Vec::new());
-            let enc = ctx.encrypt(&last.encode_to_vec());
+            let enc = ctx.encrypt(&last.encode_to_vec())?;
             frame::write_frame(socket, &enc).await?;
             let digest = hasher.finalize();
             info!(
@@ -362,7 +366,7 @@ async fn send_file_chunks(
         hasher.update(&buf[..n]);
         let body = buf[..n].to_vec();
         let wrapped = wrap_payload_transfer(payload_id, file_size, offset, 0, body);
-        let enc = ctx.encrypt(&wrapped.encode_to_vec());
+        let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
         frame::write_frame(socket, &enc).await?;
         offset += n as i64;
 

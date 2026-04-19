@@ -173,7 +173,7 @@ impl Settings {
             std::fs::create_dir_all(parent).ok();
         }
         let json = serde_json::to_string_pretty(self).context("JSON serialize")?;
-        std::fs::write(&path, json).context("config.json yazılamadı")?;
+        atomic_write(&path, json.as_bytes()).context("config.json yazılamadı")?;
         Ok(())
     }
 
@@ -193,6 +193,51 @@ impl Settings {
 
 pub fn config_path() -> PathBuf {
     crate::platform::config_dir().join("config.json")
+}
+
+/// Atomik dosya yazma — tmp-file + rename pattern.
+///
+/// **Neden:** `fs::write` traditionally `O_TRUNC | O_CREAT` açar; crash/panic
+/// sırasında diskte **yarım-yazılmış** JSON kalabilir (Bug: bir sonraki `load()`
+/// `Settings::default()`'e düşer, kullanıcının trusted cihaz listesi silinmiş
+/// gibi görünür). `rename` POSIX'te atomik — eski içerik ya olduğu gibi kalır
+/// ya da tamamen yeni içerikle değişir; yarım durum yoktur. Windows'ta
+/// `ReplaceFile`/`MoveFileEx` best-effort atomik (aynı volume şart).
+///
+/// Aynı dizinde unique suffix'li tmp file yaratıp `persist` benzeri semantik
+/// sağlar; external `tempfile` crate'ine ihtiyaç yok çünkü süreç-içi paralel
+/// çağrı settings RwLock ile serileştirilmiş (bkz. main.rs call pattern).
+pub(crate) fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path'ın parent'ı yok")
+    })?;
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("config.json");
+    let tmp = parent.join(format!(
+        ".{}.{}.tmp",
+        file_name,
+        std::process::id()
+    ));
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all().ok();
+    }
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Rename başarısızsa tmp'yi temizle — disk sızıntısını önle.
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }
 
 /// `trusted_devices` alanı için özel deserializer — hem yeni (nesne dizisi)
