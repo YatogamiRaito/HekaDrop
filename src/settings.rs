@@ -1128,31 +1128,28 @@ mod tests {
         assert!(s.is_trusted_by_hash(&[0xAA; 6]));
     }
 
-    /// Review #34 HIGH #2 regression: legacy kaydı olan cihaz ilk kez hash
-    /// gönderdiğinde connection.rs'teki `trusted` hesabı `(is_trusted_by_hash
-    /// OR is_trusted_legacy)` olmalı. Böylece dialog gösterilmeden silent
-    /// upgrade'e giden yol açılır; sadece hash'e bakan önceki kod legacy
-    /// kullanıcılara gereksiz dialog çıkarıyordu.
-    ///
-    /// Bu test connection.rs'teki `trusted` ifadesini Settings seviyesinde
-    /// simüle eder — tam flow (prompt_accept) için test harness yok.
     /// PR #35 review (Copilot HIGH, discussion_r3107564927) regression:
     /// Legacy `(name, id)` kaydı olan cihaz **unknown/mismatched** bir hash
     /// ile bağlandığında trusted sayılMAMALI — dialog ZORUNLU. Aksi halde
     /// legacy spoofing vektörü açıktır: attacker kurbanın (name, id)'sini
     /// öğrenir, kendi hash'i ile gelir, OR fallback nedeniyle auto-accept
     /// olur, Accept branch'indeki opportunistic upgrade attacker'ın hash'ini
-    /// legacy kayda bağlar → kalıcı silent bypass.
+    /// legacy kayda bağlar → kalıcı silent bypass. Bu nedenle strict
+    /// hash-first semantic seçildi; OR fallback kabul edilmez.
     ///
     /// Doğru trust karar mantığı (connection.rs handle_sharing_frame):
     ///   Some(h) => is_trusted_by_hash(h)          // YALNIZ hash
     ///   None    => is_trusted_legacy(name, id)    // pre-v0.6 peer
     ///
+    /// Bu test connection.rs'teki `trusted` ifadesini Settings seviyesinde
+    /// simüle eder — tam flow (prompt_accept) için test harness yok.
+    ///
     /// Legacy kullanıcı migration UX: ilk v0.6 bağlantısında one-time
-    /// dialog kabul edilir (bu test o davranışı doğrular). Accept sonrası
-    /// opportunistic upgrade hash'i bağlar, sonraki bağlantılar dialog'suz.
+    /// dialog kullanıcıya gösterilir; Accept sonrası connection.rs'in
+    /// opportunistic upgrade bloğu hash'i legacy kayda bağlar, sonraki
+    /// bağlantılar dialog'suz geçer.
     #[test]
-    fn v06_legacy_kayit_hash_ile_gelirse_dialog_yok() {
+    fn v06_legacy_kayit_hash_ile_gelirse_dialog_zorunlu() {
         let mut s = Settings::default();
         // Kullanıcı v0.5'te "Pixel 7"yi trusted etmiş, hash yok.
         s.add_trusted("Pixel 7", "endpoint-abc");
