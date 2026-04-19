@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `cargo-audit` GitHub Actions workflow (weekly + on Cargo.lock change).
 - Added `cargo-deny` config (`deny.toml`) + workflow for license/advisory/source policy.
 
+### Changed (privacy)
+- Log file redacts full file paths (→ basename only), full SHA-256 hashes
+  (→ first 16 hex chars, enough for self-verification), and URL paths
+  including query strings (→ scheme://host only). Rationale: 3-day log
+  retention + ad-hoc log sharing (GitHub issue, support request) shouldn't
+  expose the user's directory structure, cross-user file fingerprints, or
+  URL query tokens. UI notifications (what the user sees on their own
+  device) are unchanged.
+
 ### Security (research v2 hotfix batch)
 - **[High] Slow-loris DoS**: `frame::read_frame` deadline'sız `read_exact`
   kullanıyordu; saldırgan bağlantı açıp hiçbir şey göndermezsen tokio task'ı

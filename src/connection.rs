@@ -281,8 +281,8 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                             info!(
                                 "[{}] ✓ {} alındı — SHA-256: {}",
                                 peer,
-                                path.display(),
-                                sha_hex
+                                crate::log_redact::path_basename(&path),
+                                crate::log_redact::sha_short(&sha_hex)
                             );
                             {
                                 // PERF/SAFETY: RwLock write guard altında senkron disk I/O
@@ -315,7 +315,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                             info!(
                                 "[{}] ✓ kaydedildi: {} ({} bayt)",
                                 peer,
-                                path.display(),
+                                crate::log_redact::path_basename(&path),
                                 total_size
                             );
                             ui::notify_file_received(
@@ -568,7 +568,7 @@ async fn handle_sharing_frame(
                         if e.kind() != std::io::ErrorKind::NotFound {
                             tracing::debug!(
                                 "reject cleanup: placeholder silinemedi {}: {}",
-                                path.display(),
+                                crate::log_redact::path_basename(path),
                                 e
                             );
                         }
@@ -601,7 +601,14 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
         TextType::Url => {
             if is_safe_url_scheme(&text) {
                 crate::platform::open_url(&text);
-                info!("[{}] URL açıldı: {}", peer, text);
+                // PRIVACY: Log dosyasına yalnız şema + host düşer; path + query
+                // (token içerebilir) redact. UI bildirimi kullanıcının kendi
+                // ekranında olduğu için tam preview'la gösterilir.
+                info!(
+                    "[{}] URL açıldı: {}",
+                    peer,
+                    crate::log_redact::url_scheme_host(&text)
+                );
                 ui::notify(
                     crate::i18n::t("notify.app_name"),
                     &crate::i18n::tf("notify.url_opened", &[&preview(&text, 80)]),
@@ -610,10 +617,12 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
                 // SECURITY: http/https dışı şemalar (javascript:, file://, smb://
                 // vb.) exfiltration / RCE / NTLM leak riskidir. Otomatik
                 // açılmaz; metin clipboard'a kopyalanır ve kullanıcıya bildirilir.
+                // PRIVACY: Güvensiz URL'nin şema + host'u debug için yeterli;
+                // tam string (javascript: payload vb.) log'a düşmez.
                 warn!(
                     "[{}] güvensiz şemalı URL reddedildi (yalnız http/https açılır): {}",
                     peer,
-                    preview(&text, 120)
+                    crate::log_redact::url_scheme_host(&text)
                 );
                 crate::platform::copy_to_clipboard(&text);
                 ui::notify(
@@ -1272,6 +1281,35 @@ mod tests {
         assert!(is_safe_url_scheme("https://example.com"));
         assert!(is_safe_url_scheme("HTTPS://EXAMPLE.COM"));
         assert!(is_safe_url_scheme("  https://example.com"));
+    }
+
+    // ------------------------------------------------------------------
+    // Privacy: log_redact helper'ına kısaltma regression'ları. Log dosyası
+    // 3 gün rolling retention + troubleshooting sırasında paylaşılabilir,
+    // bu yüzden `info!` / `warn!` satırlarının tam path / tam SHA-256 /
+    // URL query içermemesi garanti altında.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn redact_path_basename_only() {
+        let p = std::path::PathBuf::from("/home/user/Belgeler/secret.pdf");
+        assert_eq!(crate::log_redact::path_basename(&p), "secret.pdf");
+    }
+
+    #[test]
+    fn redact_sha_short_form() {
+        let sha = "a".repeat(64);
+        let short = crate::log_redact::sha_short(&sha);
+        assert_eq!(short.len(), 16);
+        assert!(sha.starts_with(short));
+    }
+
+    #[test]
+    fn redact_url_scheme_host_only() {
+        assert_eq!(
+            crate::log_redact::url_scheme_host("https://example.com/path?token=abc"),
+            "https://example.com"
+        );
     }
 
     #[test]

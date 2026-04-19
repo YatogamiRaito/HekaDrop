@@ -356,10 +356,11 @@ async fn send_file_chunks(
             let enc = ctx.encrypt(&last.encode_to_vec())?;
             frame::write_frame(socket, &enc).await?;
             let digest = hasher.finalize();
+            let sha_hex = hex::encode(digest);
             info!(
                 "[sender] {} gönderildi — SHA-256: {}",
                 file_name,
-                hex::encode(digest)
+                crate::log_redact::sha_short(&sha_hex)
             );
             break;
         }

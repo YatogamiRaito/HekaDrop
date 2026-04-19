@@ -19,6 +19,7 @@ mod discovery;
 mod error;
 mod frame;
 mod i18n;
+mod log_redact;
 mod mdns;
 mod payload;
 mod platform;
@@ -923,12 +924,19 @@ fn expand_folder_drops(dropped: Vec<std::path::PathBuf>) -> Vec<std::path::PathB
         let meta = match std::fs::symlink_metadata(&p) {
             Ok(m) => m,
             Err(e) => {
-                tracing::warn!("[drop] stat hatası atlanıyor: {} ({})", p.display(), e);
+                tracing::warn!(
+                    "[drop] stat hatası atlanıyor: {} ({})",
+                    crate::log_redact::path_basename(&p),
+                    e
+                );
                 continue;
             }
         };
         if meta.file_type().is_symlink() {
-            tracing::warn!("[drop] symlink atlanıyor: {}", p.display());
+            tracing::warn!(
+                "[drop] symlink atlanıyor: {}",
+                crate::log_redact::path_basename(&p)
+            );
             continue;
         }
         if meta.is_dir() {
@@ -939,7 +947,11 @@ fn expand_folder_drops(dropped: Vec<std::path::PathBuf>) -> Vec<std::path::PathB
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("[drop] dizin okuma hatası: {} ({})", p.display(), e);
+                    tracing::warn!(
+                        "[drop] dizin okuma hatası: {} ({})",
+                        crate::log_redact::path_basename(&p),
+                        e
+                    );
                 }
             }
         } else if meta.is_file() {
