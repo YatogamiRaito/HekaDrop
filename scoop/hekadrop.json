@@ -1,5 +1,5 @@
 {
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Google Quick Share (Nearby Share) client — Rust, cross-platform",
   "homepage": "https://github.com/YatogamiRaito/HekaDrop",
   "license": "MIT",

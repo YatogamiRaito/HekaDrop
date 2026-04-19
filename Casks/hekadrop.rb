@@ -1,5 +1,7 @@
 cask "hekadrop" do
-  version "0.5.1"
+  version "0.5.2"
+  # NOTE: SHA256 will be updated post-release once the v0.5.2 macOS zip
+  # artifact is published and its checksum verified.
   sha256 "5507c34078353041834de83a06b1afa219df7ac6158864fdc372cb8cc63c6052"
 
   url "https://github.com/YatogamiRaito/HekaDrop/releases/download/v#{version}/HekaDrop-#{version}-macos.zip"

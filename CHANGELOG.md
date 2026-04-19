@@ -7,56 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed (supply chain)
-- Added Dependabot config for cargo + github-actions weekly updates.
-- Added `cargo-audit` GitHub Actions workflow (weekly + on Cargo.lock change).
-- Added `cargo-deny` config (`deny.toml`) + workflow for license/advisory/source policy.
+## [0.5.2] - 2026-04-19
 
-### Changed (privacy)
-- Log file redacts full file paths (→ basename only), full SHA-256 hashes
-  (→ first 16 hex chars, enough for self-verification), and URL paths
-  including query strings (→ scheme://host only). Rationale: 3-day log
-  retention + ad-hoc log sharing (GitHub issue, support request) shouldn't
-  expose the user's directory structure, cross-user file fingerprints, or
-  URL query tokens. UI notifications (what the user sees on their own
-  device) are unchanged.
+Kapsamlı güvenlik + altyapı sertleştirme sürümü. İki tur derinlemesine
+araştırma ajanı raporuyla (toplam 12 rapor, 35+ bulgu) belirlenen **High
++ Medium** ağırlıklı 10+ güvenlik açığı ve 10 AI review yorumu bu
+sürümde adreslendi. v0.5.1 kullanıcılarının güncellenmesi önerilir —
+DoS yüzeyi, TOCTOU ve log PII sızıntıları giderildi.
 
-### Security (research v2 hotfix batch)
-- **[High] Slow-loris DoS**: `frame::read_frame` deadline'sız `read_exact`
-  kullanıyordu; saldırgan bağlantı açıp hiçbir şey göndermezsen tokio task'ı
-  sonsuza kadar asılı kalıyordu. Handshake frame'lerine 30sn, steady-loop
-  frame'lerine 60sn `tokio::time::timeout` eklendi (`HekaError::ReadTimeout`).
-- **[High] Protobuf cardinality flood**: `prost` default'u `repeated` alan
-  boyutuna sınır koymuyor. `Ukey2ClientInit.cipher_commitments` ≤8,
-  `Introduction.file_metadata` ≤1000, `text_metadata` ≤64 guard'ı eklendi.
-- **[High] `unique_downloads_path` TOCTOU**: İki paralel receiver aynı
-  dosya adını "mevcut değil" görüp aynı path'e `File::create` (O_TRUNC)
+### Security (HIGH batch — ilk tur araştırma)
+- **PIN clear-text log kaldırıldı**: 4 basamaklı PIN'in SHA-256 özeti
+  dahi brute-force edilebilir; log fingerprint'i artık 256-bit auth_key
+  üzerinden (`session_fingerprint`) alınıyor. (Gemini review'ı
+  sonrası `pin_fingerprint` tamamen kaldırıldı.)
+- **UKEY2 cipher downgrade koruması**: Peer `Ukey2ServerInit` içinde
+  P256_SHA512 dışında cipher seçerse veya version != 1 ise bail.
+  Önceki kod herhangi bir cipher'ı kabul ediyordu.
+- **BYTES payload 4 MiB cap** (`MAX_BYTES_BUFFER`): Sonsuz BYTES
+  payload'ı yollayan peer artık bellek tüketemez.
+- **Eşzamanlı bağlantı limiti** (`MAX_CONCURRENT_CONNECTIONS = 32`):
+  `tokio::sync::Semaphore` + `try_acquire_owned` ile bloksuz reddetme.
+
+### Security (HIGH + MED batch — ikinci tur araştırma)
+- **Slow-loris DoS koruması**: `frame::read_frame` deadline'sız
+  `read_exact` kullanıyordu; handshake frame'lerine 30 sn,
+  steady-loop'a 60 sn `tokio::time::timeout` eklendi
+  (`HekaError::ReadTimeout`).
+- **Protobuf cardinality flood**: `prost` repeated alan sınırı
+  koymuyor. `Ukey2ClientInit.cipher_commitments` ≤8,
+  `Introduction.file_metadata` ≤1000, `text_metadata` ≤64 guard'ı.
+- **`unique_downloads_path` TOCTOU**: İki paralel receiver aynı dosya
+  adını "mevcut değil" görüp aynı path'e `File::create` (O_TRUNC)
   yapabiliyordu — ilki yazdığı veriyi ikincisi siliyordu. Artık
-  `OpenOptions::create_new(true)` ile **atomik** reserve (POSIX `O_EXCL` /
-  Win `CREATE_NEW`) yapılıyor; ikinci alıcı bir sonraki isme geçiyor.
-- **[High] `Settings::save` + `Stats::save` atomic değildi + RwLock
-  write guard altında senkron disk I/O yapıyordu.** `atomic_write()`
-  (tmp+rename) helper'ı eklendi; tüm callsite'lar snapshot-clone-then-save
-  pattern'ine geçirildi (yavaş diskte UI event loop donmasın).
-- **[Medium] `SecureCtx` sequence counter i32 overflow**: Saldırgan
+  `OpenOptions::create_new(true)` ile **atomik** reserve (POSIX
+  `O_EXCL` / Win `CREATE_NEW`). İkinci alıcı sonraki isme geçer.
+- **`Settings` + `Stats` save atomic değildi + RwLock altında senkron
+  disk I/O**: `atomic_write` (tmp+rename, POSIX + `MoveFileExW` Windows)
+  + `SETTINGS_DISK_LOCK` / `STATS_DISK_LOCK` + snapshot-clone-then-save
+  pattern ile crash-safe + UI-donma-proof hale getirildi.
+- **`SecureCtx` sequence counter i32 overflow**: Crafted peer
   `sequence_number = i32::MAX` yollayıp debug build'i panic'letebilir
   veya release'te wrap'letebilirdi. `checked_add` ile bail.
-- **[Medium] Duplicate `payload_id` silent overwrite**: Saldırgan
-  Introduction'da aynı id ile iki FileMetadata yollayıp UI'ın "legit.pdf"
-  onayını "_evil.sh" yazmaya çevirebilirdi. `register_file_destination`
-  artık ikinci kaydı reddediyor.
-- **[Medium] Payload overrun / silent truncation**: `total_size` header
-  deklare edilirken sonraki chunk'larda doğrulanmıyordu; saldırgan
-  `total_size=10` deklare edip gigabaytlarca disk doldurabilirdi veya
-  `last_chunk=true` + az bayt ile yarım dosyayı "tamamlanmış" ilan
-  edebilirdi. Cumulative `written <= total_size` ve last-chunk eşitliği
-  kontrolü eklendi.
+- **Duplicate `payload_id` silent overwrite**: Saldırgan Introduction'da
+  aynı id ile iki FileMetadata yollayıp UI'ın "legit.pdf" onayını
+  "_evil.sh" yazmaya çevirebilirdi. `register_file_destination` artık
+  ikinci kaydı reddediyor.
+- **Payload overrun + silent truncation**: `total_size` sonraki
+  chunk'larda doğrulanmıyordu; cumulative `written <= total_size` +
+  1 TiB `MAX_FILE_BYTES` cap + last-chunk eşitlik kontrolü eklendi.
+- **Symlink reject + `sync_all` hata propagation**: İlk chunk açarken
+  `symlink_metadata` ile symlink reddi, disk senkronizasyon hataları
+  sessizce yutulmuyor.
+- **Placeholder cleanup**: Kullanıcı reddettiğinde / peer iptal
+  ettiğinde `unique_downloads_path`'in yarattığı 0-bayt placeholder'lar
+  diskten silinir.
+
+### Changed (privacy)
+- **Log PII redaction**: Log dosyası artık full path yerine basename,
+  64-hex SHA yerine ilk 16 hex, URL query'si yerine `scheme://host`
+  yazıyor. Gerekçe: 3 gün log retention + ad-hoc log paylaşımı
+  (GitHub issue, destek) dizin yapısını, cross-user dosya fingerprint
+  ve URL query token'larını sızdırmamalı. UI bildirimleri (kullanıcının
+  kendi verisi) değişmedi.
+
+### Changed (supply chain)
+- Dependabot konfigürasyonu (cargo + github-actions haftalık).
+- `cargo-audit` GitHub Actions workflow'u (haftalık + Cargo.lock
+  değişiminde).
+- `cargo-deny` konfigürasyonu (`deny.toml`) + workflow: license /
+  advisory / source / wildcard policy. 14 pre-existing transitive
+  advisory (gtk3-rs ailesi) gerekçeli ignore edildi; upstream
+  `gtk4-rs` geçişinde silinecek.
+
+### Documentation
+- `src/platform.rs` 6 Windows FFI unsafe bloğuna `// SAFETY:`
+  gerekçesi eklendi (Rust idiom). Davranış değişikliği yok.
 
 ### Added
-- 6 yeni security regression testi: `duplicate_payload_id_reddedilir`,
+- 14 yeni security regression testi (`duplicate_payload_id_reddedilir`,
   `file_overrun_reddedilir`, `file_last_chunk_truncation_reddedilir`,
   `file_negative_total_size_reddedilir`, `encrypt_overflow_guardlu`,
-  `cipher_commitments_flood_reddedilir`. Toplam test: 108.
+  `cipher_commitments_flood_reddedilir`, `atomic_write` overwrite +
+  tmp-leak guards + concurrent same-pid, symlink reject, 1 TiB cap,
+  pending-destination cleanup, log redact helpers). Toplam test: **126
+  birim + integration**.
+- `src/log_redact.rs` — `redact_path`, `redact_sha`, `redact_url`
+  pub(crate) helper'ları.
+- `src/settings.rs::atomic_write` — platform-aware tmp+rename +
+  scope-guard cleanup + unique pid+rand tmp naming.
+
+### Changed (build deps — Dependabot)
+- `actions/deploy-pages` 4 → 5
+- `codecov/codecov-action` 5 → 6
+- `actions/configure-pages` 5 → 6
 
 ## [0.5.1] - 2026-04-19
 
