@@ -221,7 +221,7 @@ src/
 |----------|:-----:|:---------:|:---:|--------|
 | macOS    | ✅    | ✅        | ✅  | Universal2 (Intel + Apple Silicon), DMG + Homebrew cask |
 | Linux    | ✅    | ✅        | ✅  | GTK3 + WebKit2GTK + AppIndicator tray; zenity/kdialog dialog; systemd user service; Ubuntu/Debian .deb |
-| Windows  | ⏳    | ⏳        | ⏳  | Yol haritasında (tray-icon + webview2, MSIX paketleme) |
+| Windows  | ✅    | ✅        | ✅  | tray-icon + WebView2 (wry); MessageBoxW + PowerShell Forms dialog; Registry `Run` autostart; `.exe` artifact (MSIX/winget yol haritasında) |
 | Android / iOS | —  | —      | —   | Karşı taraf cihaz olarak kullanılır; native istemci geliştirilmeyecek |
 
 Lejant: ✅ tamam · 🚧 geliştirme aşamasında · ⏳ planlı
