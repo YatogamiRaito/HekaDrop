@@ -28,16 +28,9 @@ jobs:
       - name: Install protoc
         run: brew install protobuf
 
-      # TODO: add [[bench]] targets to Cargo.toml (criterion-based) — şimdilik noop.
+      # `benches/crypto.rs` — criterion bazlı, `[[bench]] name = "crypto"`.
       - name: Run benchmarks
-        run: |
-          if cargo bench --no-run 2>&1 | grep -q "no bench target"; then
-            echo "No bench targets defined — skipping."
-            mkdir -p target/criterion
-            echo "No benchmarks yet. Add [[bench]] target in Cargo.toml and uncomment criterion dev-dependency." > target/criterion/README.txt
-          else
-            cargo bench --all-features | tee bench-output.txt
-          fi
+        run: cargo bench --all-features | tee bench-output.txt
 
       - name: Upload benchmark artifacts
         if: always()
