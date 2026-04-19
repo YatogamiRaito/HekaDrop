@@ -1,6 +1,6 @@
 cask "hekadrop" do
-  version "0.4.0"
-  sha256 "f2f2122e2e82b9af465fe3682c06aae45c0039cae789b2a239202aae3516b1ad"
+  version "0.5.1"
+  sha256 "5507c34078353041834de83a06b1afa219df7ac6158864fdc372cb8cc63c6052"
 
   url "https://github.com/YatogamiRaito/HekaDrop/releases/download/v#{version}/HekaDrop-#{version}-macos.zip"
   name "HekaDrop"
