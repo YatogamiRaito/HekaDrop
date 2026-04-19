@@ -25,9 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kabul eder; diğerleri clipboard'a kopyalanır ve kullanıcıya bildirilir.
 
 ### Added
-- 12 birim test: sanitize (Unix/Windows traversal, NUL, reserved names,
-  UTF-8 boundary, Türkçe); url scheme (safe http/https + unsafe
-  javascript/file/smb/data/vbscript/ms-msdt/zoom-us).
+- 16 birim test: sanitize (Unix/Windows traversal, NUL, reserved names
+  + çoklu uzantı, CONIN$/CONOUT$/CLOCK$, trailing dot/space bypass,
+  NTFS ADS + Windows yasaklı karakterler, UTF-8 boundary, Türkçe);
+  url scheme (safe http/https + unsafe javascript/file/smb/data/
+  vbscript/ms-msdt/zoom-us).
+
+### Changed (post-review hardening)
+- Reserved device adı kontrolü **ilk** nokta öncesi stem üzerinde
+  (`split_name`'in son-nokta mantığı `CON.tar.gz` gibi çoklu uzantılı
+  adları kaçırıyordu)
+- Trailing dot/space sondan kırpılır (`CON.` / `CON ` Windows'ta `CON`
+  açar, bypass engellendi)
+- NTFS ADS karakteri `:` ve diğer Windows yasaklı `<>"/\\|?*`
+  karakterleri filter listesinde
+- Ek reserved device adları: CONIN$, CONOUT$, CLOCK$
 
 ## [0.5.0] - 2026-04-19
 
