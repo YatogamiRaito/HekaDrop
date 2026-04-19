@@ -1,6 +1,6 @@
 [package]
 name = "hekadrop"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "Google Quick Share (Nearby Share) protokolünün Rust implementasyonu — cross-platform alıcı/gönderici"
 authors = ["destek@sourvice.com"]
