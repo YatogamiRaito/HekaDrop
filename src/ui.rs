@@ -112,17 +112,12 @@ fn prompt_accept_blocking(
     // Not: Sistem dilini takip eden buton etiketleri "Evet/Hayır/İptal"
     // olur. Mesaj metninde kullanıcıya hangi butonun ne anlama geldiği
     // açıkça yazılır.
+    use crate::platform::win::to_wide;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, IDCANCEL, IDNO, IDYES, MB_ICONINFORMATION, MB_SYSTEMMODAL, MB_YESNOCANCEL,
     };
-
-    fn to_wide(s: &str) -> Vec<u16> {
-        let mut v: Vec<u16> = s.encode_utf16().collect();
-        v.push(0);
-        v
-    }
 
     let files_str = format_payload_lines(files, text_count);
     let message = format!(
@@ -285,10 +280,11 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
                 });
             });
 
-        // Windows: notify-rust WinRT backend `show()` unit döner; `wait_for_action`
-        // Linux-özel. Toast otomatik kapanır. Action callback (Aç/Reveal
-        // tıklama) ileride COM ile bağlanacak — şimdilik toast görünür,
-        // tıklanınca HekaDrop'a bir şey iletmez.
+        // Windows: notify-rust WinRT backend toast'ı aksiyon butonu ile
+        // render edebilir ama callback/activation mekanizması bu crate
+        // sürümünde expose edilmediği için buton tıklaması Rust tarafına
+        // iletilmiyor. Ölü buton göstermemek için düz bildirim tercih
+        // ediliyor; COM activation ile bağlantı ileride eklenebilir.
         #[cfg(target_os = "windows")]
         let spawned = std::thread::Builder::new()
             .name("hekadrop-notify".into())
@@ -299,8 +295,6 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
                     .appname("HekaDrop")
                     .summary(&title)
                     .body(&body)
-                    .action("default", "Aç")
-                    .action("reveal", "Klasörde göster")
                     .timeout(10_000)
                     .show()
                 {
@@ -392,16 +386,12 @@ pub fn show_info(title: &str, body: &str) {
         let _ = std::thread::Builder::new()
             .name("hekadrop-showinfo".into())
             .spawn(move || {
+                use crate::platform::win::to_wide;
                 use windows::core::PCWSTR;
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{
                     MessageBoxW, MB_ICONINFORMATION, MB_OK, MB_SYSTEMMODAL,
                 };
-                fn to_wide(s: &str) -> Vec<u16> {
-                    let mut v: Vec<u16> = s.encode_utf16().collect();
-                    v.push(0);
-                    v
-                }
                 let body_w = to_wide(&body);
                 let title_w = to_wide(&title);
                 unsafe {
@@ -467,6 +457,7 @@ fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
     // her Windows 10/11'de hazır gelir. Multi-select, ardından path'leri
     // satır satır yazdırır. Hata durumunda None.
     let script = r#"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 $dlg = New-Object System.Windows.Forms.OpenFileDialog
 $dlg.Title = 'Gönderilecek dosyaları seçin'
@@ -594,6 +585,7 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
 #[cfg(target_os = "windows")]
 fn choose_folder_blocking() -> Option<std::path::PathBuf> {
     let script = r#"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
 $dlg.Description = 'İndirme klasörünü seçin'
@@ -716,6 +708,7 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
         .join(",");
     let script = format!(
         r#"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 Add-Type -AssemblyName System.Drawing | Out-Null
 $form = New-Object System.Windows.Forms.Form

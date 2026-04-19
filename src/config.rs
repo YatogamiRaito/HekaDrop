@@ -39,10 +39,10 @@ pub const DEVICE_TYPE_COMPUTER: u8 = 3;
 
 /// EndpointInfo yapısı — TXT record `n=` değerinin base64'ten öncesi.
 /// Yerleşim:
-///   [0]      bitmap: (sürüm<<5)|(görünürlük<<4)|(cihaz_tipi<<1)|rez
-///   [1..17]  16 bayt rastgele
-///   [17]     ad uzunluğu (u8)
-///   [18..]   UTF-8 cihaz adı
+///   `[0]`      bitmap: (sürüm<<5)|(görünürlük<<4)|(cihaz_tipi<<1)|rez
+///   `[1..17]`  16 bayt rastgele
+///   `[17]`     ad uzunluğu (u8)
+///   `[18..]`   UTF-8 cihaz adı
 pub fn endpoint_info(device_name: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(18 + device_name.len());
     out.push(DEVICE_TYPE_COMPUTER << 1);

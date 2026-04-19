@@ -32,17 +32,38 @@ mod ukey2;
 
 static RUNTIME: OnceLock<Handle> = OnceLock::new();
 
-#[allow(clippy::all, non_snake_case, non_camel_case_types, dead_code)]
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod securegcm {
     include!(concat!(env!("OUT_DIR"), "/securegcm.rs"));
 }
 
-#[allow(clippy::all, non_snake_case, non_camel_case_types, dead_code)]
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod securemessage {
     include!(concat!(env!("OUT_DIR"), "/securemessage.rs"));
 }
 
-#[allow(clippy::all, non_snake_case, non_camel_case_types, dead_code)]
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod location {
     pub mod nearby {
         pub mod connections {
@@ -59,7 +80,14 @@ pub mod location {
     }
 }
 
-#[allow(clippy::all, non_snake_case, non_camel_case_types, dead_code)]
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod sharing {
     pub mod nearby {
         include!(concat!(env!("OUT_DIR"), "/sharing.nearby.rs"));
@@ -982,18 +1010,14 @@ fn toggle_login_item() {
 /// boşluklu yollara dayanıklı).
 #[cfg(target_os = "windows")]
 fn toggle_login_item() {
+    use crate::platform::win::to_wide;
+    use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::System::Registry::{
         RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
         HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_SZ,
     };
-
-    fn to_wide(s: &str) -> Vec<u16> {
-        let mut v: Vec<u16> = s.encode_utf16().collect();
-        v.push(0);
-        v
-    }
 
     const SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const VALUE: &str = "HekaDrop";
@@ -1039,12 +1063,19 @@ fn toggle_login_item() {
                 &mut hkey,
             );
             if rc == ERROR_SUCCESS {
-                let _ = RegDeleteValueW(hkey, PCWSTR(value_w.as_ptr()));
+                let del_rc = RegDeleteValueW(hkey, PCWSTR(value_w.as_ptr()));
                 let _ = RegCloseKey(hkey);
-                ui::notify(
-                    "HekaDrop",
-                    "Otomatik başlatma kapatıldı (Registry Run anahtarı kaldırıldı)",
-                );
+                if del_rc == ERROR_SUCCESS {
+                    ui::notify(
+                        "HekaDrop",
+                        "Otomatik başlatma kapatıldı (Registry Run anahtarı kaldırıldı)",
+                    );
+                } else {
+                    ui::show_info(
+                        "HekaDrop",
+                        &format!("Registry değeri silinemedi (err={:?})", del_rc),
+                    );
+                }
                 return;
             }
         }
@@ -1056,6 +1087,8 @@ fn toggle_login_item() {
     }
 
     // Yoksa ekle — current_exe path'ini tırnak içine al.
+    // path.display() UTF-8 olmayan byte'ları lossy dönüştürebilir; OsStr'in
+    // wide encoding'ini kullanarak lossless UTF-16 üretiyoruz.
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -1066,8 +1099,11 @@ fn toggle_login_item() {
             return;
         }
     };
-    let cmdline = format!("\"{}\"", exe.display());
-    let cmdline_w = to_wide(&cmdline);
+    let mut cmdline_w: Vec<u16> = Vec::with_capacity(exe.as_os_str().len() + 3);
+    cmdline_w.push(b'"' as u16);
+    cmdline_w.extend(exe.as_os_str().encode_wide());
+    cmdline_w.push(b'"' as u16);
+    cmdline_w.push(0);
     // REG_SZ: byte uzunluğu (null dahil).
     let byte_len = cmdline_w.len() * std::mem::size_of::<u16>();
 
