@@ -451,7 +451,7 @@
 
   <header>
     <h1>HekaDrop</h1>
-    <div class="sub" id="status" role="status" aria-live="polite" aria-atomic="true">
+    <div class="sub" id="status" role="status" aria-live="polite" aria-atomic="true" data-i18n="webview.status.ready">
       Hazır — menü çubuğunda ⇄
     </div>
   </header>
@@ -459,16 +459,16 @@
   <nav role="tablist" aria-label="HekaDrop bölümleri" class="tabs" id="tablist">
     <button type="button" role="tab" id="tab-home" class="tab active"
             aria-selected="true" aria-controls="panel-home"
-            data-tab="home" tabindex="0">Ana</button>
+            data-tab="home" tabindex="0" data-i18n="webview.tab.home">Ana</button>
     <button type="button" role="tab" id="tab-history" class="tab"
             aria-selected="false" aria-controls="panel-history"
-            data-tab="history" tabindex="-1">Geçmiş</button>
+            data-tab="history" tabindex="-1" data-i18n="webview.tab.history">Geçmiş</button>
     <button type="button" role="tab" id="tab-settings" class="tab"
             aria-selected="false" aria-controls="panel-settings"
-            data-tab="settings" tabindex="-1">Ayarlar</button>
+            data-tab="settings" tabindex="-1" data-i18n="webview.tab.settings">Ayarlar</button>
     <button type="button" role="tab" id="tab-diag" class="tab"
             aria-selected="false" aria-controls="panel-diag"
-            data-tab="diag" tabindex="-1">Tanı</button>
+            data-tab="diag" tabindex="-1" data-i18n="webview.tab.diag">Tanı</button>
   </nav>
 
   <main id="main">
@@ -477,58 +477,58 @@
       <button type="button" class="drop-zone" id="drop"
               aria-label="Dosya seç — dosyaları buraya sürükle veya tıkla">
         <span class="big" aria-hidden="true">⤓</span>
-        Dosyaları buraya sürükle<br/>veya tıkla
+        <span data-i18n="webview.drop.line1">Dosyaları buraya sürükle</span><br/><span data-i18n="webview.drop.line2">veya tıkla</span>
       </button>
 
       <div class="progress" id="progress" role="progressbar"
            aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
            aria-label="Aktarım ilerlemesi">
         <div class="progress-label" id="progress-text"
-             aria-live="polite" aria-atomic="true">Hazırlanıyor…</div>
+             aria-live="polite" aria-atomic="true" data-i18n="webview.progress.preparing">Hazırlanıyor…</div>
         <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
       </div>
 
       <button type="button" onclick="act('downloads')">
-        <span class="icon" aria-hidden="true">📁</span>İndirme klasörünü aç
+        <span class="icon" aria-hidden="true">📁</span><span data-i18n="webview.btn.open_downloads">İndirme klasörünü aç</span>
       </button>
       <button type="button" onclick="act('hide')">
-        <span class="icon" aria-hidden="true">↘</span>Menü çubuğuna gizle
+        <span class="icon" aria-hidden="true">↘</span><span data-i18n="webview.btn.hide_to_tray">Menü çubuğuna gizle</span>
       </button>
       <button type="button" onclick="act('quit')">
-        <span class="icon" aria-hidden="true">⏻</span>HekaDrop'u kapat
+        <span class="icon" aria-hidden="true">⏻</span><span data-i18n="webview.btn.quit">HekaDrop'u kapat</span>
       </button>
     </section>
 
     <section role="tabpanel" id="panel-history" class="panel"
              aria-labelledby="tab-history" tabindex="0" hidden>
       <div id="history-list">
-        <div class="history-empty">Henüz aktarım yok.</div>
+        <div class="history-empty" data-i18n="webview.history.empty">Henüz aktarım yok.</div>
       </div>
       <button type="button" onclick="act('history_refresh')">
-        <span class="icon" aria-hidden="true">↻</span>Yenile
+        <span class="icon" aria-hidden="true">↻</span><span data-i18n="webview.btn.refresh">Yenile</span>
       </button>
     </section>
 
     <section role="tabpanel" id="panel-settings" class="panel"
              aria-labelledby="tab-settings" tabindex="0" hidden>
       <div class="field">
-        <label for="set-device">Cihaz adı (Android'de görünür)</label>
-        <input type="text" id="set-device" autocomplete="off" placeholder="Bu Mac">
+        <label for="set-device" data-i18n="webview.settings.device_label">Cihaz adı (Android'de görünür)</label>
+        <input type="text" id="set-device" autocomplete="off" placeholder="Bu Mac" data-i18n="webview.settings.device_placeholder" data-i18n-attr="placeholder">
       </div>
 
       <div class="field">
-        <label for="set-downloads">İndirme klasörü</label>
+        <label for="set-downloads" data-i18n="webview.settings.downloads_label">İndirme klasörü</label>
         <div class="row">
           <input type="text" id="set-downloads" readonly>
           <button type="button" onclick="act('pick_downloads')"
-                  aria-label="İndirme klasörünü değiştir">Değiştir</button>
+                  aria-label="İndirme klasörünü değiştir" data-i18n="webview.settings.change">Değiştir</button>
         </div>
       </div>
 
       <label class="toggle" id="set-auto-wrap" for="set-auto">
         <span class="toggle-main">
-          <span>Otomatik kabul</span>
-          <span class="toggle-desc">Her aktarımda onay sorma</span>
+          <span data-i18n="webview.settings.auto_accept">Otomatik kabul</span>
+          <span class="toggle-desc" data-i18n="webview.settings.auto_accept_hint">Her aktarımda onay sorma</span>
         </span>
         <span class="toggle-control">
           <span class="toggle-badge" id="set-auto-badge" aria-hidden="true">Kapalı</span>
@@ -540,65 +540,108 @@
       <span id="set-auto-desc" class="sr-only">Etkinleştirilirse gelen dosyalar onay sorulmadan kabul edilir.</span>
 
       <div class="field">
-        <label id="trusted-label">Güvenilen cihazlar
-          <span class="label-hint">(rate limit dışı)</span></label>
+        <label id="trusted-label"><span data-i18n="webview.settings.trusted_label">Güvenilen cihazlar</span>
+          <span class="label-hint" data-i18n="webview.settings.trusted_hint">(rate limit dışı)</span></label>
         <div id="trusted-list" role="list" aria-labelledby="trusted-label">
-          <div class="trusted-empty">Henüz güvenilen cihaz yok</div>
+          <div class="trusted-empty" data-i18n="webview.settings.trusted_empty">Henüz güvenilen cihaz yok</div>
         </div>
         <button type="button" class="danger" onclick="act('trusted_clear')"
                 style="margin-top:6px"
                 aria-label="Güvenilen cihazların tümünü temizle (sil)">
-          <span class="icon" aria-hidden="true">✕</span>Tümünü temizle
+          <span class="icon" aria-hidden="true">✕</span><span data-i18n="webview.settings.clear_all">Tümünü temizle</span>
         </button>
       </div>
 
-      <button type="button" class="primary" onclick="saveSettings()">Kaydet</button>
+      <button type="button" class="primary" onclick="saveSettings()" data-i18n="webview.settings.save">Kaydet</button>
       <div class="save-note" id="save-note" role="status"
-           aria-live="polite" aria-atomic="true">✓ Kaydedildi</div>
+           aria-live="polite" aria-atomic="true" data-i18n="webview.settings.saved">✓ Kaydedildi</div>
     </section>
 
     <section role="tabpanel" id="panel-diag" class="panel"
              aria-labelledby="tab-diag" tabindex="0" hidden>
       <div class="diag-section">
-        <h2 class="diag-title">Uygulama</h2>
-        <div class="diag-row"><span>Sürüm</span><span id="diag-version">—</span></div>
-        <div class="diag-row"><span>Cihaz adı</span><span id="diag-device">—</span></div>
-        <div class="diag-row"><span>mDNS</span><span id="diag-service">—</span></div>
-        <div class="diag-row"><span>TCP port</span><span id="diag-port">—</span></div>
+        <h2 class="diag-title" data-i18n="webview.diag.section.app">Uygulama</h2>
+        <div class="diag-row"><span data-i18n="webview.diag.version">Sürüm</span><span id="diag-version">—</span></div>
+        <div class="diag-row"><span data-i18n="webview.diag.device">Cihaz adı</span><span id="diag-device">—</span></div>
+        <div class="diag-row"><span data-i18n="webview.diag.mdns">mDNS</span><span id="diag-service">—</span></div>
+        <div class="diag-row"><span data-i18n="webview.diag.port">TCP port</span><span id="diag-port">—</span></div>
       </div>
 
       <div class="diag-section">
-        <h2 class="diag-title">İstatistikler</h2>
-        <div class="diag-row"><span>İlk kullanım</span><span id="diag-first">—</span></div>
-        <div class="diag-row"><span>Son aktarım</span><span id="diag-last">—</span></div>
-        <div class="diag-row"><span>Alınan</span><span id="diag-rx">—</span></div>
-        <div class="diag-row"><span>Gönderilen</span><span id="diag-tx">—</span></div>
-        <div class="diag-row"><span>En aktif (alıcı)</span><span id="diag-top-rx">—</span></div>
-        <div class="diag-row"><span>En aktif (gönderen)</span><span id="diag-top-tx">—</span></div>
+        <h2 class="diag-title" data-i18n="webview.diag.section.stats">İstatistikler</h2>
+        <div class="diag-row"><span data-i18n="webview.diag.first_use">İlk kullanım</span><span id="diag-first">—</span></div>
+        <div class="diag-row"><span data-i18n="webview.diag.last_use">Son aktarım</span><span id="diag-last">—</span></div>
+        <div class="diag-row"><span data-i18n="webview.diag.received">Alınan</span><span id="diag-rx">—</span></div>
+        <div class="diag-row"><span data-i18n="webview.diag.sent">Gönderilen</span><span id="diag-tx">—</span></div>
+        <div class="diag-row"><span data-i18n="webview.diag.top_rx">En aktif (alıcı)</span><span id="diag-top-rx">—</span></div>
+        <div class="diag-row"><span data-i18n="webview.diag.top_tx">En aktif (gönderen)</span><span id="diag-top-tx">—</span></div>
       </div>
 
       <button type="button" onclick="act('stats_refresh')">
-        <span class="icon" aria-hidden="true">↻</span>Yenile
+        <span class="icon" aria-hidden="true">↻</span><span data-i18n="webview.btn.refresh">Yenile</span>
       </button>
       <button type="button" onclick="act('check_update')">
-        <span class="icon" aria-hidden="true">⬆︎</span>Güncelleme kontrol et
+        <span class="icon" aria-hidden="true">⬆︎</span><span data-i18n="webview.diag.check_update">Güncelleme kontrol et</span>
       </button>
       <button type="button" onclick="act('open_logs')">
-        <span class="icon" aria-hidden="true">📄</span>Log klasörünü aç
+        <span class="icon" aria-hidden="true">📄</span><span data-i18n="webview.diag.open_logs">Log klasörünü aç</span>
       </button>
       <button type="button" class="danger"
-              onclick="if(confirm('İstatistikler sıfırlansın mı?')) act('stats_reset')"
+              onclick="confirmResetStats()"
               aria-label="İstatistikleri sıfırla (geri alınamaz)">
-        <span class="icon" aria-hidden="true">✕</span>İstatistikleri sıfırla
+        <span class="icon" aria-hidden="true">✕</span><span data-i18n="webview.diag.reset_stats">İstatistikleri sıfırla</span>
       </button>
     </section>
   </main>
 
-  <div class="footer">Arkaplanda çalışır — Android'den dosya bekler</div>
+  <div class="footer" data-i18n="webview.footer">Arkaplanda çalışır — Android'den dosya bekler</div>
 
   <script>
     function act(cmd) {
       if (window.ipc) window.ipc.postMessage(cmd);
+    }
+
+    // i18n — Rust `push_i18n_to_ui()` `window.__I18N__` objesine key→value
+    // yerleştirir (Lang::Tr/En `t()` tarafında seçilir). `t()` helper `{N}`
+    // placeholder'larını args ile doldurur; eksik key geldiyse `?key?` döner
+    // (dev fark eder, HTML'deki fallback zaten Türkçe).
+    function t(key) {
+      const dict = window.__I18N__ || {};
+      const val = dict[key];
+      if (val === undefined) return '?' + key + '?';
+      if (arguments.length <= 1) return val;
+      const args = Array.prototype.slice.call(arguments, 1);
+      return val.replace(/\{(\d+)\}/g, function(_, i) {
+        const a = args[parseInt(i, 10)];
+        return (a === undefined || a === null) ? '' : String(a);
+      });
+    }
+
+    // DOM'u i18n sözlüğüyle uygular. `data-i18n="key"` attr'lı her öğenin
+    // textContent'ini (varsayılan) veya `data-i18n-attr` belirtilmişse o
+    // attribute'unu çevirir. Bilinmeyen key sessizce atlanır (HTML fallback
+    // görünür kalır).
+    window.applyI18n = function() {
+      const dict = window.__I18N__ || {};
+      document.querySelectorAll('[data-i18n]').forEach(function(el) {
+        const key = el.getAttribute('data-i18n');
+        const value = dict[key];
+        if (value === undefined) return;
+        const attr = el.getAttribute('data-i18n-attr');
+        if (!attr || attr === 'textContent') {
+          el.textContent = value;
+        } else {
+          el.setAttribute(attr, value);
+        }
+      });
+    };
+
+    // Rust i18n push settings_get IPC'si öncesinde de gelebilir — script
+    // yüklendiği anda __I18N__ zaten dolu olabilir, hemen uygula.
+    if (window.__I18N__) window.applyI18n();
+
+    function confirmResetStats() {
+      if (confirm(t('webview.diag.reset_confirm'))) act('stats_reset');
     }
 
     // ---- Tab bar (WAI-ARIA Authoring Practices pattern) ----
@@ -701,16 +744,17 @@
     window.applyTrusted = function(names) {
       const el = document.getElementById('trusted-list');
       if (!names || names.length === 0) {
-        el.innerHTML = '<div class="trusted-empty">Henüz güvenilen cihaz yok</div>';
+        el.innerHTML = '<div class="trusted-empty">' + escapeHtml(t('webview.settings.trusted_empty')) + '</div>';
         return;
       }
+      const removeLabel = escapeHtml(t('webview.settings.trust_remove'));
       el.innerHTML = names.map(n => `
         <div class="trusted-item" role="listitem">
           <span>${escapeHtml(n)}</span>
           <button type="button" class="small danger"
                   onclick="act('trust_remove::${escapeAttr(n)}')"
                   aria-label="Güvenilen cihazı kaldır: ${escapeAttr(n)}">
-            <span class="icon" aria-hidden="true">✕</span>Kaldır
+            <span class="icon" aria-hidden="true">✕</span>${removeLabel}
           </button>
         </div>
       `).join('');
@@ -719,7 +763,7 @@
     window.applyHistory = function(items) {
       const list = document.getElementById('history-list');
       if (!items || items.length === 0) {
-        list.innerHTML = '<div class="history-empty">Henüz aktarım yok.</div>';
+        list.innerHTML = '<div class="history-empty">' + escapeHtml(t('webview.history.empty')) + '</div>';
         return;
       }
       list.innerHTML = items.map(h => `
@@ -757,8 +801,9 @@
       fill.style.width = pct + '%';
       const rounded = Math.round(pct);
       p.setAttribute('aria-valuenow', String(rounded));
-      p.setAttribute('aria-valuetext', (label || 'Aktarım') + ' — yüzde ' + rounded);
-      txt.textContent = label || 'Aktarım…';
+      const defaultLabel = t('webview.progress.default');
+      p.setAttribute('aria-valuetext', (label || defaultLabel) + ' — yüzde ' + rounded);
+      txt.textContent = label || defaultLabel;
     };
 
     window.updateStatus = function(text) {
@@ -773,8 +818,8 @@
       set('diag-port', s.port);
       set('diag-first', s.first_use);
       set('diag-last', s.last_use);
-      set('diag-rx', `${s.bytes_received} (${s.files_received} dosya)`);
-      set('diag-tx', `${s.bytes_sent} (${s.files_sent} dosya)`);
+      set('diag-rx', `${s.bytes_received} (${t('webview.diag.files_suffix', s.files_received)})`);
+      set('diag-tx', `${s.bytes_sent} (${t('webview.diag.files_suffix', s.files_sent)})`);
       set('diag-top-rx', s.top_rx);
       set('diag-top-tx', s.top_tx);
     };
