@@ -12,17 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **⚠️ Security hotfix** — v0.5.0 kullanıcıları hemen güncellemelidir.
 
 ### Security
-- **[CVE kapsamında Critical] Path traversal**: Uzak cihazdan gelen
+- **[Critical security fix] Path traversal**: Uzak cihazdan gelen
   `FileMetadata.name` alanı sanitize edilmeden kullanılıyordu; `..\..\..\path`
   veya absolute path'lerle `~/Downloads` dışına dosya yazılabiliyordu.
   `auto_accept=true` veya trusted device yolunda autostart konumlarına
   yazılarak RCE'ye çevrilebilirdi. `sanitize_received_name()` eklendi:
-  basename-only, reserved adlar, NUL/control filter, 200-byte UTF-8 limit.
-- **[CVE kapsamında Critical] URL scheme allow-list**: `TextType::Url`
+  basename-only, reserved adlar (+ `CONIN$`/`CONOUT$`/`CLOCK$`, çoklu
+  uzantı + trailing dot bypass), NUL/control + Windows yasaklı
+  karakterler (`<>:"/\\|?*` — özellikle NTFS ADS için `:`), 200-byte
+  UTF-8 limit.
+- **[Critical security fix] URL scheme allow-list**: `TextType::Url`
   payload `open_url()`'a doğrudan gidiyordu; `javascript:`, `file://`,
   `smb://` (NTLM leak), `ms-msdt:` ve özel protocol handler'lar
   exploit'e açık idi. `is_safe_url_scheme()` yalnız `http://`/`https://`
   kabul eder; diğerleri clipboard'a kopyalanır ve kullanıcıya bildirilir.
+- CVE ID'leri GitHub Security Advisory publish edildikten sonra bu
+  entry'ye eklenecek.
 
 ### Added
 - 16 birim test: sanitize (Unix/Windows traversal, NUL, reserved names
