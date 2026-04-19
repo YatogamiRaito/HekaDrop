@@ -110,23 +110,10 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
         .ok_or_else(|| anyhow!("server_init.data yok"))?;
     let server_init = Ukey2ServerInit::decode(&server_init_data[..])?;
 
-    // SECURITY (downgrade koruması): Peer'ın seçtiği cipher bizim öne
-    // sürdüğümüz P256_SHA512 olmalı. Aksi halde tanımsız/zayıf cipher'a
-    // yönlendirme saldırısına maruz kalırız. ClientInit sadece
-    // P256_SHA512 önerdi — ServerInit farklı değer dönerse reddet.
-    if server_init.handshake_cipher != Some(Ukey2HandshakeCipher::P256Sha512 as i32) {
-        bail!(
-            "ServerInit cipher downgrade reddedildi: {:?} (beklenen P256_SHA512)",
-            server_init.handshake_cipher
-        );
-    }
-    // Protocol version kontrolü — V1 dışında bir şey bekleme.
-    if server_init.version != Some(1) {
-        bail!(
-            "ServerInit version={:?} — yalnız V1 destekleniyor",
-            server_init.version
-        );
-    }
+    // SECURITY (downgrade koruması): Peer'ın seçtiği cipher + version bizim
+    // talep ettiğimizle eşleşmeli. Validasyon testlenebilmesi için saf
+    // fonksiyona ayrıldı (bkz. `validate_server_init`).
+    validate_server_init(&server_init)?;
 
     // 5) ClientFinished gönder
     frame::write_frame(socket, &client_finished_bytes).await?;
@@ -213,6 +200,34 @@ fn to_signed_bytes(v: &[u8]) -> Vec<u8> {
     } else {
         v.to_vec()
     }
+}
+
+/// `Ukey2ServerInit` üzerinde cipher + version downgrade korumasını yürütür.
+///
+/// Saldırgan bir peer, daha zayıf ya da tanımsız bir cipher (örneğin
+/// `CurveCurve25519_Sha512`, `Unknown`, ya da dağıtımdan önce kaldırılmış
+/// algoritmalar) dönerek handshake'i bilinen-zayıf bir alana yönlendirmeye
+/// çalışabilir. ClientInit sadece `P256_SHA512` öneriyor — ServerInit farklı
+/// değer dönerse hatasız kabul etmek regression olurdu.
+///
+/// `client_handshake` çağrısında inline olarak yapılıyordu; testlenebilir
+/// olması için saf fonksiyona ayrıldı (mutation survivor #10 — research-v2
+/// raporundaki "ServerInit cipher downgrade" kontrolü artık unit test ile
+/// kapatılıyor).
+pub(crate) fn validate_server_init(s: &Ukey2ServerInit) -> Result<()> {
+    if s.handshake_cipher != Some(Ukey2HandshakeCipher::P256Sha512 as i32) {
+        bail!(
+            "ServerInit cipher downgrade reddedildi: {:?} (beklenen P256_SHA512)",
+            s.handshake_cipher
+        );
+    }
+    if s.version != Some(1) {
+        bail!(
+            "ServerInit version={:?} — yalnız V1 destekleniyor",
+            s.version
+        );
+    }
+    Ok(())
 }
 
 pub struct ServerInitResult {
@@ -463,6 +478,65 @@ mod tests {
         assert_eq!(to_signed_bytes(&[0x80]), vec![0x00, 0x80]);
         // 0x7F en yüksek pozitif — dokunulmaz
         assert_eq!(to_signed_bytes(&[0x7F]), vec![0x7F]);
+    }
+
+    #[test]
+    fn validate_server_init_dogru_cipher_ve_versionda_gecer() {
+        use crate::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
+        let ok = Ukey2ServerInit {
+            version: Some(1),
+            random: Some(vec![0u8; 32]),
+            handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
+            public_key: Some(vec![0u8; 16]),
+        };
+        assert!(super::validate_server_init(&ok).is_ok());
+    }
+
+    #[test]
+    fn validate_server_init_cipher_downgrade_reddedilir() {
+        // SECURITY REGRESSION (research-v2 mutation survivor #10):
+        // ServerInit P256_SHA512 dışında bir cipher dönerse handshake bail
+        // etmeli. Burada `CurveCurve25519Sha512` (değer 1) kullanıyoruz —
+        // ClientInit'de teklif etmediğimiz bir cipher.
+        use crate::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
+        let bad = Ukey2ServerInit {
+            version: Some(1),
+            random: Some(vec![0u8; 32]),
+            handshake_cipher: Some(Ukey2HandshakeCipher::Curve25519Sha512 as i32),
+            public_key: Some(vec![0u8; 16]),
+        };
+        let err = super::validate_server_init(&bad).unwrap_err();
+        assert!(
+            err.to_string().contains("cipher downgrade"),
+            "beklenen hata mesajı 'cipher downgrade' içermeli: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_server_init_version_downgrade_reddedilir() {
+        // SECURITY: V1 dışında bir UKEY2 version dönmek hem protokol-ihlali
+        // hem de olası downgrade vektörü. `None` ve V0 gibi varyantlar da
+        // reddedilmeli.
+        use crate::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
+        let v0 = Ukey2ServerInit {
+            version: Some(0),
+            random: Some(vec![0u8; 32]),
+            handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
+            public_key: Some(vec![0u8; 16]),
+        };
+        let err = super::validate_server_init(&v0).unwrap_err();
+        assert!(
+            err.to_string().contains("yalnız V1"),
+            "version hatası beklenen: {err}"
+        );
+
+        let none_ver = Ukey2ServerInit {
+            version: None,
+            random: Some(vec![0u8; 32]),
+            handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
+            public_key: Some(vec![0u8; 16]),
+        };
+        assert!(super::validate_server_init(&none_ver).is_err());
     }
 
     #[test]

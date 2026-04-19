@@ -83,7 +83,11 @@ prost-build = "0.13"
 # build ağırlığı önemsiz (<1 MB) ve `cargo test` cache'ine yaslanıyor.
 pretty_assertions = "1.4"
 tokio-test = "0.4"
-# criterion = "0.5"  # enable when benchmarks are added
+criterion = { version = "0.6", features = ["html_reports"] }
+
+[[bench]]
+name = "crypto"
+harness = false
 
 [profile.release]
 lto = "thin"
