@@ -1,10 +1,8 @@
 cask "hekadrop" do
   version "0.5.2"
-  # NOTE: SHA256 will be updated post-release once the v0.5.2 macOS zip
-  # artifact is published and its checksum verified.
-  sha256 "5507c34078353041834de83a06b1afa219df7ac6158864fdc372cb8cc63c6052"
+  sha256 "a3e9612143a6811c05609369984c9eb0b49f27ef39632864b7444575392a083f"
 
-  url "https://github.com/YatogamiRaito/HekaDrop/releases/download/v#{version}/HekaDrop-#{version}-macos.zip"
+  url "https://github.com/YatogamiRaito/HekaDrop/releases/download/v#{version}/HekaDrop-#{version}.dmg"
   name "HekaDrop"
   desc "Google Quick Share (Nearby Share) client — Rust, cross-platform"
   homepage "https://github.com/YatogamiRaito/HekaDrop"
