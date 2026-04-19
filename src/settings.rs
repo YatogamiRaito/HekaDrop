@@ -87,7 +87,7 @@ impl Settings {
     ///   * Kaydın `id` alanı boşsa (legacy kayıt) **yalnız ad** eşleşmesi yeter
     ///     — bu, config migrasyonu sırasında eski güven kararlarını kaybetmemek
     ///     için bilinçli bir taviz. Kullanıcı aynı cihazı tekrar "Kabul + güven"
-    ///     seçerse [`add_trusted`] kaydı gerçek id'yle günceller.
+    ///     seçerse [`Self::add_trusted`] kaydı gerçek id'yle günceller.
     pub fn is_trusted(&self, device_name: &str, id: &str) -> bool {
         if device_name.is_empty() {
             return false;
@@ -137,7 +137,7 @@ impl Settings {
     /// UI katmanı (main.rs) "trust_remove::NAME" IPC mesajıyla sadece adı
     /// iletir; geriye dönük uyum için bu imza korunur. Aynı adın birden çok
     /// id ile kaydı varsa hepsi silinir. ID tabanlı hassas silme için
-    /// [`remove_trusted_by_id`] kullanın.
+    /// [`Self::remove_trusted_by_id`] kullanın.
     pub fn remove_trusted(&mut self, device_name: &str) {
         self.trusted_devices.retain(|d| d.name != device_name);
     }

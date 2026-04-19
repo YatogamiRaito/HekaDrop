@@ -280,11 +280,11 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
                 });
             });
 
-        // Windows: notify-rust WinRT backend toast gösterir ama callback
-        // API'si (activation) henüz bağlanmadı. "Aç"/"Klasörde göster"
-        // butonları eklemiyoruz — kullanıcıya ölü butonlar göstermek
-        // yerine sade bildirim tercih ediyoruz. Toast tıklama eylemi
-        // ileride COM activation ile bağlanacak.
+        // Windows: notify-rust WinRT backend toast'ı aksiyon butonu ile
+        // render edebilir ama callback/activation mekanizması bu crate
+        // sürümünde expose edilmediği için buton tıklaması Rust tarafına
+        // iletilmiyor. Ölü buton göstermemek için düz bildirim tercih
+        // ediliyor; COM activation ile bağlantı ileride eklenebilir.
         #[cfg(target_os = "windows")]
         let spawned = std::thread::Builder::new()
             .name("hekadrop-notify".into())

@@ -462,18 +462,29 @@ pub(crate) mod win {
     }
 
     /// COM'u apartment-threaded modda thread başına bir kez başlatır.
-    /// Hata değeri (`S_FALSE`/`RPC_E_CHANGED_MODE`) zaten init edilmiş anlamına
-    /// gelir — sessizce geçeriz. Process yaşam süresi boyunca init kalır;
-    /// `CoUninitialize` çağırmayız (uygulama kapanışında OS temizler).
+    ///
+    /// `S_OK` (ilk init) veya `S_FALSE` (zaten init) veya `RPC_E_CHANGED_MODE`
+    /// (başka modda init) kabul edilir; OOM vb. gerçek hata durumlarında
+    /// `COM_INITED` flag `true` yapılmaz, sonraki çağrı retry eder.
+    /// Process yaşam süresi boyunca init kalır; `CoUninitialize` çağırmayız
+    /// (uygulama kapanışında OS temizler).
     fn ensure_com_init() {
         COM_INITED.with(|flag| {
             if flag.get() {
                 return;
             }
-            unsafe {
-                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            let hr =
+                unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
+            // windows-rs `HRESULT` → `ok()` S_OK/S_FALSE'ı tamam sayar,
+            // gerçek hataları `Err` olarak geri verir. RPC_E_CHANGED_MODE da
+            // kabul: COM zaten farklı modda init — bizim için OK.
+            const RPC_E_CHANGED_MODE: windows::core::HRESULT =
+                windows::core::HRESULT(0x80010106u32 as i32);
+            if hr.is_ok() || hr == RPC_E_CHANGED_MODE {
+                flag.set(true);
+            } else {
+                tracing::warn!("CoInitializeEx başarısız: {:?}", hr);
             }
-            flag.set(true);
         });
     }
 
@@ -519,6 +530,10 @@ pub(crate) mod win {
     /// biz free ETMEYİZ. Her hata yolunda `GlobalFree` ile kaynak serbest
     /// bırakılır; `OpenClipboard` başarısız olursa da alloc'u temizleriz.
     pub(super) fn clipboard_set(text: &str) -> Result<()> {
+        // `CF_UNICODETEXT = 13` — Windows clipboard formatı, MSDN'de stabil
+        // dokümante. windows-rs 0.60'ta `Win32::System::Ole` modülünde ama
+        // `Win32_System_Ole` feature ağır; bu tek sabit için dep bloat'ına
+        // değmez. Hardcoded sabit korunur.
         const CF_UNICODETEXT: u32 = 13;
         let wide = to_wide(text);
         let bytes = wide.len() * std::mem::size_of::<u16>();
@@ -543,7 +558,13 @@ pub(crate) mod win {
                 let _ = GlobalFree(Some(hmem));
                 return Err(e);
             }
-            let _ = EmptyClipboard();
+            // EmptyClipboard hata yoluyla SetClipboardData da bozulur;
+            // failure olursa kaynakları temiz bırak.
+            if let Err(e) = EmptyClipboard() {
+                let _ = CloseClipboard();
+                let _ = GlobalFree(Some(hmem));
+                return Err(e);
+            }
             // windows-rs 0.60: hmem `Option<HANDLE>` (NULL = clear format data).
             match SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0 as _))) {
                 Ok(_) => {

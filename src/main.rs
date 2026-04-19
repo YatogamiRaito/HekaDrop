@@ -32,17 +32,38 @@ mod ukey2;
 
 static RUNTIME: OnceLock<Handle> = OnceLock::new();
 
-#[allow(clippy::all, non_snake_case, non_camel_case_types, dead_code)]
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod securegcm {
     include!(concat!(env!("OUT_DIR"), "/securegcm.rs"));
 }
 
-#[allow(clippy::all, non_snake_case, non_camel_case_types, dead_code)]
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod securemessage {
     include!(concat!(env!("OUT_DIR"), "/securemessage.rs"));
 }
 
-#[allow(clippy::all, non_snake_case, non_camel_case_types, dead_code)]
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod location {
     pub mod nearby {
         pub mod connections {
@@ -59,7 +80,14 @@ pub mod location {
     }
 }
 
-#[allow(clippy::all, non_snake_case, non_camel_case_types, dead_code)]
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod sharing {
     pub mod nearby {
         include!(concat!(env!("OUT_DIR"), "/sharing.nearby.rs"));
