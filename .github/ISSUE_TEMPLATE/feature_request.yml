@@ -1,0 +1,47 @@
+name: Özellik önerisi
+description: Yeni bir özellik, UX iyileştirmesi veya davranış değişikliği önerisi
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Önerinizi tartışmaya açmadan önce mevcut issue / PR listesini ve
+        README'deki yol haritasını kontrol etmenizi rica ederiz — benzer
+        fikirler mevcut olabilir.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Hangi problemi çözüyor?
+      description: Kullanıcı hikayesi veya somut senaryo yazın. ("X yapmaya çalışıyorum ama Y eksik.")
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Önerilen çözüm
+      description: UI akışı, API, komut satırı flag'i vs. — nasıl olmalı?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Değerlendirilen alternatifler
+      description: Başka yolları düşündünüz mü? Neden bu tercih?
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Kapsam
+      options:
+        - Tüm platformlar
+        - Sadece macOS
+        - Sadece Linux
+        - Sadece Windows
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Ön kontroller
+      options:
+        - label: Mevcut issue/PR'ları taradım; benzer öneri yok
+          required: true
+        - label: Yol haritası (README "Yol haritası" bölümü) kapsamında değil ya da değişiklik öneriyorum
+          required: false
