@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# HekaDrop local pre-commit — hızlı doğrulama katmanı. Tam CI'ı tekrar
+# etmez; sadece "fark ettim diye commit etmeden yakalayabileceklerim".
+#
+# Enable: `git config core.hooksPath .githooks`
+set -euo pipefail
+echo "==> cargo fmt --check"
+cargo fmt --all -- --check
+echo "==> cargo clippy -- -D warnings"
+cargo clippy --all-targets --quiet -- -D warnings
+echo "==> cargo test (library)"
+cargo test --bin hekadrop --quiet
+echo "pre-commit: OK"

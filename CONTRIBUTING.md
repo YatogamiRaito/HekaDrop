@@ -3,6 +3,18 @@
 HekaDrop topluluk katkılarına açıktır. Hata raporu, özellik önerisi ya da pull request
 göndermeden önce lütfen aşağıdaki akışı izleyin.
 
+## Local setup
+
+Once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This enables the pre-commit hook which runs `cargo fmt`, `cargo clippy`,
+and `cargo test` before each commit. Skip with `--no-verify` only in
+emergencies — CI runs the same checks and will block your PR otherwise.
+
 ## İş akışı
 
 1. **Önce issue açın.** Yeni bir özellik / büyük refactor düşünüyorsanız, kod yazmadan

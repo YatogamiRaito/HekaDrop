@@ -109,6 +109,49 @@ mod tests {
         assert_eq!(pin.len(), 4);
     }
 
+    /// NearDrop referans PIN algoritmasına birebir KAT (known-answer test).
+    ///
+    /// Beklenen değerler NearDrop spec'indeki aynı akışı Python ile bağımsız
+    /// olarak koşturup çıkarıldı:
+    /// ```python
+    /// def pin(key):
+    ///     h, m, MOD = 0, 1, 9973
+    ///     for b in key:
+    ///         s = b if b < 128 else b - 256
+    ///         h = (h + s * m) % MOD
+    ///         m = (m * 31) % MOD
+    ///     return f"{abs(h):04d}"
+    /// ```
+    ///
+    /// Her vektör farklı bir mutation'u yakalar:
+    ///   * `hash = hash - signed*mult` (operatör flip)
+    ///   * `mult * 29` yerine `* 31` (sabit değişikliği)
+    ///   * `rem_euclid` yerine `%` (işaretli/işaretsiz fark)
+    ///   * `b as i8` yerine `b as i32` (signedness kaybı — [0xFF;32] vektörü
+    ///     negatif byte'ları teste sokar)
+    #[test]
+    fn pin_matches_near_drop_algorithm_exactly() {
+        // 0x01..=0x20 — signed byte yolu pozitif
+        let k1: [u8; 32] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+            0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C,
+            0x1D, 0x1E, 0x1F, 0x20,
+        ];
+        assert_eq!(pin_code_from_auth_key(&k1), "1631");
+
+        // [0x42; 32] — mevcut determinism testinin gerçek beklenen değeri
+        let k2 = [0x42u8; 32];
+        assert_eq!(pin_code_from_auth_key(&k2), "0755");
+
+        // [0xFF; 32] — signed byte yolu negatif; `b as i8` olmazsa sonuç değişir
+        let k3 = [0xFFu8; 32];
+        assert_eq!(pin_code_from_auth_key(&k3), "3464");
+
+        // [0x00; 32] — edge case: hash hiç değişmez, 4-hane zero-pad kontrolü
+        let k4 = [0x00u8; 32];
+        assert_eq!(pin_code_from_auth_key(&k4), "0000");
+    }
+
     #[test]
     fn test_aes_cbc_roundtrip() {
         let key = [0u8; 32];
