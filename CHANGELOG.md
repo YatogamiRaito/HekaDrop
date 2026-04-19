@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (performance)
+- `payload.rs`: file I/O migrated to `tokio::fs` — receiver thread no
+  longer blocks on disk writes; large-file transfers don't starve the
+  reactor (prevents keepalive timeout false-positives on slow disks).
+- `server.rs` + `sender.rs`: `TCP_NODELAY` set on accepted + outbound
+  sockets — handshake latency down by 1-2 × RTT × 200ms-Nagle-delay on
+  local networks.
+
 ## [0.5.2] - 2026-04-19
 
 Kapsamlı güvenlik + altyapı sertleştirme sürümü. İki tur derinlemesine

@@ -234,7 +234,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                     }
                 }
 
-                if let Some(done) = assembler.ingest(&pt)? {
+                if let Some(done) = assembler.ingest(&pt).await? {
                     match done {
                         CompletedPayload::Bytes { id, data } => {
                             // Metin/URL payload mı?
@@ -1115,8 +1115,8 @@ mod tests {
         std::fs::remove_file(&p2).ok();
     }
 
-    #[test]
-    fn drain_pending_acik_dosya_sinkini_siler() {
+    #[tokio::test]
+    async fn drain_pending_acik_dosya_sinkini_siler() {
         // İlk chunk gelmiş → dosya create edilmiş → sonra reject/cancel.
         let mut asm = PayloadAssembler::new();
         let mut names: HashMap<i64, String> = HashMap::new();
@@ -1137,7 +1137,7 @@ mod tests {
         if let Some(h) = chunk_frame.payload_header.as_mut() {
             h.r#type = Some(PayloadType::File as i32);
         }
-        asm.ingest(&chunk_frame).unwrap();
+        asm.ingest(&chunk_frame).await.unwrap();
 
         assert!(p.exists(), "assembler ilk chunk'ı diske yazmış olmalı");
 

@@ -52,6 +52,14 @@ pub async fn accept_loop(listener: TcpListener) -> Result<()> {
     loop {
         let (socket, addr) = listener.accept().await?;
 
+        // PERF: Nagle algoritmasını devre dışı bırak. UKEY2 handshake küçük
+        // (≤200 B) frame'lerden oluşuyor; default 200 ms Nagle bekleyişi her
+        // frame'e gecikme ekler. Chunk frame'leri zaten 512 KB olduğundan
+        // büyük transferlerde etkisi yok. Hata non-fatal — loglayıp devam.
+        if let Err(e) = socket.set_nodelay(true) {
+            warn!("set_nodelay başarısız ({}): {}", addr, e);
+        }
+
         // `try_acquire_owned` — bloklamaz; doluysa bağlantıyı hemen kapat.
         let permit = match Arc::clone(&permits).try_acquire_owned() {
             Ok(p) => p,
