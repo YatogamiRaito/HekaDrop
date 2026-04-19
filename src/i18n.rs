@@ -175,6 +175,7 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "notify.settings_saved" => "Ayarlar kaydedildi",
         "notify.url_opened" => "URL açıldı: {0}",
         "notify.text_clipboard" => "Metin panoya kopyalandı: {0}",
+        "notify.trust_expired" => "{0} artık güvenilir değil (süre doldu)",
 
         // Dialog
         "dialog.no_devices" => "Yakında Quick Share cihazı bulunamadı.\n\nAndroid'de: Ayarlar → Bağlı cihazlar → Quick Share → görünürlüğü \"Herkes\" yap ve ekranı açık tut.",
@@ -249,6 +250,9 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "webview.settings.save" => "Kaydet",
         "webview.settings.saved" => "✓ Kaydedildi",
         "webview.settings.trust_remove" => "Kaldır",
+        "webview.settings.trust_ttl_days" => "Güven süresi (gün)",
+        "webview.trusted.ttl_label" => "Son kullanım: {0} gün önce",
+        "webview.trusted.ttl_expired" => "Süre doldu — yeniden onay gerekiyor",
 
         // Webview — diagnostics panel
         "webview.diag.section.app" => "Uygulama",
@@ -318,6 +322,7 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "notify.settings_saved" => "Settings saved",
         "notify.url_opened" => "URL opened: {0}",
         "notify.text_clipboard" => "Text copied to clipboard: {0}",
+        "notify.trust_expired" => "{0} is no longer trusted (expired)",
 
         // Dialog
         "dialog.no_devices" => "No Quick Share device found nearby.\n\nOn Android: Settings → Connected devices → Quick Share → set visibility to \"Everyone\" and keep the screen on.",
@@ -392,6 +397,9 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "webview.settings.save" => "Save",
         "webview.settings.saved" => "✓ Saved",
         "webview.settings.trust_remove" => "Remove",
+        "webview.settings.trust_ttl_days" => "Trust TTL (days)",
+        "webview.trusted.ttl_label" => "Last used: {0} days ago",
+        "webview.trusted.ttl_expired" => "Expired — re-approval required",
 
         // Webview — diagnostics panel
         "webview.diag.section.app" => "Application",
@@ -531,6 +539,7 @@ mod tests {
             "notify.settings_saved",
             "notify.url_opened",
             "notify.text_clipboard",
+            "notify.trust_expired",
             "dialog.no_devices",
             "dialog.history.empty",
             "dialog.history.title",
@@ -589,6 +598,9 @@ mod tests {
             "webview.settings.save",
             "webview.settings.saved",
             "webview.settings.trust_remove",
+            "webview.settings.trust_ttl_days",
+            "webview.trusted.ttl_label",
+            "webview.trusted.ttl_expired",
             "webview.diag.section.app",
             "webview.diag.version",
             "webview.diag.device",

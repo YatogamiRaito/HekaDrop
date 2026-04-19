@@ -289,6 +289,27 @@
     border-radius: 8px;
     font-size: 12.5px;
   }
+  .trusted-item .trusted-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .trusted-item .trusted-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .trusted-item .ttl-label {
+    font-size: 11px;
+    color: #b0b0b5; /* on #2c2c2e — 4.5:1+ passes AA */
+  }
+  .trusted-item .ttl-expired {
+    font-size: 11px;
+    color: #ff453a; /* Apple system red — AA on #2c2c2e */
+    font-weight: 500;
+  }
   /* Footer & empty states: #8e8e93 ≈ 4.65:1 on #1c1c1e (was #636366 FAIL).
      The irony noted in the research report — the "lighter" value is actually
      #8e8e93, which clears 4.5:1 on the darker #1c1c1e body. */
@@ -741,24 +762,62 @@
       setTimeout(() => n.classList.remove('show'), 1500);
     };
 
-    window.applyTrusted = function(names) {
+    window.applyTrusted = function(items) {
       const el = document.getElementById('trusted-list');
-      if (!names || names.length === 0) {
+      if (!items || items.length === 0) {
         el.innerHTML = '<div class="trusted-empty">' + escapeHtml(t('webview.settings.trusted_empty')) + '</div>';
         return;
       }
       const removeLabel = escapeHtml(t('webview.settings.trust_remove'));
-      el.innerHTML = names.map(n => `
+      const nowSecs = Math.floor(Date.now() / 1000);
+      // Backward compat: eski kod string[] gönderirdi — item string ise
+      // {display: item, ...} olarak genişletip işleyelim.
+      const normalised = items.map(it => {
+        if (typeof it === 'string') {
+          return { display: it, trusted_at_epoch: 0, ttl_secs: 0, has_hash: false };
+        }
+        return it;
+      });
+      el.innerHTML = normalised.map(it => {
+        const name = it.display || '';
+        let ttlBadge = '';
+        // TTL rozeti yalnız hash-bağlı v0.6+ kayıtlarda anlamlı.
+        if (it.has_hash && it.trusted_at_epoch > 0 && it.ttl_secs > 0) {
+          const age = nowSecs - it.trusted_at_epoch;
+          if (age >= it.ttl_secs) {
+            ttlBadge = `<span class="ttl-expired">${escapeHtml(t('webview.trusted.ttl_expired'))}</span>`;
+          } else {
+            const days = Math.max(0, Math.floor(age / 86400));
+            const label = tf('webview.trusted.ttl_label', [String(days)]);
+            ttlBadge = `<span class="ttl-label">${escapeHtml(label)}</span>`;
+          }
+        }
+        return `
         <div class="trusted-item" role="listitem">
-          <span>${escapeHtml(n)}</span>
+          <div class="trusted-meta">
+            <span class="trusted-name">${escapeHtml(name)}</span>
+            ${ttlBadge}
+          </div>
           <button type="button" class="small danger"
-                  onclick="act('trust_remove::${escapeAttr(n)}')"
-                  aria-label="Güvenilen cihazı kaldır: ${escapeAttr(n)}">
+                  onclick="act('trust_remove::${escapeAttr(name)}')"
+                  aria-label="Güvenilen cihazı kaldır: ${escapeAttr(name)}">
             <span class="icon" aria-hidden="true">✕</span>${removeLabel}
           </button>
         </div>
-      `).join('');
+      `;
+      }).join('');
     };
+
+    // tf() — basit formatlayıcı: window.__I18N__ sözlüğünden çeviriyi alıp
+    // `{0}` `{1}` vb. yer tutucuları args ile değiştirir (Rust tarafındaki
+    // `tf()` ile aynı semantik, tek geçişli tek seviye).
+    function tf(key, args) {
+      let s = t(key);
+      for (let i = 0; i < args.length; i++) {
+        s = s.replace('{' + i + '}', args[i]);
+      }
+      return s;
+    }
 
     window.applyHistory = function(items) {
       const list = document.getElementById('history-list');

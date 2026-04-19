@@ -70,10 +70,19 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     );
 
     // Rate limiting — trusted cihazlar BU KONTROLDEN MUAFTIR (memory kuralı).
+    //
+    // NOT (Issue #17): Bu noktada `PairedKeyEncryption` henüz gelmedi, peer
+    // hash yok → legacy `(name, id)` lookup kullanılıyor. Asıl trust kararı
+    // (Introduction) ileride hash-first yapılacağından, rate-limit muafiyeti
+    // false-positive ile eşit: saldırgan (name, id)'yi spoof ederse rate
+    // limit'ten geçer ama dosya kabulü için dialog gösterilir. Bu, tasarım
+    // 017 §5.2'de kabul edilen davranış — legacy uyum window'u kapanana
+    // kadar hash-first rate limit eklemek sürdürülebilir değil (her oturumda
+    // UKEY2 tamamlanana kadar beklenmeli).
     let trusted_early = state::get()
         .settings
         .read()
-        .is_trusted(&remote_name, &remote_id);
+        .is_trusted_legacy(&remote_name, &remote_id);
     if !trusted_early {
         let st = state::get();
         if st.rate_limiter.check_and_record(peer.ip()) {
@@ -148,6 +157,11 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     let remote_name_shared = remote_name.clone();
     let remote_id_shared = remote_id.clone();
     let pin_shared = keys.pin_code.clone();
+    // Issue #17: peer'ın `secret_id_hash`'i — `PairedKeyEncryption` frame'i
+    // alındığında doldurulur; Introduction branch'inde trust kararı için
+    // kullanılır. Peer spec'e uymazsa `None` kalır ve legacy fallback
+    // devreye girer.
+    let mut peer_secret_id_hash: Option<[u8; 6]> = None;
     state::clear_cancel();
 
     loop {
@@ -256,6 +270,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                     &mut accepted,
                                     &mut pending_texts,
                                     &mut pending_names,
+                                    &mut peer_secret_id_hash,
                                 )
                                 .await?;
                                 if outcome == FlowOutcome::Disconnect {
@@ -438,11 +453,29 @@ async fn handle_sharing_frame(
     accepted_flag: &mut bool,
     pending_texts: &mut HashMap<i64, TextType>,
     pending_names: &mut HashMap<i64, String>,
+    peer_secret_id_hash: &mut Option<[u8; 6]>,
 ) -> Result<FlowOutcome> {
     let v1 = frame.v1.as_ref().ok_or_else(|| anyhow!("sharing v1 yok"))?;
     let t = v1.r#type.and_then(|t| sh_v1::FrameType::try_from(t).ok());
     match t {
         Some(sh_v1::FrameType::PairedKeyEncryption) if !*sent_paired_result => {
+            // Issue #17: peer'ın secret_id_hash'ini yakala. 6 bayt olmayan
+            // değerler (eski / bozuk peer) yok sayılır → legacy fallback.
+            if let Some(pke) = v1.paired_key_encryption.as_ref() {
+                if let Some(raw) = pke.secret_id_hash.as_ref() {
+                    if raw.len() == 6 {
+                        let mut h = [0u8; 6];
+                        h.copy_from_slice(raw);
+                        *peer_secret_id_hash = Some(h);
+                    } else {
+                        info!(
+                            "[{}] peer secret_id_hash beklenen 6 bayt değil ({}) — legacy fallback",
+                            peer,
+                            raw.len()
+                        );
+                    }
+                }
+            }
             send_sharing_frame(socket, ctx, &build_paired_key_result()).await?;
             *sent_paired_result = true;
         }
@@ -495,18 +528,60 @@ async fn handle_sharing_frame(
                 }
             }
 
-            // Karar mantığı:
-            //   1) Trusted device → dialog atla, otomatik kabul
-            //   2) Settings.auto_accept → dialog atla, otomatik kabul
-            //   3) Aksi halde dialog göster (3 seçenek: reddet/kabul/kabul+güven)
-            let trusted = state::get()
-                .settings
-                .read()
-                .is_trusted(remote_name, remote_id);
+            // Karar mantığı (Issue #17):
+            //   1) Peer secret_id_hash gönderdiyse → hash ile trust sorgula
+            //      (birincil yol, TTL uygulanır).
+            //   2) Yoksa → legacy `(name, id)` eşleşmesi (fallback, 3 sürümlük
+            //      uyumluluk penceresi).
+            //   3) Settings.auto_accept → dialog atla.
+            //   4) Aksi halde dialog göster (3 seçenek: reddet/kabul/kabul+güven).
+            let trusted = {
+                let st = state::get();
+                let s = st.settings.read();
+                match peer_secret_id_hash {
+                    Some(h) => s.is_trusted_by_hash(h),
+                    None => s.is_trusted_legacy(remote_name, remote_id),
+                }
+            };
+            // Opportunistic legacy upgrade: peer hash göndermiş ama trust
+            // kaydı legacy (hash=None). Kullanıcı zaten bu cihazı güvenmişti;
+            // hash'i kayda işleyelim → bir sonraki bağlantıda hash-first
+            // karar verilir ve spoof direnci otomatik kazanılır.
+            if let Some(h) = peer_secret_id_hash {
+                let needs_upgrade = {
+                    let st = state::get();
+                    let s = st.settings.read();
+                    s.is_trusted_legacy(remote_name, remote_id) && !s.is_trusted_by_hash(h)
+                };
+                if needs_upgrade {
+                    let st = state::get();
+                    let snap = {
+                        let mut s = st.settings.write();
+                        s.add_trusted_with_hash(remote_name, remote_id, *h);
+                        s.clone()
+                    };
+                    let _ = snap.save();
+                    info!(
+                        "[{}] legacy trust kaydı secret_id_hash ile yükseltildi: {}",
+                        peer, remote_name
+                    );
+                }
+            }
+
             let auto_accept = state::get().settings.read().auto_accept;
 
             let decision = if trusted {
                 info!("[{}] trusted cihaz → otomatik kabul", peer);
+                // Sliding-window TTL: aktif kullanım varsa timestamp'i yenile.
+                if let Some(h) = peer_secret_id_hash {
+                    let st = state::get();
+                    let snap = {
+                        let mut s = st.settings.write();
+                        s.touch_trusted_by_hash(h);
+                        s.clone()
+                    };
+                    let _ = snap.save();
+                }
                 ui::AcceptResult::Accept
             } else if auto_accept {
                 info!("[{}] settings.auto_accept=true → otomatik kabul", peer);
@@ -524,7 +599,22 @@ async fn handle_sharing_frame(
                 let st = state::get();
                 let snap = {
                     let mut s = st.settings.write();
-                    s.add_trusted(remote_name, remote_id);
+                    match peer_secret_id_hash {
+                        Some(h) => {
+                            s.add_trusted_with_hash(remote_name, remote_id, *h);
+                        }
+                        None => {
+                            // Peer hash göndermedi — legacy kayıt yazılır.
+                            // Üç sürüm sonra (v0.7) bu yol kaldırılacak; o zamana
+                            // kadar kullanıcı trust seçtiği halde spec'e uymayan
+                            // peer'lar çalışmaya devam etsin.
+                            info!(
+                                "[{}] peer secret_id_hash göndermedi — legacy trust kaydı yazıldı",
+                                peer
+                            );
+                            s.add_trusted(remote_name, remote_id);
+                        }
+                    }
                     s.clone()
                 };
                 let _ = snap.save();
@@ -859,12 +949,24 @@ fn random_bytes(n: usize) -> Vec<u8> {
 }
 
 pub(crate) fn build_paired_key_encryption() -> SharingFrame {
+    // Issue #17: `secret_id_hash` artık random değil — cihaz-kalıcı
+    // `DeviceIdentity.long_term_key` üzerinden HKDF-SHA256 ile türetilir.
+    // Peer bu değeri bizim "stabil kimlik"imiz olarak görür ve trusted
+    // listesinde bu hash'e bağlı saklar.
+    //
+    // `signed_data` hâlâ random — v0.7'de pairing protokolüyle gerçek
+    // ECDSA imza (long-term signing key) eklenecek. Şimdilik peer'lar
+    // alanı doğrulamıyor (bizim tarafta da doğrulamıyoruz; bkz.
+    // design 017 §5.5 / §9 answer #2).
+    let hash = state::get().identity.secret_id_hash();
     SharingFrame {
         version: Some(ShVersion::V1 as i32),
         v1: Some(ShV1Frame {
             r#type: Some(sh_v1::FrameType::PairedKeyEncryption as i32),
             paired_key_encryption: Some(PairedKeyEncryptionFrame {
-                secret_id_hash: Some(random_bytes(6)),
+                secret_id_hash: Some(hash.to_vec()),
+                // TODO(v0.7): signing_key() ile ECDSA imza + peer pubkey
+                // doğrulaması pairing protokolüyle birlikte.
                 signed_data: Some(random_bytes(72)),
                 ..Default::default()
             }),

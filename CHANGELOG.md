@@ -7,12 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (MAJOR — v0.6.0)
+- **[HIGH] Trusted device identity hardening** (Issue #17): trust
+  kararı artık `PairedKeyEncryption.secret_id_hash` (6 byte,
+  device-stable HKDF türetmesi) üzerinden veriliyor; `endpoint_id`
+  (4 ASCII byte, spoofable) yalnızca yardımcı bilgi. 7 gün TTL —
+  `trust_ttl_secs` Settings ayarıyla override edilebilir. Legacy
+  (name, id) kayıtları opportunistic upgrade yolu ile yeni kimliğe
+  bağlanır; üç sürüm boyunca legacy fallback açık kalır, v0.7'de
+  kaldırılacak.
+- `src/identity.rs` — yeni cihaz kimlik dosyası
+  (`config_dir()/identity.key`, POSIX 0600 izinli). `DeviceIdentity`
+  32 bayt rastgele uzun-süreli anahtarı tutar; `secret_id_hash()`
+  HKDF-SHA256 ile türetilir, cihaz değişmediği sürece stabil kalır.
+
+### Changed
+- `Settings.trust_ttl_secs` — yeni alan, varsayılan 7 gün (604800 sn).
+  `0` değeri TTL'i devre dışı bırakır (önerilmez).
+- `TrustedDevice.secret_id_hash` + `trusted_at_epoch` — yeni alanlar.
+  Eski JSON şemaları `#[serde(default)]` ile `None`/`0` olarak okunur.
+- `Settings::is_trusted_by_hash` / `is_trusted_legacy` /
+  `add_trusted_with_hash` / `touch_trusted_by_hash` /
+  `prune_expired` — v0.6 trust API'si. Eski `is_trusted` +
+  `add_trusted` legacy uyumluluk için korundu, v0.7'de kaldırılacak.
+- `connection.rs` peer `secret_id_hash`'i yakalayıp hash-first trust
+  lookup yapıyor; kabul sonrası legacy kayıtlar opportunistic olarak
+  yeni kimliğe bağlanır (`info!` log).
+
 ### Documentation
-- `docs/design/017-trusted-id-hardening.md` — Issue #17 tasarım belgesi:
-  trusted cihaz kimliğinin `endpoint_id` (4 byte, spoofable) yerine
-  `PairedKeyEncryption.secret_id_hash` (6 byte, device-stable) + 7 gün
-  TTL üzerine bağlanması önerisi. Implementation v0.6.0 hedefli; belge
-  review için açık sorular + risk register + migration planı içeriyor.
+- `docs/design/017-trusted-id-hardening.md` — Issue #17 tasarım belgesi
+  (**Status: Accepted 2026-04-20**, v0.6.0'da shipped). §9 açık
+  soruları reviewer onayıyla cevaplandı: TTL=7 gün (override'lı),
+  signed_data doğrulaması v0.7'ye ertelendi, sender'da TTL yok, legacy
+  log level=info!, hash algoritması HKDF-SHA256.
+
+### Changed (accessibility)
+- Webview CSS tokenized via CSS custom properties (`--bg-*`, `--fg-*`,
+  `--accent`, `--danger`, `--border*`). Dark palette unchanged by
+  default; `prefers-color-scheme: light` now renders a WCAG 2.1 AA
+  conformant light theme. `forced-colors: active` uses system colors.
+  Explicit override via `<html data-theme="light|dark">` for future
+  Settings-driven toggle.
 
 ### Changed (release infrastructure)
 - Release workflow now publishes Windows `.exe` + Linux `.deb` in

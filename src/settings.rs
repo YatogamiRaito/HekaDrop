@@ -5,28 +5,47 @@
 //! JSON formatı insan tarafından okunabilir, ileri uyumlu. Bilinmeyen alanlar yok
 //! sayılır (`#[serde(default)]`).
 //!
-//! ## Güven kaydı (Bug #32)
-//! Güvenilen cihazlar yalnız isimle değil, **isim + kalıcı kimlik** çifti ile
-//! tanınır. Aksi halde iki farklı telefon aynı "Samsung A52" adını kullanırsa
-//! her ikisi de otomatik kabul edilirdi — spoofing yüzeyi. Kimlik olarak
-//! peer'ın `endpoint_id` veya pubkey hash'i kullanılır (`&str`, connection.rs
-//! tarafından verilir).
+//! ## Güven kaydı — v0.6 hardening (Issue #17 / design 017)
 //!
-//! JSON migrasyonu ("backward compat"): Eski formatlar diskte `Vec<String>`
-//! olarak yer aldığında her string `TrustedDevice { name: s, id: "" }` olarak
-//! yüklenir. Boş id, yalnızca isim eşleşmesi kabul edecek yasal legacy değer
-//! demektir. Kullanıcı "Kabul + güven" seçtiğinde yeni kayıt gerçek id ile
-//! yazılır ve legacy-empty-id kaydın üzerine geçer (id-specific first-match).
+//! v0.5.x `TrustedDevice { name, id }` ile "ad + endpoint_id" çifti üzerinden
+//! güven kararı veriyordu. `endpoint_id` 4 ASCII bayt — her oturumda rastgele
+//! ve kriptografik olarak bağlayıcı değil. v0.6:
+//!
+//! * **`secret_id_hash: Option<[u8; 6]>`** — Quick Share
+//!   `PairedKeyEncryption.secret_id_hash` alanı; peer'ın uzun-süreli kimlik
+//!   anahtarından (HKDF-SHA256) türetilir, cihaz değişmediği sürece sabit.
+//!   Trust kararının **birincil anahtarı**. Hex olarak serialize edilir.
+//! * **`trusted_at_epoch`** — kullanıcı bu cihazı ne zaman "kabul + güven"
+//!   yaptı. TTL (default 7 gün, `Settings.trust_ttl_secs` ile override)
+//!   aşıldığında kayıt **silinmez** ama "güvenilir" sayılmaz — kullanıcıya
+//!   dialog tekrar gösterilir.
+//!
+//! Geriye uyum:
+//!   * Legacy (`secret_id_hash == None`) kayıtlar `is_trusted_legacy(name, id)`
+//!     ile eşleşmeye devam eder (3 sürüm boyunca). Peer hash gönderirse
+//!     `add_trusted_with_hash` opportunistic olarak kaydı upgrade eder.
+//!   * Eski diskten gelen `Vec<String>` / boş-id kayıtları da `TrustedDevice`
+//!     alanında `None` hash + boş id ile okunur (bkz. `migrate_trusted_value`).
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// v0.6 default — kullanıcı `Settings.trust_ttl_secs` ile override edebilir.
+/// 7 gün = 604800 saniye.
+pub const DEFAULT_TRUST_TTL_SECS: u64 = 7 * 24 * 3600;
+
+fn default_trust_ttl_secs() -> u64 {
+    DEFAULT_TRUST_TTL_SECS
+}
+
 /// Kullanıcının "Kabul + güven" ile onayladığı bir cihaz kaydı.
 ///
-/// `name` insan-okunur görünen ad (ör. "Pixel 8"), `id` ise cihazın
-/// kalıcı kimliği (`endpoint_id`, pubkey hash vb.). İsim çakışmalarını
-/// önlemek için `is_trusted` her ikisini de kontrol eder.
+/// v0.6'dan itibaren güven kararı **`secret_id_hash`** (cihaz-kalıcı HKDF
+/// türetmesi) üzerinden verilir. `name` UI'da gösterilen insan-okunur ad,
+/// `id` endpoint_id — yalnızca legacy kayıtlar için trust anahtarı, yeni
+/// kayıtlarda yardımcı (ör. UI'da kısa etiket). `trusted_at_epoch` sliding
+/// TTL için kullanılır.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TrustedDevice {
     pub name: String,
@@ -35,6 +54,62 @@ pub struct TrustedDevice {
     /// migrasyon sırasında kullanıcının eski güven kararlarını kaybetmesini
     /// önleyen bir compromise'dır.
     pub id: String,
+    /// Peer'ın `PairedKeyEncryption.secret_id_hash` alanı (6 bayt, HKDF
+    /// türetmesi). Legacy kayıtlar için `None`; v0.6+ kayıtlar için `Some`.
+    /// JSON'da hex string olarak serialize edilir; alan yoksa `None`.
+    #[serde(
+        default,
+        with = "hex_hash_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_id_hash: Option<[u8; 6]>,
+    /// Kullanıcının "kabul + güven" seçtiği an (unix epoch saniyeleri).
+    /// `0` = legacy kayıt (timestamp yok); TTL hesabı `saturating_sub` ile
+    /// korunur. Yeniden kullanıldığında `touch_trusted_by_hash` ile refresh.
+    #[serde(default)]
+    pub trusted_at_epoch: u64,
+}
+
+/// `Option<[u8; 6]>` için hex serde modülü. JSON wire formatında 12 karakter
+/// lowercase hex string ("aabbccddeeff"); `None` → alan atlanır (struct
+/// attribute `skip_serializing_if = "Option::is_none"`). Length != 6 veya
+/// non-hex input → deserialize hatası.
+mod hex_hash_opt {
+    use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &Option<[u8; 6]>, s: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(bytes) => s.serialize_str(&hex::encode(bytes)),
+            // skip_serializing_if zaten None'u atlıyor — buraya düşülmez,
+            // düşerse null yazmak makul yedek.
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<[u8; 6]>, D::Error> {
+        let opt: Option<String> = Option::deserialize(d)?;
+        let Some(raw) = opt else {
+            return Ok(None);
+        };
+        let bytes = hex::decode(&raw)
+            .map_err(|e| D::Error::custom(format!("secret_id_hash hex decode: {}", e)))?;
+        if bytes.len() != 6 {
+            return Err(D::Error::custom(format!(
+                "secret_id_hash 6 bayt bekleniyor, bulunan {}",
+                bytes.len()
+            )));
+        }
+        let mut out = [0u8; 6];
+        out.copy_from_slice(&bytes);
+        Ok(Some(out))
+    }
+}
+
+fn now_epoch() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 impl TrustedDevice {
@@ -52,7 +127,7 @@ impl TrustedDevice {
 
 /// Uygulama ayarları. `#[serde(default)]` ile ileri uyumlu — bilinmeyen alanlar
 /// okunurken atlanır; eksik alanlar default değerlerle doldurulur.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// Kullanıcı tarafından atanan görünen ad (boş bırakılırsa `scutil --get ComputerName`).
     #[serde(default)]
@@ -69,26 +144,61 @@ pub struct Settings {
 
     /// Kullanıcının "Kabul + güven" ile onayladığı cihazlar.
     ///
-    /// Bu listedeki kayıtlardan (ad + id çifti) gelen aktarımlar dialog
-    /// göstermeden kabul edilir ve rate limiting uygulanmaz (memory kuralı:
-    /// trusted cihazlar rate limit dışıdır).
+    /// Bu listedeki kayıtlardan gelen aktarımlar dialog göstermeden kabul
+    /// edilir ve rate limiting uygulanmaz (memory kuralı: trusted cihazlar
+    /// rate limit dışıdır). v0.6+ trust kararı birincil olarak
+    /// `secret_id_hash` üzerinden verilir; legacy `(name, id)` kayıtlar
+    /// `is_trusted_legacy` ile üç sürümlük uyumluluk penceresinde çalışır.
     ///
-    /// JSON'da hem yeni biçim (`[{"name": "...", "id": "..."}]`) hem de eski
-    /// biçim (`["ad1", "ad2"]`) kabul edilir — bkz. [`migrate_trusted_value`].
+    /// JSON'da hem yeni biçim (`[{"name","id","secret_id_hash","trusted_at_epoch"}]`)
+    /// hem de eski biçim (`["ad1", "ad2"]` / `[{"name","id"}]`) kabul
+    /// edilir — bkz. [`migrate_trusted_value`].
     #[serde(default, deserialize_with = "deserialize_trusted_devices")]
     pub trusted_devices: Vec<TrustedDevice>,
+
+    /// Trust TTL saniyesi — varsayılan 7 gün (`DEFAULT_TRUST_TTL_SECS`).
+    /// Kullanıcı config.json'da bu alanı ayarlayarak 30 gün veya daha fazla
+    /// uzatabilir (security vs. UX trade-off). `0` değeri TTL'i tamamen
+    /// devre dışı bırakır — trust sonsuza kadar geçerli kalır (önerilmez).
+    #[serde(default = "default_trust_ttl_secs")]
+    pub trust_ttl_secs: u64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            device_name: None,
+            download_dir: None,
+            auto_accept: false,
+            trusted_devices: Vec::new(),
+            trust_ttl_secs: DEFAULT_TRUST_TTL_SECS,
+        }
+    }
 }
 
 impl Settings {
-    /// Verilen `(name, id)` çifti trusted listede varsa `true`.
+    /// v0.6 birincil trust kararı: peer'ın `secret_id_hash`'ine göre.
     ///
-    /// Eşleşme kuralı:
-    ///   * Kaydın `id` alanı doluysa **hem ad hem id** eşleşmeli (güvenli yol).
-    ///   * Kaydın `id` alanı boşsa (legacy kayıt) **yalnız ad** eşleşmesi yeter
-    ///     — bu, config migrasyonu sırasında eski güven kararlarını kaybetmemek
-    ///     için bilinçli bir taviz. Kullanıcı aynı cihazı tekrar "Kabul + güven"
-    ///     seçerse [`Self::add_trusted`] kaydı gerçek id'yle günceller.
-    pub fn is_trusted(&self, device_name: &str, id: &str) -> bool {
+    /// TTL kontrolü burada yapılır; `trust_ttl_secs = 0` = TTL devre dışı
+    /// (süresiz trust). Kayıt silinmez, sadece güvenilir sayılmaz —
+    /// kullanıcı yeniden "kabul + güven" seçerse `add_trusted_with_hash`
+    /// timestamp'i yeniler.
+    pub fn is_trusted_by_hash(&self, hash: &[u8; 6]) -> bool {
+        let now = now_epoch();
+        let ttl = self.trust_ttl_secs;
+        self.trusted_devices.iter().any(|d| {
+            d.secret_id_hash.as_ref() == Some(hash)
+                && (ttl == 0 || now.saturating_sub(d.trusted_at_epoch) < ttl)
+        })
+    }
+
+    /// Legacy (v0.5 ve öncesi) trust kararı — `(name, id)` çifti üzerinden.
+    ///
+    /// v0.6'da yalnızca peer `secret_id_hash` **göndermediğinde** fallback
+    /// olarak kullanılır. Üç sürüm sonra (v0.7'de) legacy yolu tamamen
+    /// devre dışı kalacak. TTL bu yolda uygulanmaz — legacy kayıtlar zaten
+    /// timestamp içermiyor, kullanıcı eski kararını kaybetmemeli.
+    pub fn is_trusted_legacy(&self, device_name: &str, id: &str) -> bool {
         if device_name.is_empty() {
             return false;
         }
@@ -97,17 +207,121 @@ impl Settings {
             .any(|d| d.name == device_name && (d.id.is_empty() || d.id == id))
     }
 
-    /// Yeni bir güven kaydı ekler.
+    /// v0.5 API imzasını koruyan geçiş fonksiyonu. Çağrı yerlerinde peer
+    /// hash yoksa (örn. test kodunda veya legacy flow'da) bu kullanılır;
+    /// v0.6 connection.rs/sender.rs hash-first akışa geçti.
     ///
-    /// İdempotent: tamamen aynı `(name, id)` çifti zaten varsa no-op.
-    /// Özel durum: aynı ad için legacy (id=boş) bir kayıt varsa ve şimdi
-    /// gerçek bir id geliyorsa, legacy kayıt upgrade edilir (ad+id yazılır).
-    /// Boş ad reddedilir (anlamsız).
+    /// Davranış: `is_trusted_legacy` ile aynı — legacy kayıtları hâlâ
+    /// çalıştırır, TTL kontrolü yapmaz. Yeni kodun `is_trusted_by_hash`
+    /// kullanması beklenir.
+    #[allow(dead_code)]
+    pub fn is_trusted(&self, device_name: &str, id: &str) -> bool {
+        self.is_trusted_legacy(device_name, id)
+    }
+
+    /// v0.6 birincil API: hash ile güven kaydı ekler / upgrade eder.
+    ///
+    /// Mantık:
+    ///   1) Hash eşleşen kayıt varsa → timestamp'i yenile (touch).
+    ///   2) Legacy kayıt varsa (name eşleşir, id ya boş ya eşit, hash None) →
+    ///      yerinde upgrade: id doldur, hash yaz, timestamp = now. Kullanıcı
+    ///      zaten bu cihazı güvenmişti; ek dialog gerekmiyor (opportunistic).
+    ///   3) Değilse yeni kayıt push.
+    ///
+    /// Boş ad reddedilir.
+    pub fn add_trusted_with_hash(&mut self, device_name: &str, id: &str, hash: [u8; 6]) {
+        if device_name.is_empty() {
+            return;
+        }
+        let now = now_epoch();
+        // (1) Aynı hash — sadece timestamp yenile.
+        if let Some(existing) = self
+            .trusted_devices
+            .iter_mut()
+            .find(|d| d.secret_id_hash == Some(hash))
+        {
+            existing.trusted_at_epoch = now;
+            // Opportunistic: name/id güncelle (peer yeniden adlandırılmış olabilir).
+            if !device_name.is_empty() {
+                existing.name = device_name.to_string();
+            }
+            if !id.is_empty() {
+                existing.id = id.to_string();
+            }
+            return;
+        }
+        // (2) Legacy kaydı upgrade et — name eşleşir ve hash henüz None ise.
+        if let Some(existing) = self.trusted_devices.iter_mut().find(|d| {
+            d.name == device_name && d.secret_id_hash.is_none() && (d.id.is_empty() || d.id == id)
+        }) {
+            existing.secret_id_hash = Some(hash);
+            existing.trusted_at_epoch = now;
+            if !id.is_empty() {
+                existing.id = id.to_string();
+            }
+            return;
+        }
+        // (3) Yeni kayıt.
+        self.trusted_devices.push(TrustedDevice {
+            name: device_name.to_string(),
+            id: id.to_string(),
+            secret_id_hash: Some(hash),
+            trusted_at_epoch: now,
+        });
+    }
+
+    /// Mevcut trusted bağlantı yeniden kullanıldığında timestamp'i yenile
+    /// (sliding-window TTL). Aksi halde aktif cihazlar 7 gün sonunda
+    /// dialog sorardı; bu UX'i fena bozar. Hash eşleşmeyen çağrı no-op.
+    pub fn touch_trusted_by_hash(&mut self, hash: &[u8; 6]) {
+        let now = now_epoch();
+        if let Some(existing) = self
+            .trusted_devices
+            .iter_mut()
+            .find(|d| d.secret_id_hash.as_ref() == Some(hash))
+        {
+            existing.trusted_at_epoch = now;
+        }
+    }
+
+    /// TTL dolmuş kayıtları listeden siler; dönen sayı silinen kayıt adedi.
+    ///
+    /// **v0.6'da otomatik çağrılmaz** (soft-expire): süresi dolmuş kayıt
+    /// listede kalır, `is_trusted_by_hash` false döner, kullanıcı dialog'da
+    /// tekrar "kabul + güven" seçerse timestamp yenilenir. Bu fonksiyon
+    /// UI/maintenance tarafından elle çağrılır (Settings "expired temizle"
+    /// butonu v0.7 hedefli).
+    ///
+    /// Legacy kayıtlar (`secret_id_hash == None`) asla süresi dolmuş
+    /// sayılmaz — prune'dan etkilenmez.
+    #[allow(dead_code)]
+    pub fn prune_expired(&mut self) -> usize {
+        let ttl = self.trust_ttl_secs;
+        if ttl == 0 {
+            return 0;
+        }
+        let now = now_epoch();
+        let before = self.trusted_devices.len();
+        self.trusted_devices.retain(|d| {
+            // Legacy kayıt — dokunma.
+            if d.secret_id_hash.is_none() {
+                return true;
+            }
+            now.saturating_sub(d.trusted_at_epoch) < ttl
+        });
+        before - self.trusted_devices.len()
+    }
+
+    /// v0.5 API imzası — hash'siz kayıt ekler (legacy yol).
+    ///
+    /// **v0.6'dan itibaren deprecated** (`#[deprecated]` note as of design
+    /// 017): peer hash gönderdiğinde `add_trusted_with_hash` çağrılmalı.
+    /// Bu fonksiyon yalnız hash yoksa (peer spec'e uymuyor / legacy
+    /// senaryo) fallback olarak kullanılır. v0.7'de kaldırılacak.
     pub fn add_trusted(&mut self, device_name: &str, id: &str) {
         if device_name.is_empty() {
             return;
         }
-        // Birebir aynı kayıt var mı?
         if self
             .trusted_devices
             .iter()
@@ -115,7 +329,6 @@ impl Settings {
         {
             return;
         }
-        // Legacy upgrade: aynı ad, boş id → id ile güncelle.
         if !id.is_empty() {
             if let Some(existing) = self
                 .trusted_devices
@@ -129,6 +342,8 @@ impl Settings {
         self.trusted_devices.push(TrustedDevice {
             name: device_name.to_string(),
             id: id.to_string(),
+            secret_id_hash: None,
+            trusted_at_epoch: 0,
         });
     }
 
@@ -153,6 +368,11 @@ impl Settings {
     }
 
     /// UI için her kaydın "Ad (id_kisa)" formatında görünüm listesini döner.
+    ///
+    /// v0.6'da zengin UI (TTL rozeti) kullanılmaya başlandığından ana UI
+    /// yolu `push_trusted_to_ui` içindeki yapılandırılmış JSON'u tercih
+    /// eder; bu fonksiyon legacy IPC çağrıları ve testler için korunur.
+    #[allow(dead_code)]
     pub fn trusted_display_list(&self) -> Vec<String> {
         self.trusted_devices.iter().map(|d| d.display()).collect()
     }
@@ -360,11 +580,13 @@ pub(crate) fn migrate_trusted_value(v: serde_json::Value) -> Result<Vec<TrustedD
     for item in arr {
         match item {
             serde_json::Value::String(s) => {
-                // Legacy: "device-name" → {name: s, id: ""}
+                // Legacy: "device-name" → {name: s, id: "", hash: None, ts: 0}
                 if !s.is_empty() {
                     out.push(TrustedDevice {
                         name: s,
                         id: String::new(),
+                        secret_id_hash: None,
+                        trusted_at_epoch: 0,
                     });
                 }
             }
@@ -424,6 +646,8 @@ mod tests {
         s.trusted_devices.push(TrustedDevice {
             name: "EskiCihaz".into(),
             id: String::new(),
+            secret_id_hash: None,
+            trusted_at_epoch: 0,
         });
         // Legacy kaydın id'si boş → her id kabul edilir (backward compat taviz).
         assert!(s.is_trusted("EskiCihaz", "any-id"));
@@ -457,6 +681,8 @@ mod tests {
         s.trusted_devices.push(TrustedDevice {
             name: "Pixel 7".into(),
             id: String::new(),
+            secret_id_hash: None,
+            trusted_at_epoch: 0,
         });
         s.add_trusted("Pixel 7", "endpoint-abc");
         assert_eq!(s.trusted_devices.len(), 1);
@@ -498,6 +724,8 @@ mod tests {
         let d = TrustedDevice {
             name: "Pixel 7".into(),
             id: "abcdef0123456789".into(),
+            secret_id_hash: None,
+            trusted_at_epoch: 0,
         };
         // İlk 8 karakter alınmalı.
         assert_eq!(d.display(), "Pixel 7 (abcdef01)");
@@ -508,6 +736,8 @@ mod tests {
         let d = TrustedDevice {
             name: "Pixel 7".into(),
             id: String::new(),
+            secret_id_hash: None,
+            trusted_at_epoch: 0,
         };
         assert_eq!(d.display(), "Pixel 7");
     }
@@ -618,6 +848,254 @@ mod tests {
         s.add_trusted("B", "");
         let list = s.trusted_display_list();
         assert_eq!(list, vec!["A (id-aaaaa)".to_string(), "B".to_string()]);
+    }
+
+    // =======================================================================
+    // v0.6 trusted device identity hardening (Issue #17) — tests
+    // =======================================================================
+
+    #[test]
+    fn v06_legacy_json_secret_id_hash_none_olarak_yuklenir() {
+        // v0.5.2 config.json şeması — secret_id_hash alanı yok. Yeni struct
+        // `#[serde(default)]` sayesinde `None` ile yüklenmeli.
+        let legacy = r#"{
+            "trusted_devices": [{"name": "Pixel 7", "id": "endpoint-abc"}]
+        }"#;
+        let s: Settings = serde_json::from_str(legacy).expect("parse");
+        assert_eq!(s.trusted_devices.len(), 1);
+        assert_eq!(s.trusted_devices[0].secret_id_hash, None);
+        assert_eq!(s.trusted_devices[0].trusted_at_epoch, 0);
+        // trust_ttl_secs alanı yoksa default 7 gün.
+        assert_eq!(s.trust_ttl_secs, DEFAULT_TRUST_TTL_SECS);
+        // is_trusted_legacy hala çalışmalı.
+        assert!(s.is_trusted_legacy("Pixel 7", "endpoint-abc"));
+    }
+
+    #[test]
+    fn v06_is_trusted_by_hash_eslesme_ve_ttl() {
+        let mut s = Settings::default();
+        let hash = [0xAAu8; 6];
+        s.add_trusted_with_hash("Pixel 7", "endpoint-abc", hash);
+        // Taze kayıt — trusted.
+        assert!(s.is_trusted_by_hash(&hash));
+        // Farklı hash — değil.
+        assert!(!s.is_trusted_by_hash(&[0xBBu8; 6]));
+    }
+
+    #[test]
+    fn v06_ttl_suresi_doldu_untrusted_doner() {
+        let mut s = Settings::default();
+        let hash = [0xCCu8; 6];
+        s.trusted_devices.push(TrustedDevice {
+            name: "Eski".into(),
+            id: "old-id".into(),
+            secret_id_hash: Some(hash),
+            // TTL'den 1 sn önce — süre dolmuş.
+            trusted_at_epoch: now_epoch().saturating_sub(DEFAULT_TRUST_TTL_SECS + 1),
+        });
+        assert!(!s.is_trusted_by_hash(&hash));
+
+        // TTL içinde — hâlâ trusted.
+        s.trusted_devices[0].trusted_at_epoch =
+            now_epoch().saturating_sub(DEFAULT_TRUST_TTL_SECS - 100);
+        assert!(s.is_trusted_by_hash(&hash));
+    }
+
+    #[test]
+    fn v06_ttl_sifir_sinirsiz_trust_demek() {
+        let mut s = Settings {
+            trust_ttl_secs: 0,
+            ..Settings::default()
+        };
+        let hash = [0xDDu8; 6];
+        s.trusted_devices.push(TrustedDevice {
+            name: "Sonsuz".into(),
+            id: "id".into(),
+            secret_id_hash: Some(hash),
+            // Çok eski — TTL=0 olduğu için yine de trusted.
+            trusted_at_epoch: 1,
+        });
+        assert!(s.is_trusted_by_hash(&hash));
+    }
+
+    #[test]
+    fn v06_custom_ttl_override_30_gun() {
+        // Kullanıcı config.json'da trust_ttl_secs alanını 30 güne çekebilir.
+        let json = format!(
+            r#"{{"trust_ttl_secs": {}, "trusted_devices": []}}"#,
+            30 * 24 * 3600_u64
+        );
+        let s: Settings = serde_json::from_str(&json).expect("parse");
+        assert_eq!(s.trust_ttl_secs, 30 * 24 * 3600);
+    }
+
+    #[test]
+    fn v06_opportunistic_legacy_upgrade() {
+        // v0.5.x legacy kayıt (hash=None) → aynı peer hash ile tekrar
+        // bağlandığında in-place upgrade olmalı.
+        let mut s = Settings::default();
+        s.trusted_devices.push(TrustedDevice {
+            name: "Pixel 7".into(),
+            id: "endpoint-abc".into(),
+            secret_id_hash: None,
+            trusted_at_epoch: 0,
+        });
+        let hash = [0xEEu8; 6];
+        s.add_trusted_with_hash("Pixel 7", "endpoint-abc", hash);
+        // Duplicate yaratmamalı.
+        assert_eq!(s.trusted_devices.len(), 1);
+        assert_eq!(s.trusted_devices[0].secret_id_hash, Some(hash));
+        assert_eq!(s.trusted_devices[0].id, "endpoint-abc");
+        assert!(s.trusted_devices[0].trusted_at_epoch > 0);
+    }
+
+    #[test]
+    fn v06_opportunistic_upgrade_legacy_bos_id() {
+        // Legacy kayıt boş id ile (Vec<String> migrasyonu). Hash ile upgrade
+        // edildiğinde id peer'ınkiyle doldurulmalı.
+        let mut s = Settings::default();
+        s.trusted_devices.push(TrustedDevice {
+            name: "Eski".into(),
+            id: String::new(),
+            secret_id_hash: None,
+            trusted_at_epoch: 0,
+        });
+        let hash = [0x77u8; 6];
+        s.add_trusted_with_hash("Eski", "real-endpoint", hash);
+        assert_eq!(s.trusted_devices.len(), 1);
+        assert_eq!(s.trusted_devices[0].id, "real-endpoint");
+        assert_eq!(s.trusted_devices[0].secret_id_hash, Some(hash));
+    }
+
+    #[test]
+    fn v06_touch_trusted_by_hash_timestamp_yeniler() {
+        let mut s = Settings::default();
+        let hash = [0x11u8; 6];
+        s.trusted_devices.push(TrustedDevice {
+            name: "Cihaz".into(),
+            id: "id".into(),
+            secret_id_hash: Some(hash),
+            trusted_at_epoch: 100, // çok eski
+        });
+        s.touch_trusted_by_hash(&hash);
+        assert!(s.trusted_devices[0].trusted_at_epoch > 1_000_000);
+    }
+
+    #[test]
+    fn v06_touch_yanlis_hash_no_op() {
+        let mut s = Settings::default();
+        s.trusted_devices.push(TrustedDevice {
+            name: "Cihaz".into(),
+            id: "id".into(),
+            secret_id_hash: Some([0x11u8; 6]),
+            trusted_at_epoch: 100,
+        });
+        s.touch_trusted_by_hash(&[0x99u8; 6]);
+        assert_eq!(s.trusted_devices[0].trusted_at_epoch, 100);
+    }
+
+    #[test]
+    fn v06_prune_expired_hash_kayitlari_siler_legacy_siyler() {
+        let mut s = Settings::default();
+        let fresh_hash = [0x10u8; 6];
+        let old_hash = [0x20u8; 6];
+        // Fresh hash kayıt — TTL içinde.
+        s.trusted_devices.push(TrustedDevice {
+            name: "Fresh".into(),
+            id: "id1".into(),
+            secret_id_hash: Some(fresh_hash),
+            trusted_at_epoch: now_epoch(),
+        });
+        // Expired hash kayıt.
+        s.trusted_devices.push(TrustedDevice {
+            name: "Old".into(),
+            id: "id2".into(),
+            secret_id_hash: Some(old_hash),
+            trusted_at_epoch: now_epoch().saturating_sub(DEFAULT_TRUST_TTL_SECS + 100),
+        });
+        // Legacy kayıt — prune dokunmamalı.
+        s.trusted_devices.push(TrustedDevice {
+            name: "Legacy".into(),
+            id: "id3".into(),
+            secret_id_hash: None,
+            trusted_at_epoch: 0,
+        });
+
+        let removed = s.prune_expired();
+        assert_eq!(removed, 1);
+        assert_eq!(s.trusted_devices.len(), 2);
+        assert!(s.trusted_devices.iter().any(|d| d.name == "Fresh"));
+        assert!(s.trusted_devices.iter().any(|d| d.name == "Legacy"));
+    }
+
+    #[test]
+    fn v06_add_trusted_with_hash_hash_duplicate_yaratmaz() {
+        let mut s = Settings::default();
+        let hash = [0x42u8; 6];
+        s.add_trusted_with_hash("Pixel", "id-1", hash);
+        s.add_trusted_with_hash("Pixel", "id-1", hash);
+        assert_eq!(s.trusted_devices.len(), 1);
+    }
+
+    #[test]
+    fn v06_add_trusted_with_hash_bos_ad_reddedilir() {
+        let mut s = Settings::default();
+        s.add_trusted_with_hash("", "id", [0xFF; 6]);
+        assert!(s.trusted_devices.is_empty());
+    }
+
+    #[test]
+    fn v06_secret_id_hash_hex_serialize_ve_deserialize() {
+        let mut s = Settings::default();
+        let hash = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x42];
+        s.add_trusted_with_hash("Pixel", "id", hash);
+        let json = serde_json::to_string(&s).expect("serialize");
+        // Hex string'in JSON'da göründüğünü doğrula.
+        assert!(
+            json.contains("\"deadbeef0042\""),
+            "beklenen hex yok: {}",
+            json
+        );
+        let back: Settings = serde_json::from_str(&json).expect("parse");
+        assert_eq!(back.trusted_devices[0].secret_id_hash, Some(hash));
+    }
+
+    #[test]
+    fn v06_secret_id_hash_bozuk_hex_hata_doner() {
+        let bad = r#"{"trusted_devices":[{"name":"X","id":"y","secret_id_hash":"notvalidhex"}]}"#;
+        let r: Result<Settings, _> = serde_json::from_str(bad);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn v06_secret_id_hash_yanlis_boyut_hata_doner() {
+        let bad = r#"{"trusted_devices":[{"name":"X","id":"y","secret_id_hash":"aabbcc"}]}"#;
+        let r: Result<Settings, _> = serde_json::from_str(bad);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn v06_is_trusted_legacy_v05_kayit_calisir() {
+        // add_trusted (v0.5 API) kullanılırsa secret_id_hash=None, timestamp=0.
+        let mut s = Settings::default();
+        s.add_trusted("Pixel 7", "endpoint-abc");
+        // is_trusted_by_hash boş hash ile false (kayıt hash'siz).
+        assert!(!s.is_trusted_by_hash(&[0u8; 6]));
+        // Legacy yol hâlâ çalışır.
+        assert!(s.is_trusted_legacy("Pixel 7", "endpoint-abc"));
+    }
+
+    #[test]
+    fn v06_hijack_regression_ayni_name_id_farkli_hash_untrusted() {
+        // Issue #17 T2 scenario: attacker trusted kaydın (name, id)
+        // çiftini spoof eder ama hash farklı. Trust kararı hash'e bağlı
+        // olduğundan dialog yine gösterilmeli (= is_trusted_by_hash false).
+        let mut s = Settings::default();
+        s.add_trusted_with_hash("Pixel", "ABCD", [0xAA; 6]);
+        // Aynı (name, id) ama farklı hash — trust verilmemeli.
+        assert!(!s.is_trusted_by_hash(&[0xBB; 6]));
+        // Aynı hash — verilmeli.
+        assert!(s.is_trusted_by_hash(&[0xAA; 6]));
     }
 
     #[test]
