@@ -324,6 +324,12 @@ fn run_app() -> ! {
     #[cfg(not(target_os = "linux"))]
     let webview = builder.build(&window).expect("webview oluşturulamadı");
 
+    // İlk açılışta i18n sözlüğünü hazır tut — HTML `settings_get` IPC'si de
+    // push_i18n_to_ui'yi çağırır; fakat `settings_get` gelmeden (race) bazı
+    // platformlarda webview `applyI18n` çağrısını kaçırabilir. Kuyruğa ekleyerek
+    // event loop ilk tick'te script'i çalıştırır.
+    push_i18n_to_ui();
+
     let menu_channel = MenuEvent::receiver();
     let open_downloads_id = open_downloads.id().clone();
     let open_config_id = open_config.id().clone();
@@ -476,9 +482,14 @@ fn handle_ipc(cmd: &str) {
             }
         }
         "settings_get" => {
+            // i18n'i de push et — dil runtime'da değişmez (Lang OnceLock) ama
+            // boot race'inde settings_get script başlamadan gelirse applyI18n
+            // henüz tanımlı değildir; burada geri-yüklüyoruz.
+            push_i18n_to_ui();
             push_settings_to_ui();
             push_trusted_to_ui();
         }
+        "i18n_refresh" => push_i18n_to_ui(),
         "trusted_refresh" => push_trusted_to_ui(),
         "stats_refresh" => push_stats_to_ui(),
         "stats_reset" => {
@@ -564,6 +575,84 @@ fn handle_settings_save(json: &str) {
     info!("[ui] ayarlar güncellendi");
     state::enqueue_js("window.showSaved && window.showSaved()".into());
     ui::notify(i18n::t("notify.app_name"), i18n::t("notify.settings_saved"));
+}
+
+/// Webview'a i18n key→translation sözlüğünü enjekte eder. Rust tarafındaki
+/// `Lang::Tr`/`Lang::En` seçimi tüm çevirileri `t()` üzerinden çözer; JS
+/// `window.__I18N__` üzerinden okur, `applyI18n()` DOM'a uygular.
+///
+/// Settings panel dilini değiştirmek UI restart istemesin diye `settings_get`
+/// IPC'sinde de çağrılır (çevirinin kendisi sabit, ama boot sırası garantili olmayabilir).
+fn push_i18n_to_ui() {
+    // Tüm webview.* + time.* + ortak key'ler. Webview'ın ihtiyacı olan tüm
+    // i18n key'lerini burada enumerate ediyoruz — JS tarafında `t(key)` çağrısı
+    // buradaki map'e hit etmeli, aksi halde `?key?` fallback gözükür.
+    let keys: &[&str] = &[
+        "webview.status.ready",
+        "webview.tab.home",
+        "webview.tab.history",
+        "webview.tab.settings",
+        "webview.tab.diag",
+        "webview.drop.line1",
+        "webview.drop.line2",
+        "webview.progress.preparing",
+        "webview.progress.default",
+        "webview.btn.open_downloads",
+        "webview.btn.hide_to_tray",
+        "webview.btn.quit",
+        "webview.history.empty",
+        "webview.btn.refresh",
+        "webview.settings.device_label",
+        "webview.settings.device_placeholder",
+        "webview.settings.downloads_label",
+        "webview.settings.change",
+        "webview.settings.auto_accept",
+        "webview.settings.auto_accept_hint",
+        "webview.settings.trusted_label",
+        "webview.settings.trusted_hint",
+        "webview.settings.trusted_empty",
+        "webview.settings.clear_all",
+        "webview.settings.save",
+        "webview.settings.saved",
+        "webview.settings.trust_remove",
+        "webview.diag.section.app",
+        "webview.diag.version",
+        "webview.diag.device",
+        "webview.diag.mdns",
+        "webview.diag.port",
+        "webview.diag.section.stats",
+        "webview.diag.first_use",
+        "webview.diag.last_use",
+        "webview.diag.received",
+        "webview.diag.sent",
+        "webview.diag.top_rx",
+        "webview.diag.top_tx",
+        "webview.diag.check_update",
+        "webview.diag.open_logs",
+        "webview.diag.reset_stats",
+        "webview.diag.reset_confirm",
+        "webview.diag.files_suffix",
+        "webview.footer",
+    ];
+    let map: serde_json::Map<String, serde_json::Value> = keys
+        .iter()
+        .map(|k| {
+            (
+                (*k).to_string(),
+                serde_json::Value::String(i18n::t(k).to_string()),
+            )
+        })
+        .collect();
+    let payload = serde_json::Value::Object(map);
+    // `enqueue_js` Vec<String> kuyruğa alır; çoklu eval güvenli. `applyI18n`
+    // fonksiyonu script block içinde tanımlı — bu push ondan sonra geldiğinde
+    // doğrudan çağrılır; öncesinde geldiyse window.__I18N__ setlenir, script
+    // tag'i load olunca boot path'i yakalar.
+    let js = format!(
+        "window.__I18N__ = {}; window.applyI18n && window.applyI18n();",
+        payload
+    );
+    state::enqueue_js(js);
 }
 
 fn push_settings_to_ui() {
