@@ -96,8 +96,8 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
 
     frame::write_frame(socket, &client_init_bytes).await?;
 
-    // 4) ServerInit al
-    let server_init_raw = frame::read_frame(socket).await?;
+    // 4) ServerInit al — slow-loris defansı: handshake timeout
+    let server_init_raw = frame::read_frame_timeout(socket, frame::HANDSHAKE_READ_TIMEOUT).await?;
     let server_init_msg = Ukey2Message::decode(server_init_raw.as_ref())?;
     if server_init_msg.message_type != Some(3) {
         bail!(
@@ -245,6 +245,17 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
     let next_protocol = ci.next_protocol();
     if next_protocol != "AES_256_CBC-HMAC_SHA256" {
         bail!("desteklenmeyen next_protocol: {}", next_protocol);
+    }
+
+    // SECURITY: `prost` varsayılan olarak `repeated` alan boyutuna sınır
+    // uygulamıyor. Saldırgan 100k+ CipherCommitment yollayıp Vec allocation +
+    // lineer `find()` ile CPU/RAM tüketebilir. Gerçek peer en fazla 2-3
+    // cipher önerir; 8 cömert üst sınır.
+    if ci.cipher_commitments.len() > 8 {
+        bail!(
+            "cipher_commitment flood: {} eleman (max 8)",
+            ci.cipher_commitments.len()
+        );
     }
 
     tracing::debug!(
@@ -452,5 +463,39 @@ mod tests {
         assert_eq!(to_signed_bytes(&[0x80]), vec![0x00, 0x80]);
         // 0x7F en yüksek pozitif — dokunulmaz
         assert_eq!(to_signed_bytes(&[0x7F]), vec![0x7F]);
+    }
+
+    #[test]
+    fn cipher_commitments_flood_reddedilir() {
+        // SECURITY: process_client_init 8'den fazla cipher_commitment içeren
+        // ClientInit'i reddetmeli — prost default sınırsız repeated field.
+        use crate::securegcm::{
+            ukey2_client_init::CipherCommitment, Ukey2ClientInit, Ukey2HandshakeCipher,
+            Ukey2Message,
+        };
+        use prost::Message;
+
+        let mut commitments = Vec::with_capacity(16);
+        for _ in 0..16 {
+            commitments.push(CipherCommitment {
+                handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
+                commitment: Some(vec![0u8; 64]),
+            });
+        }
+        let ci = Ukey2ClientInit {
+            version: Some(1),
+            random: Some(vec![0u8; 32]),
+            cipher_commitments: commitments,
+            next_protocol: Some("AES_256_CBC-HMAC_SHA256".into()),
+        };
+        let msg = Ukey2Message {
+            message_type: Some(2),
+            message_data: Some(ci.encode_to_vec()),
+        };
+        let bytes = msg.encode_to_vec();
+        let res = super::process_client_init(&bytes);
+        assert!(res.is_err(), "flood reddedilmeli");
+        let err = res.err().unwrap();
+        assert!(err.to_string().contains("cipher_commitment flood"));
     }
 }

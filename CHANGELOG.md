@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (research v2 hotfix batch)
+- **[High] Slow-loris DoS**: `frame::read_frame` deadline'sız `read_exact`
+  kullanıyordu; saldırgan bağlantı açıp hiçbir şey göndermezsen tokio task'ı
+  sonsuza kadar asılı kalıyordu. Handshake frame'lerine 30sn, steady-loop
+  frame'lerine 60sn `tokio::time::timeout` eklendi (`HekaError::ReadTimeout`).
+- **[High] Protobuf cardinality flood**: `prost` default'u `repeated` alan
+  boyutuna sınır koymuyor. `Ukey2ClientInit.cipher_commitments` ≤8,
+  `Introduction.file_metadata` ≤1000, `text_metadata` ≤64 guard'ı eklendi.
+- **[High] `unique_downloads_path` TOCTOU**: İki paralel receiver aynı
+  dosya adını "mevcut değil" görüp aynı path'e `File::create` (O_TRUNC)
+  yapabiliyordu — ilki yazdığı veriyi ikincisi siliyordu. Artık
+  `OpenOptions::create_new(true)` ile **atomik** reserve (POSIX `O_EXCL` /
+  Win `CREATE_NEW`) yapılıyor; ikinci alıcı bir sonraki isme geçiyor.
+- **[High] `Settings::save` + `Stats::save` atomic değildi + RwLock
+  write guard altında senkron disk I/O yapıyordu.** `atomic_write()`
+  (tmp+rename) helper'ı eklendi; tüm callsite'lar snapshot-clone-then-save
+  pattern'ine geçirildi (yavaş diskte UI event loop donmasın).
+- **[Medium] `SecureCtx` sequence counter i32 overflow**: Saldırgan
+  `sequence_number = i32::MAX` yollayıp debug build'i panic'letebilir
+  veya release'te wrap'letebilirdi. `checked_add` ile bail.
+- **[Medium] Duplicate `payload_id` silent overwrite**: Saldırgan
+  Introduction'da aynı id ile iki FileMetadata yollayıp UI'ın "legit.pdf"
+  onayını "_evil.sh" yazmaya çevirebilirdi. `register_file_destination`
+  artık ikinci kaydı reddediyor.
+- **[Medium] Payload overrun / silent truncation**: `total_size` header
+  deklare edilirken sonraki chunk'larda doğrulanmıyordu; saldırgan
+  `total_size=10` deklare edip gigabaytlarca disk doldurabilirdi veya
+  `last_chunk=true` + az bayt ile yarım dosyayı "tamamlanmış" ilan
+  edebilirdi. Cumulative `written <= total_size` ve last-chunk eşitliği
+  kontrolü eklendi.
+
+### Added
+- 6 yeni security regression testi: `duplicate_payload_id_reddedilir`,
+  `file_overrun_reddedilir`, `file_last_chunk_truncation_reddedilir`,
+  `file_negative_total_size_reddedilir`, `encrypt_overflow_guardlu`,
+  `cipher_commitments_flood_reddedilir`. Toplam test: 108.
+
 ## [0.5.1] - 2026-04-19
 
 **⚠️ Security hotfix** — v0.5.0 kullanıcıları hemen güncellemelidir.

@@ -28,7 +28,7 @@ use crate::sharing::nearby::{
 use crate::state::{self, HistoryItem, ProgressState};
 use crate::ui;
 use crate::ukey2;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use prost::Message;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -39,7 +39,10 @@ use tracing::{info, warn};
 
 pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     // 1) plain ConnectionRequest
-    let req = frame::read_frame(&mut socket)
+    // SECURITY: Handshake fazındaki tüm frame okumaları slow-loris DoS'a karşı
+    // 30 sn timeout ile sarmalanır; aksi halde saldırgan TCP bağlantı açıp
+    // veri göndermeden tokio task'ını sonsuza kadar tutabilir.
+    let req = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
         .await
         .context("ConnectionRequest okunamadı")?;
     let offline = OfflineFrame::decode(req.as_ref()).context("OfflineFrame decode")?;
@@ -87,7 +90,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     }
 
     // 2) UKEY2 ClientInit
-    let ci = frame::read_frame(&mut socket)
+    let ci = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
         .await
         .context("Ukey2ClientInit okunamadı")?;
     let state = ukey2::process_client_init(&ci).context("ClientInit")?;
@@ -98,7 +101,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
         .context("ServerInit yazılamadı")?;
 
     // 4) UKEY2 ClientFinished
-    let cf = frame::read_frame(&mut socket)
+    let cf = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
         .await
         .context("Ukey2ClientFinished okunamadı")?;
     let keys = ukey2::process_client_finish(&cf, &state).context("ClientFinish")?;
@@ -112,7 +115,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     );
 
     // 5) plain ConnectionResponse (karşı taraftan)
-    let resp_in = frame::read_frame(&mut socket)
+    let resp_in = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
         .await
         .context("peer ConnectionResponse okunamadı")?;
     let peer_resp =
@@ -171,7 +174,10 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
             break;
         }
 
-        let raw = match frame::read_frame(&mut socket).await {
+        // Steady-loop timeout: peer Quick Share spec'i gereği ~30s'de bir
+        // KeepAlive gönderir. 60 sn içinde hiçbir frame gelmezse bağlantıyı
+        // ölü kabul ediyoruz — idle TCP task sızıntısını önler.
+        let raw = match frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT).await {
             Ok(b) => b,
             Err(e) => {
                 warn!("[{}] bağlantı sonlandı: {:?}", peer, e);
@@ -279,10 +285,16 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 sha_hex
                             );
                             {
+                                // PERF/SAFETY: RwLock write guard altında senkron disk I/O
+                                // yapılmamalı — yavaş diskte tüm okuyucular (UI event loop)
+                                // bloklanır. Snapshot clone + drop guard + lock-dışı save.
                                 let st = state::get();
-                                let mut s = st.stats.write();
-                                s.record_received(&remote_name_shared, total_size as u64);
-                                let _ = s.save();
+                                let snap = {
+                                    let mut s = st.stats.write();
+                                    s.record_received(&remote_name_shared, total_size as u64);
+                                    s.clone()
+                                };
+                                let _ = snap.save();
                             }
                             let file_name = path
                                 .file_name()
@@ -328,7 +340,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                         ..Default::default()
                     }),
                 };
-                let enc = ctx.encrypt(&reply.encode_to_vec());
+                let enc = ctx.encrypt(&reply.encode_to_vec())?;
                 frame::write_frame(&mut socket, &enc).await?;
             }
             Some(v1_frame::FrameType::Disconnection) => {
@@ -442,6 +454,20 @@ async fn handle_sharing_frame(
                 .ok_or_else(|| anyhow!("introduction yok"))?;
             let file_count = intro.file_metadata.len();
             let text_count = intro.text_metadata.len();
+
+            // SECURITY: `prost` repeated alan cardinality sınırlaması uygulamıyor;
+            // saldırgan milyonlarca `file_metadata` göndererek UI dialog'u
+            // donduracak kadar Vec allocation + `prompt_accept` summary render
+            // maliyeti yaratabilir. Quick Share pratikte tek aktarımda
+            // yüzlerce dosya yeterli — 1000 cömert üst sınır.
+            if file_count > 1000 || text_count > 64 {
+                bail!(
+                    "Introduction cardinality flood: {} dosya, {} metin (limit 1000/64)",
+                    file_count,
+                    text_count
+                );
+            }
+
             info!(
                 "[{}] Introduction: {} dosya, {} metin",
                 peer, file_count, text_count
@@ -496,9 +522,12 @@ async fn handle_sharing_frame(
 
             if matches!(decision, ui::AcceptResult::AcceptAndTrust) {
                 let st = state::get();
-                let mut s = st.settings.write();
-                s.add_trusted(remote_name, remote_id);
-                let _ = s.save();
+                let snap = {
+                    let mut s = st.settings.write();
+                    s.add_trusted(remote_name, remote_id);
+                    s.clone()
+                };
+                let _ = snap.save();
                 info!(
                     "[{}] cihaz trusted listeye eklendi: {} (id: {})",
                     peer,
@@ -517,7 +546,9 @@ async fn handle_sharing_frame(
 
             if ok {
                 for (pid, path, display_name) in planned_files {
-                    assembler.register_file_destination(pid, path);
+                    assembler
+                        .register_file_destination(pid, path)
+                        .context("dosya hedefi kaydı")?;
                     pending_names.insert(pid, display_name);
                 }
                 for (pid, kind) in planned_texts {
@@ -526,6 +557,23 @@ async fn handle_sharing_frame(
                 send_sharing_frame(socket, ctx, &build_consent_accept()).await?;
                 info!("[{}] ✓ kullanıcı kabul etti", peer);
             } else {
+                // Reject: `unique_downloads_path` her `planned_files` için
+                // `create_new(true)` ile 0-bayt placeholder rezerve etmişti.
+                // Hiçbirini PayloadAssembler'a kaydetmediğimiz için normal
+                // cleanup yolu bunları bilmiyor — burada elle siliyoruz,
+                // aksi halde indirme klasöründe sahipsiz boş dosyalar birikir
+                // (review-18 MED).
+                for (_pid, path, _name) in &planned_files {
+                    if let Err(e) = std::fs::remove_file(path) {
+                        if e.kind() != std::io::ErrorKind::NotFound {
+                            tracing::debug!(
+                                "reject cleanup: placeholder silinemedi {}: {}",
+                                path.display(),
+                                e
+                            );
+                        }
+                    }
+                }
                 send_sharing_frame(socket, ctx, &build_consent_reject()).await?;
                 info!("[{}] ✗ kullanıcı reddetti", peer);
                 ui::notify("HekaDrop", &format!("{}: aktarım reddedildi", remote_name));
@@ -607,7 +655,7 @@ pub(crate) async fn send_disconnection(socket: &mut TcpStream, ctx: &mut SecureC
             ..Default::default()
         }),
     };
-    let enc = ctx.encrypt(&f.encode_to_vec());
+    let enc = ctx.encrypt(&f.encode_to_vec())?;
     frame::write_frame(socket, &enc).await?;
     Ok(())
 }
@@ -637,10 +685,34 @@ fn unique_downloads_path(name: &str) -> Result<PathBuf> {
     // reserved adları (CON, PRN…) yeniden adlandırılır.
     let safe = sanitize_received_name(name);
 
-    let mut candidate = base.join(&safe);
-    if !candidate.exists() {
-        return Ok(candidate);
+    // SECURITY/TOCTOU: Önceki sürüm `Path::exists()` + sonra `File::create`
+    // kullanıyordu. İki paralel alıcı (server.rs `MAX_CONCURRENT_CONNECTIONS=32`)
+    // aynı ismi aynı anda "mevcut değil" görüp aynı `candidate`'i seçebilir;
+    // sonraki `File::create` ikinci alıcının verisini `O_TRUNC` ile silerek
+    // birincinin yazdığını yok ederdi.
+    // Çözüm: `OpenOptions::create_new(true)` ile **atomic** reserve — işletim
+    // sistemi düzeyinde `O_EXCL` (POSIX) / `CREATE_NEW` (Windows). İlk sahibin
+    // placeholder'ı kazanır; ikincisi `AlreadyExists` alıp sonraki isme geçer.
+    // Placeholder sıfır bayt olarak diskte kalır; `PayloadAssembler::ingest_file`
+    // onu `OpenOptions::write(true).truncate(true)` ile yeniden açarak gerçek
+    // veriyle doldurur (aynı path, aynı inode).
+    fn try_reserve(candidate: &std::path::Path) -> std::io::Result<()> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(candidate)
+            .map(|_| ())
     }
+
+    let candidate = base.join(&safe);
+    match try_reserve(&candidate) {
+        Ok(()) => return Ok(candidate),
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+            return Err(anyhow!("dosya rezerve edilemedi: {}", e));
+        }
+        Err(_) => {}
+    }
+
     let (stem, ext) = split_name(&safe);
     let mut n = 1;
     loop {
@@ -649,11 +721,18 @@ fn unique_downloads_path(name: &str) -> Result<PathBuf> {
         } else {
             format!("{} ({}).{}", stem, n, ext)
         };
-        candidate = base.join(filename);
-        if !candidate.exists() {
-            return Ok(candidate);
+        let next = base.join(filename);
+        match try_reserve(&next) {
+            Ok(()) => return Ok(next),
+            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+                return Err(anyhow!("dosya rezerve edilemedi: {}", e));
+            }
+            Err(_) => {}
         }
         n += 1;
+        if n > 10_000 {
+            bail!("uygun dosya adı bulunamadı (10k deneme)");
+        }
     }
 }
 
@@ -842,12 +921,12 @@ pub(crate) async fn send_sharing_frame(
 
     // İlk chunk: tam gövde, offset=0, flags=0
     let first = wrap_payload_transfer(payload_id, total, 0, 0, body.clone());
-    let enc1 = ctx.encrypt(&first.encode_to_vec());
+    let enc1 = ctx.encrypt(&first.encode_to_vec())?;
     frame::write_frame(socket, &enc1).await?;
 
     // Son chunk: boş gövde, flags=1 (last)
     let last = wrap_payload_transfer(payload_id, total, total, 1, Vec::new());
-    let enc2 = ctx.encrypt(&last.encode_to_vec());
+    let enc2 = ctx.encrypt(&last.encode_to_vec())?;
     frame::write_frame(socket, &enc2).await?;
     Ok(())
 }
@@ -1008,8 +1087,8 @@ mod tests {
             let mut f2 = std::fs::File::create(&p2).unwrap();
             f2.write_all(b"half").unwrap();
         }
-        asm.register_file_destination(101, p1.clone());
-        asm.register_file_destination(202, p2.clone());
+        asm.register_file_destination(101, p1.clone()).unwrap();
+        asm.register_file_destination(202, p2.clone()).unwrap();
         names.insert(101, "a.bin".into());
         names.insert(202, "b.bin".into());
         texts.insert(303, TextType::Text);
@@ -1035,7 +1114,7 @@ mod tests {
         let mut texts: HashMap<i64, TextType> = HashMap::new();
 
         let p = unique_tmp("partial.bin");
-        asm.register_file_destination(777, p.clone());
+        asm.register_file_destination(777, p.clone()).unwrap();
         names.insert(777, "partial.bin".into());
 
         // İlk chunk'ı simüle et (100 bayt toplam, 10 bayt body, last=false).

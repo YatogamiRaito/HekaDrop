@@ -15,7 +15,7 @@
 use crate::location::nearby::connections::{
     payload_transfer_frame::payload_header::PayloadType, PayloadTransferFrame,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::File;
@@ -58,6 +58,8 @@ struct FileSink {
     file: File,
     path: PathBuf,
     total_size: i64,
+    /// Toplam yazılmış bayt — `total_size`'a karşı overrun doğrulaması için.
+    written: i64,
     hasher: Sha256,
     last_chunk_at: Instant,
 }
@@ -82,7 +84,21 @@ impl PayloadAssembler {
 
     /// Introduction sırasında onaylanan dosya için diskteki hedef yolu kaydeder.
     /// İlk chunk geldiğinde bu yol kullanılarak dosya `std::fs::File::create` ile açılır.
-    pub fn register_file_destination(&mut self, payload_id: i64, path: PathBuf) {
+    ///
+    /// SECURITY: Aynı `payload_id` ile iki kez kayıt → önceki hedef **silent
+    /// overwrite** olurdu (HashMap::insert). Saldırgan Introduction'da
+    /// `id=X → legit.pdf` + aynı Introduction'da `id=X → _evil.sh` yollayarak
+    /// UI'ın kullanıcıya `legit.pdf`'i göstermesini ama gerçekte `_evil.sh`'in
+    /// yazılmasını sağlayabilirdi. İkinci register artık hata döner.
+    pub fn register_file_destination(&mut self, payload_id: i64, path: PathBuf) -> Result<()> {
+        if self.pending_destinations.contains_key(&payload_id)
+            || self.file_sinks.contains_key(&payload_id)
+        {
+            bail!(
+                "duplicate payload_id={} — destination overwrite reddedildi",
+                payload_id
+            );
+        }
         self.pending_destinations.insert(
             payload_id,
             PendingDest {
@@ -90,18 +106,24 @@ impl PayloadAssembler {
                 registered_at: Instant::now(),
             },
         );
+        Ok(())
     }
 
     /// Onaylanmayan (örn. Bytes olup bilinmeyen) bir payload'ı temizler.
     ///
     /// Açıksa dosya kulpunu düşürür ve yarım yazılmış `.part` dosyasını siler.
+    /// Hiç chunk gelmemiş pending destination kayıtları için de diskteki
+    /// 0-bayt placeholder'ı siler — aksi halde iptal sonrası indirme
+    /// klasöründe sahibsiz sıfır bayt dosyalar birikir (review-18 MED).
     #[allow(dead_code)]
     pub fn cancel(&mut self, payload_id: i64) {
         self.bytes_buffers.remove(&payload_id);
         if let Some(sink) = self.file_sinks.remove(&payload_id) {
             remove_partial_file(&sink.path);
         }
-        self.pending_destinations.remove(&payload_id);
+        if let Some(dest) = self.pending_destinations.remove(&payload_id) {
+            remove_partial_file(&dest.path);
+        }
     }
 
     /// Belirli süreden uzun sessiz kalmış partial'ları düşürür.
@@ -250,17 +272,71 @@ impl PayloadAssembler {
         use std::collections::hash_map::Entry;
 
         // İlk chunk: dosyayı aç.
+        // NOT: `connection::unique_downloads_path` dosyayı `create_new(true)`
+        // ile **placeholder** olarak zaten oluşturmuş oldu (TOCTOU fix).
+        // Burada aynı path'i `write(true).truncate(true)` ile yeniden açıyoruz
+        // — aynı inode, sıfırdan yazma. Eğer placeholder yoksa (test kodu,
+        // legacy çağrı) create'e fallback ediyoruz.
         if let Entry::Vacant(slot) = self.file_sinks.entry(id) {
             let dest = self
                 .pending_destinations
                 .remove(&id)
                 .ok_or_else(|| anyhow!("payload_id={} için destination kayıtlı değil", id))?;
-            let file = File::create(&dest.path)
-                .with_context(|| format!("dosya oluşturulamadı: {}", dest.path.display()))?;
+            // SECURITY: `total_size` negatif ya da absürt büyükse en başta reddet.
+            // Aksi halde `(written*100)/total` integer aritmetiği taşar ve
+            // saldırgan terabaytlık disk doldurma isteği UI/progress yoluyla
+            // sessizce kabul edilir.
+            if total_size < 0 {
+                bail!("total_size negatif: {}", total_size);
+            }
+            // Quick Share pratikte 1 TiB'den büyük tek dosya göndermez —
+            // 1 TiB üstü değer neredeyse kesin kötü niyetli / broken peer.
+            // Bu sınırı koymadan `(written*100)/total` progress aritmetiği ve
+            // `i64 → u64` cast'lerde sürpriz davranışlara yol açar.
+            const MAX_FILE_BYTES: i64 = 1 << 40; // 1 TiB
+            if total_size > MAX_FILE_BYTES {
+                bail!(
+                    "total_size absürt büyük: {} bayt (>1 TiB limit)",
+                    total_size
+                );
+            }
+            // SECURITY: Hedef yol symlink ise saldırgan (veya TOCTOU race ile
+            // üçüncü taraf) placeholder'ı symlink'e çevirip bizi keyfi dosyaya
+            // yazmaya zorlayabilir. `symlink_metadata` link'i resolve etmez;
+            // symlink tespit edersek işlemi iptal ederiz.
+            // NOT: Placeholder'ın olmaması yasal bir durum (test/legacy kod
+            // `register_file_destination`'ı bir path ile çağırıp diske
+            // placeholder yaratmadan `ingest` çağırabilir — `create:true`
+            // fallback'i bu yol için mevcut). Bu yüzden NotFound'u tolere et.
+            match std::fs::symlink_metadata(&dest.path) {
+                Ok(md) => {
+                    if md.file_type().is_symlink() {
+                        bail!(
+                            "hedef symlink — reddedildi (TOCTOU koruması): {}",
+                            dest.path.display()
+                        );
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // Placeholder yok → legacy/test kodu; `create:true` aşağıda yaratacak.
+                }
+                Err(e) => {
+                    return Err(anyhow::Error::from(e)).with_context(|| {
+                        format!("hedef metadata okunamadı: {}", dest.path.display())
+                    });
+                }
+            }
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&dest.path)
+                .with_context(|| format!("dosya açılamadı: {}", dest.path.display()))?;
             slot.insert(FileSink {
                 file,
                 path: dest.path,
                 total_size,
+                written: 0,
                 hasher: Sha256::new(),
                 last_chunk_at: Instant::now(),
             });
@@ -271,8 +347,24 @@ impl PayloadAssembler {
                 .file_sinks
                 .get_mut(&id)
                 .ok_or_else(|| anyhow!("file_sink kayıp: id={}", id))?;
+            // SECURITY: Cumulative overrun koruması — saldırgan `total_size=10`
+            // deklare edip gigabaytlarca chunk yollayarak disk doldurabilir.
+            let body_len = body.len() as i64;
+            let new_written = sink
+                .written
+                .checked_add(body_len)
+                .ok_or_else(|| anyhow!("yazım toplamı taştı (id={})", id))?;
+            if new_written > sink.total_size {
+                bail!(
+                    "payload overrun: id={} written={} > total_size={}",
+                    id,
+                    new_written,
+                    sink.total_size
+                );
+            }
             sink.file.write_all(body).context("disk yazma")?;
             sink.hasher.update(body);
+            sink.written = new_written;
             sink.last_chunk_at = Instant::now();
         }
 
@@ -281,7 +373,28 @@ impl PayloadAssembler {
                 .file_sinks
                 .remove(&id)
                 .ok_or_else(|| anyhow!("son chunk ama sink yok: id={}", id))?;
-            sink.file.sync_all().ok();
+            // SECURITY: Peer `last_chunk=true` gönderip yarım dosyayı tamamlanmış
+            // gibi onaylatabilir (silent truncation). Toplam byte sayısı
+            // bildirilen total_size ile eşleşmezse reddet.
+            if sink.written != sink.total_size {
+                bail!(
+                    "truncated payload: id={} written={} total_size={}",
+                    id,
+                    sink.written,
+                    sink.total_size
+                );
+            }
+            // Durability: sync_all hatası yutulursa peer'a başarı mesajı
+            // gönderebiliriz ama disk'te veri henüz yok → crash durumunda
+            // dosya boş/yarım kalır. Hatayı propagate et ki user retry'la
+            // anlamlı bir sonuç alabilsin.
+            sink.file.sync_all().with_context(|| {
+                format!(
+                    "dosya senkronize edilemedi: id={} path={}",
+                    id,
+                    sink.path.display()
+                )
+            })?;
             let digest = sink.hasher.finalize();
             let mut sha256 = [0u8; 32];
             sha256.copy_from_slice(&digest);
@@ -322,12 +435,22 @@ mod tests {
 
     /// Test helper: minimal `PayloadTransferFrame` inşa et.
     fn make_frame(id: i64, ptype: PbPayloadType, body: &[u8], last: bool) -> PayloadTransferFrame {
+        make_frame_total(id, ptype, body, last, body.len() as i64)
+    }
+
+    fn make_frame_total(
+        id: i64,
+        ptype: PbPayloadType,
+        body: &[u8],
+        last: bool,
+        total_size: i64,
+    ) -> PayloadTransferFrame {
         PayloadTransferFrame {
             packet_type: None,
             payload_header: Some(PayloadHeader {
                 id: Some(id),
                 r#type: Some(ptype as i32),
-                total_size: Some(body.len() as i64),
+                total_size: Some(total_size),
                 is_sensitive: None,
                 file_name: None,
                 parent_folder: None,
@@ -409,7 +532,7 @@ mod tests {
         let _ = std::fs::remove_file(&tmp);
 
         let mut a = PayloadAssembler::new();
-        a.register_file_destination(100, tmp.clone());
+        a.register_file_destination(100, tmp.clone()).unwrap();
         // İlk (ve sadece) chunk: dosya açılır, disk'e yazılır, last=false.
         let f = make_frame(100, PbPayloadType::File, b"partial-data", false);
         a.ingest(&f).unwrap();
@@ -429,7 +552,7 @@ mod tests {
         // Dosya oluşturmuyoruz; sadece path kaydı GC'de silinecek.
         let tmp =
             std::env::temp_dir().join(format!("hekadrop-pending-test-{}.part", std::process::id()));
-        a.register_file_destination(55, tmp);
+        a.register_file_destination(55, tmp).unwrap();
         assert_eq!(a.partial_count(), 1);
 
         std::thread::sleep(Duration::from_millis(15));
@@ -467,21 +590,25 @@ mod tests {
     #[test]
     fn cancel_removes_bytes_file_and_pending() {
         let pid = std::process::id();
-        let tmp = std::env::temp_dir().join(format!("hekadrop-cancel-test-{}.part", pid));
+        let rnd: u32 = rand::random();
+        let tmp = std::env::temp_dir().join(format!("hekadrop-cancel-test-{}-{}.part", pid, rnd));
         let _ = std::fs::remove_file(&tmp);
         let mut a = PayloadAssembler::new();
 
         // bytes buffer
         a.ingest(&make_frame(1, PbPayloadType::Bytes, b"x", false))
             .unwrap();
-        // file sink
-        a.register_file_destination(2, tmp.clone());
-        a.ingest(&make_frame(2, PbPayloadType::File, b"y", false))
+        // file sink (total_size=big enough for one-byte body)
+        a.register_file_destination(2, tmp.clone()).unwrap();
+        a.ingest(&make_frame_total(2, PbPayloadType::File, b"y", false, 10))
             .unwrap();
         assert!(tmp.exists());
-        // pending destination
-        let tmp2 = std::env::temp_dir().join(format!("hekadrop-cancel-pending-{}.part", pid));
-        a.register_file_destination(3, tmp2);
+        // pending destination — review-18 MED: cancel artık placeholder'ı da silmeli.
+        let tmp2 =
+            std::env::temp_dir().join(format!("hekadrop-cancel-pending-{}-{}.part", pid, rnd));
+        // Diskte sıfır bayt placeholder simulate et (unique_downloads_path davranışı).
+        std::fs::write(&tmp2, b"").expect("placeholder yarat");
+        a.register_file_destination(3, tmp2.clone()).unwrap();
 
         assert_eq!(a.partial_count(), 3);
         a.cancel(1);
@@ -492,6 +619,68 @@ mod tests {
             !tmp.exists(),
             "cancel file sink'in diskteki dosyasını silmeli"
         );
+        assert!(
+            !tmp2.exists(),
+            "cancel pending destination placeholder'ını diskten silmeli"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ingest_file_symlink_destination_reddeder() {
+        // review-18: dest.path symlink'e dönüştüyse (TOCTOU) ingest_file
+        // reddetmelidir.
+        let pid = std::process::id();
+        let rnd: u32 = rand::random();
+        let real = std::env::temp_dir().join(format!("hekadrop-symlink-real-{}-{}.bin", pid, rnd));
+        let link = std::env::temp_dir().join(format!("hekadrop-symlink-link-{}-{}.bin", pid, rnd));
+        let _ = std::fs::remove_file(&real);
+        let _ = std::fs::remove_file(&link);
+        std::fs::write(&real, b"").expect("real yarat");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink yarat");
+
+        let mut a = PayloadAssembler::new();
+        a.register_file_destination(42, link.clone()).unwrap();
+        let err = a
+            .ingest(&make_frame_total(42, PbPayloadType::File, b"y", false, 10))
+            .expect_err("symlink hedef reddedilmeli");
+        assert!(
+            err.to_string().contains("symlink"),
+            "hata mesajı symlink belirtmeli, aldı: {}",
+            err
+        );
+
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_file(&real);
+    }
+
+    #[test]
+    fn ingest_file_total_size_absurd_buyuk_reddeder() {
+        // review-18: 1 TiB üstü bildirilen dosya başlamadan reddedilmeli.
+        let pid = std::process::id();
+        let rnd: u32 = rand::random();
+        let tmp = std::env::temp_dir().join(format!("hekadrop-absurd-{}-{}.bin", pid, rnd));
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&tmp, b"").expect("placeholder");
+
+        let mut a = PayloadAssembler::new();
+        a.register_file_destination(42, tmp.clone()).unwrap();
+        let absurd = (1i64 << 40) + 1; // 1 TiB + 1
+        let err = a
+            .ingest(&make_frame_total(
+                42,
+                PbPayloadType::File,
+                b"x",
+                false,
+                absurd,
+            ))
+            .expect_err("absurd total_size reddedilmeli");
+        assert!(
+            err.to_string().contains("absürt") || err.to_string().contains("1 TiB"),
+            "hata mesajı limit belirtmeli, aldı: {}",
+            err
+        );
+        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
@@ -500,12 +689,19 @@ mod tests {
             std::env::temp_dir().join(format!("hekadrop-finalize-test-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
         let mut a = PayloadAssembler::new();
-        a.register_file_destination(200, tmp.clone());
-        // İki chunk'lı dosya.
-        a.ingest(&make_frame(200, PbPayloadType::File, b"foo", false))
-            .unwrap();
+        a.register_file_destination(200, tmp.clone()).unwrap();
+        // İki chunk'lı dosya — total_size=6 (foo+bar). Her iki frame aynı
+        // total'ı deklare etmeli yoksa overrun/truncation validasyonu patlar.
+        a.ingest(&make_frame_total(
+            200,
+            PbPayloadType::File,
+            b"foo",
+            false,
+            6,
+        ))
+        .unwrap();
         let out = a
-            .ingest(&make_frame(200, PbPayloadType::File, b"bar", true))
+            .ingest(&make_frame_total(200, PbPayloadType::File, b"bar", true, 6))
             .unwrap()
             .expect("son chunk tamamlar");
         match out {
@@ -517,9 +713,10 @@ mod tests {
             } => {
                 assert_eq!(id, 200);
                 assert_eq!(path, tmp);
-                // "bar" frame'in total_size'ı 3 — son gelen header kazanır
-                // (orijinal davranış, dokunmuyoruz).
-                assert_eq!(total_size, 3);
+                // Her iki frame de total_size=6 ("foo"+"bar") deklare ediyor
+                // (overrun validasyonu için zorunlu). İlk chunk'ta açılan
+                // FileSink.total_size korunur.
+                assert_eq!(total_size, 6);
                 // "foobar"ın beklenen SHA-256'sı
                 let expected = {
                     let mut h = Sha256::new();
@@ -555,5 +752,60 @@ mod tests {
         // 10 yıl gibi absürt timeout.
         let n = a.gc(Duration::from_secs(60 * 60 * 24 * 365 * 10));
         assert_eq!(n, 0, "çok büyük timeout'ta hiçbir şey silinmemeli");
+    }
+
+    // ---- SECURITY: payload overrun + truncation + duplicate id guards ----
+
+    #[test]
+    fn duplicate_payload_id_reddedilir() {
+        // Saldırgan Introduction'da aynı id ile iki FileMetadata yollarsa
+        // ikinci register_file_destination silent overwrite yerine hata dönmeli.
+        let mut a = PayloadAssembler::new();
+        let p1 = std::env::temp_dir().join(format!("hd-dup1-{}.bin", std::process::id()));
+        let p2 = std::env::temp_dir().join(format!("hd-dup2-{}.bin", std::process::id()));
+        assert!(a.register_file_destination(42, p1.clone()).is_ok());
+        let err = a
+            .register_file_destination(42, p2.clone())
+            .expect_err("duplicate red");
+        assert!(err.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn file_overrun_reddedilir() {
+        // total_size=5 iken 10 bayt body → overrun hatası, disk sızıntısı yok.
+        let tmp = std::env::temp_dir().join(format!("hd-overrun-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let mut a = PayloadAssembler::new();
+        a.register_file_destination(1, tmp.clone()).unwrap();
+        let bloat = vec![0xCDu8; 10];
+        let f = make_frame_total(1, PbPayloadType::File, &bloat, false, 5);
+        let err = a.ingest(&f).expect_err("overrun red");
+        assert!(err.to_string().contains("overrun"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn file_last_chunk_truncation_reddedilir() {
+        // last_chunk=true geldiğinde written != total_size → hata.
+        // Peer 10 bayt deklare edip 3 bayt + last_chunk yollayamaz.
+        let tmp = std::env::temp_dir().join(format!("hd-trunc-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let mut a = PayloadAssembler::new();
+        a.register_file_destination(7, tmp.clone()).unwrap();
+        let f = make_frame_total(7, PbPayloadType::File, b"abc", true, 10);
+        let err = a.ingest(&f).expect_err("truncation red");
+        assert!(err.to_string().contains("truncated"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn file_negative_total_size_reddedilir() {
+        let tmp = std::env::temp_dir().join(format!("hd-negtotal-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let mut a = PayloadAssembler::new();
+        a.register_file_destination(9, tmp.clone()).unwrap();
+        let f = make_frame_total(9, PbPayloadType::File, b"a", false, -1);
+        let err = a.ingest(&f).expect_err("negatif total red");
+        assert!(err.to_string().contains("negatif"));
     }
 }

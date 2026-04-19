@@ -11,4 +11,6 @@ pub enum HekaError {
     FrameTooLarge(usize),
     #[error("beklenmeyen bağlantı sonu")]
     UnexpectedEof,
+    #[error("frame okuma zaman aşımı ({0:?})")]
+    ReadTimeout(std::time::Duration),
 }
