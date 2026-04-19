@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- `docs/design/017-trusted-id-hardening.md` — Issue #17 tasarım belgesi:
+  trusted cihaz kimliğinin `endpoint_id` (4 byte, spoofable) yerine
+  `PairedKeyEncryption.secret_id_hash` (6 byte, device-stable) + 7 gün
+  TTL üzerine bağlanması önerisi. Implementation v0.6.0 hedefli; belge
+  review için açık sorular + risk register + migration planı içeriyor.
+
 ### Changed (release infrastructure)
 - Release workflow now publishes Windows `.exe` + Linux `.deb` in
   addition to macOS `.dmg` (+ source tarball). Scoop install
