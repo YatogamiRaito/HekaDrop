@@ -93,6 +93,8 @@ harness = false
 lto = "thin"
 codegen-units = 1
 strip = true
+debug = "full"
+split-debuginfo = "packed"
 
 # cargo-deb (Linux .deb paketleme) için metadata.
 # Kullanım: `./scripts/make-deb.sh`  veya  `cargo deb`
