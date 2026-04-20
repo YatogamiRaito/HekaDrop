@@ -162,26 +162,30 @@ pub async fn send(req: SendRequest) -> Result<()> {
     let mut introduction_sent = false;
     let mut sent_paired_result = false;
     let peer_label = req.device.name.clone();
-    state::clear_cancel();
     let transfer_id = format!("out:{}:{}", req.device.addr, req.device.port);
     let _guard = state::TransferGuard::new(&transfer_id);
     let cancel_token: CancellationToken = _guard.token.clone();
 
     loop {
-        if cancel_token.is_cancelled() {
-            info!("[sender] kullanıcı iptal etti");
-            let cancel = connection::build_sharing_cancel();
-            connection::send_sharing_frame(&mut socket, &mut ctx, &cancel)
-                .await
-                .ok();
-            connection::send_disconnection(&mut socket, &mut ctx)
-                .await
-                .ok();
-            state::set_progress(ProgressState::Idle);
-            bail!("kullanıcı aktarımı iptal etti");
-        }
-
-        let raw = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT).await?;
+        // `select!` ile cancel sinyali 60 sn'lik steady timeout'u beklemeden
+        // anında algılanır. Frame read future düştüğünde socket'i zaten
+        // bail yolunda terk ediyoruz.
+        let raw = tokio::select! {
+            biased;
+            _ = cancel_token.cancelled() => {
+                info!("[sender] kullanıcı iptal etti");
+                let cancel = connection::build_sharing_cancel();
+                connection::send_sharing_frame(&mut socket, &mut ctx, &cancel)
+                    .await
+                    .ok();
+                connection::send_disconnection(&mut socket, &mut ctx)
+                    .await
+                    .ok();
+                state::set_progress(ProgressState::Idle);
+                bail!("kullanıcı aktarımı iptal etti");
+            }
+            res = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT) => res?,
+        };
         let inner = ctx.decrypt(&raw)?;
         let offline = OfflineFrame::decode(inner.as_ref())?;
         let Some(v1) = offline.v1 else { continue };
@@ -357,10 +361,14 @@ async fn send_file_chunks(
     let mut hasher = Sha256::new();
 
     loop {
-        if cancel.is_cancelled() {
-            bail!("chunk gönderim sırasında iptal");
-        }
-        let n = file.read(&mut buf).await?;
+        // Disk read ile cancel'i paralel bekle — büyük chunk'larda ~512 KB'lık
+        // read + müteakip network write cancel'e anında tepki veremezdi.
+        // Cancel yolunda yarım okunmuş chunk terk edilir; zaten bail'liyoruz.
+        let n = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => bail!("chunk gönderim sırasında iptal"),
+            res = file.read(&mut buf) => res?,
+        };
         if n == 0 {
             let last = wrap_payload_transfer(payload_id, file_size, offset, 1, Vec::new());
             let enc = ctx.encrypt(&last.encode_to_vec())?;

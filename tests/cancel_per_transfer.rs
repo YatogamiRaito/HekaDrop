@@ -17,17 +17,30 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
+/// Cancel yolunun ne kadar sürede observe edildiğinin üst sınırı. CI runner
+/// yavaş paralel testler altında 200 ms çok sıkıydı; 500 ms güvenlik marjı
+/// verirken gerçek regresyonu yine saniyenin yarısı içinde yakalar.
+const CANCEL_OBSERVE_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// Sahte bir transfer loop'u — periyodik "iş yapıyormuş gibi" davranır; token
-/// cancel'lenince en geç bir sonraki `select` turunda çıkar. Çıkış sebebi
+/// cancel'lenince en geç bir sonraki `select` turunda çıkar. `started`
+/// ile "task aktif select'te" sinyali verir; çağıran `started.notified()`
+/// ile bunu bekleyerek time-based sleep'i elimine eder. Çıkış sebebi
 /// boolean'ı (`true = cancelled`) çağırana geri döner.
-async fn simulate_transfer(token: CancellationToken, ticks: Arc<AtomicUsize>) -> bool {
+async fn simulate_transfer(
+    token: CancellationToken,
+    ticks: Arc<AtomicUsize>,
+    started: Arc<Notify>,
+) -> bool {
+    started.notify_one();
     loop {
         tokio::select! {
             biased;
             _ = token.cancelled() => return true,
-            _ = tokio::time::sleep(Duration::from_millis(5)) => {
+            _ = tokio::time::sleep(Duration::from_millis(10)) => {
                 ticks.fetch_add(1, Ordering::SeqCst);
             }
         }
@@ -42,13 +55,25 @@ async fn cancelling_one_child_does_not_affect_sibling() {
 
     let ticks_a = Arc::new(AtomicUsize::new(0));
     let ticks_b = Arc::new(AtomicUsize::new(0));
-    let h_a = tokio::spawn(simulate_transfer(a.clone(), ticks_a.clone()));
-    let h_b = tokio::spawn(simulate_transfer(b.clone(), ticks_b.clone()));
+    let started_a = Arc::new(Notify::new());
+    let started_b = Arc::new(Notify::new());
+    let h_a = tokio::spawn(simulate_transfer(
+        a.clone(),
+        ticks_a.clone(),
+        started_a.clone(),
+    ));
+    let h_b = tokio::spawn(simulate_transfer(
+        b.clone(),
+        ticks_b.clone(),
+        started_b.clone(),
+    ));
 
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    // Event-based sync: sleep yerine task gerçekten select'e girene kadar bekle.
+    started_a.notified().await;
+    started_b.notified().await;
     a.cancel();
 
-    let cancelled_a = tokio::time::timeout(Duration::from_millis(200), h_a)
+    let cancelled_a = tokio::time::timeout(CANCEL_OBSERVE_TIMEOUT, h_a)
         .await
         .expect("a task bitmeli")
         .unwrap();
@@ -59,9 +84,10 @@ async fn cancelling_one_child_does_not_affect_sibling() {
         "sibling token kardeşin cancel'ından etkilenmemeli"
     );
 
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // B'nin en az bir tick işlemesi için minimal yield — sleep cömert.
+    tokio::time::sleep(Duration::from_millis(100)).await;
     b.cancel();
-    let cancelled_b = tokio::time::timeout(Duration::from_millis(200), h_b)
+    let cancelled_b = tokio::time::timeout(CANCEL_OBSERVE_TIMEOUT, h_b)
         .await
         .expect("b task bitmeli")
         .unwrap();
@@ -81,15 +107,21 @@ async fn cancelling_root_cascades_to_all_children() {
     let c = root.child_token();
 
     let ticks = Arc::new(AtomicUsize::new(0));
-    let ha = tokio::spawn(simulate_transfer(a, ticks.clone()));
-    let hb = tokio::spawn(simulate_transfer(b, ticks.clone()));
-    let hc = tokio::spawn(simulate_transfer(c, ticks.clone()));
+    let s_a = Arc::new(Notify::new());
+    let s_b = Arc::new(Notify::new());
+    let s_c = Arc::new(Notify::new());
+    let ha = tokio::spawn(simulate_transfer(a, ticks.clone(), s_a.clone()));
+    let hb = tokio::spawn(simulate_transfer(b, ticks.clone(), s_b.clone()));
+    let hc = tokio::spawn(simulate_transfer(c, ticks.clone(), s_c.clone()));
 
-    tokio::time::sleep(Duration::from_millis(15)).await;
+    // Tüm task'lar aktif olana kadar bekle — `root.cancel()` öncesi garanti.
+    s_a.notified().await;
+    s_b.notified().await;
+    s_c.notified().await;
     root.cancel();
 
     for (name, h) in [("a", ha), ("b", hb), ("c", hc)] {
-        let r = tokio::time::timeout(Duration::from_millis(200), h)
+        let r = tokio::time::timeout(CANCEL_OBSERVE_TIMEOUT, h)
             .await
             .unwrap_or_else(|_| panic!("{} task timeout", name))
             .unwrap();
@@ -113,12 +145,13 @@ async fn sibling_survives_after_one_transfer_drops_its_token() {
 
     // B hâlâ root'a bağlı → root cancel hâlâ B'yi tetiklemeli.
     let ticks = Arc::new(AtomicUsize::new(0));
-    let h = tokio::spawn(simulate_transfer(b, ticks));
+    let started = Arc::new(Notify::new());
+    let h = tokio::spawn(simulate_transfer(b, ticks, started.clone()));
 
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    started.notified().await;
     root.cancel();
 
-    let r = tokio::time::timeout(Duration::from_millis(200), h)
+    let r = tokio::time::timeout(CANCEL_OBSERVE_TIMEOUT, h)
         .await
         .expect("b task bitmeli")
         .unwrap();

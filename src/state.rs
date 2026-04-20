@@ -206,8 +206,14 @@ pub struct TransferGuard {
 }
 
 impl TransferGuard {
+    /// Yeni bir transfer guard'ı kurar. Eğer önceki broadcast cancel sonrası
+    /// root hâlâ cancelled durumdaysa önce `clear_cancel()` ile taze root'a
+    /// geçer — aksi halde bu yeni transfer doğar doğmaz cancelled olur
+    /// (footgun: eski tasarımda callsite'lar elle `clear_cancel()` çağırmak
+    /// zorundaydı). RAII kapsülü olarak bu çağrıyı tek noktaya topluyoruz.
     pub fn new(id: impl Into<String>) -> Self {
         let id = id.into();
+        clear_cancel();
         let token = new_child_token();
         register_transfer(id.clone(), token.clone());
         Self { id, token }
@@ -251,7 +257,15 @@ pub fn request_cancel_all() {
 /// root'a geçmek güvenlidir.
 pub fn clear_cancel() {
     let st = get();
+    // Fast path: ortak durum (root temiz) yalnızca read-lock alır. Yalnızca
+    // gerçekten cancelled ise write-lock'a upgrade ediyoruz — her transfer
+    // başında gereksiz exclusive lock contention'ını engeller.
+    if !st.cancel_root.read().is_cancelled() {
+        return;
+    }
     let mut guard = st.cancel_root.write();
+    // Write-lock beklerken başka bir thread zaten yeni root yazmış olabilir:
+    // tekrar kontrol et.
     if guard.is_cancelled() {
         *guard = CancellationToken::new();
     }
