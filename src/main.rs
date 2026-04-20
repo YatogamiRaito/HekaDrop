@@ -10,6 +10,8 @@ use tokio::runtime::Handle;
 use tracing::info;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::TrayIconBuilder;
+#[cfg(not(target_os = "linux"))]
+use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use wry::{DragDropEvent, WebViewBuilder};
 
 mod config;
@@ -288,12 +290,16 @@ fn run_app() -> ! {
     tray_menu.append(&PredefinedMenuItem::separator()).ok();
     tray_menu.append(&quit_item).ok();
 
-    let tray = TrayIconBuilder::new()
+    // macOS/Windows'ta sol tık = pencere aç (Quick Share UX pattern), sağ tık =
+    // menü. Linux AppIndicator click event yaymadığı için default'ta kalır
+    // (sol tık da menüyü açar, tek yol).
+    let tray_builder = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
         .with_title("⇄")
-        .with_tooltip("HekaDrop")
-        .build()
-        .expect("tray icon oluşturulamadı");
+        .with_tooltip("HekaDrop");
+    #[cfg(not(target_os = "linux"))]
+    let tray_builder = tray_builder.with_menu_on_left_click(false);
+    let tray = tray_builder.build().expect("tray icon oluşturulamadı");
 
     // Ana pencere + WebView
     let window = WindowBuilder::new()
@@ -352,6 +358,8 @@ fn run_app() -> ! {
     push_i18n_to_ui();
 
     let menu_channel = MenuEvent::receiver();
+    #[cfg(not(target_os = "linux"))]
+    let tray_channel = TrayIconEvent::receiver();
     let open_downloads_id = open_downloads.id().clone();
     let open_config_id = open_config.id().clone();
     let about_item_id = about_item.id().clone();
@@ -417,6 +425,24 @@ fn run_app() -> ! {
             );
             let _ = webview.evaluate_script(&js_status);
             last_ui_progress_signature = sig;
+        }
+
+        // Tray ikonunun kendisine tıklama (macOS/Windows): sol tık → pencere aç.
+        // Sağ tık menüyü tray-icon tarafından otomatik açılır.
+        // Doğrudan `window.set_visible/set_focus` kullanıyoruz; state flag
+        // üzerinden gitseydik `consume_show_window()` bu tick'te geçildiği için
+        // pencere bir sonraki tick'e (≤250ms) kalırdı.
+        #[cfg(not(target_os = "linux"))]
+        while let Ok(ev) = tray_channel.try_recv() {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = ev
+            {
+                window.set_visible(true);
+                window.set_focus();
+            }
         }
 
         // Tray menü olayları
