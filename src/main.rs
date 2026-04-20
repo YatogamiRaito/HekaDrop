@@ -17,6 +17,7 @@ mod connection;
 mod crypto;
 mod discovery;
 mod error;
+mod file_size_guard;
 mod frame;
 mod i18n;
 mod identity;
@@ -430,7 +431,7 @@ fn run_app() -> ! {
                     rt.spawn(initiate_send_flow());
                 }
             } else if ev.id == cancel_item_id {
-                state::request_cancel();
+                state::request_cancel_all();
                 ui::notify(
                     i18n::t("notify.app_name"),
                     i18n::t("notify.cancel_requested"),
@@ -867,7 +868,10 @@ fn open_downloads_folder() {
 fn open_config_file() {
     let path = settings::config_path();
     if !path.exists() {
-        let _ = state::get().settings.read().save();
+        // Snapshot clone + drop guard → disk I/O lock dışında. Yavaş FS'te
+        // (encrypted home, FUSE) read() guard tüm write()'ları bloklardı.
+        let snap = state::get().settings.read().clone();
+        let _ = snap.save();
     }
     platform::reveal_path(&path);
 }

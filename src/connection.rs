@@ -38,6 +38,12 @@ use tokio::net::TcpStream;
 use tracing::{info, warn};
 
 pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
+    // `TransferGuard::new()` içinde auto clear_cancel — bu bağlantıya özel
+    // child token hem taze root'a hem de scope sonunda active_transfers
+    // map'inden otomatik temizliğe (early-return yollarında bile) garanti verir.
+    let guard = state::TransferGuard::new(format!("in:{}", peer));
+    let cancel = guard.token.clone();
+
     // 1) plain ConnectionRequest
     // SECURITY: Handshake fazındaki tüm frame okumaları slow-loris DoS'a karşı
     // 30 sn timeout ile sarmalanır; aksi halde saldırgan TCP bağlantı açıp
@@ -162,36 +168,41 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     // kullanılır. Peer spec'e uymazsa `None` kalır ve legacy fallback
     // devreye girer.
     let mut peer_secret_id_hash: Option<[u8; 6]> = None;
-    state::clear_cancel();
 
     loop {
-        if state::is_cancelled() {
-            info!(
-                "[{}] kullanıcı iptal — Cancel + Disconnect gönderiliyor",
-                peer
-            );
-            let cancel = build_sharing_cancel();
-            send_sharing_frame(&mut socket, &mut ctx, &cancel)
-                .await
-                .ok();
-            send_disconnection(&mut socket, &mut ctx).await.ok();
-            cleanup_transfer_state(
-                &peer,
-                &mut assembler,
-                &mut pending_names,
-                &mut pending_texts,
-            );
-            ui::notify(
-                crate::i18n::t("notify.app_name"),
-                crate::i18n::t("notify.transfer_cancelled"),
-            );
-            break;
-        }
-
         // Steady-loop timeout: peer Quick Share spec'i gereği ~30s'de bir
         // KeepAlive gönderir. 60 sn içinde hiçbir frame gelmezse bağlantıyı
         // ölü kabul ediyoruz — idle TCP task sızıntısını önler.
-        let raw = match frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT).await {
+        //
+        // `select!` ile cancel sinyali `read_frame_timeout` tamamlanmasını
+        // beklemeden (en kötü 60 sn idle senaryosunda bile) anında algılanır.
+        // `read_frame`'in future'ı düştüğünde socket state düşer — yarı
+        // okunmuş frame bir daha kullanılmaz çünkü burada bail yolundayız.
+        let read_result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                info!(
+                    "[{}] kullanıcı iptal — Cancel + Disconnect gönderiliyor",
+                    peer
+                );
+                let cf = build_sharing_cancel();
+                send_sharing_frame(&mut socket, &mut ctx, &cf).await.ok();
+                send_disconnection(&mut socket, &mut ctx).await.ok();
+                cleanup_transfer_state(
+                    &peer,
+                    &mut assembler,
+                    &mut pending_names,
+                    &mut pending_texts,
+                );
+                ui::notify(
+                    crate::i18n::t("notify.app_name"),
+                    crate::i18n::t("notify.transfer_cancelled"),
+                );
+                break;
+            }
+            res = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT) => res,
+        };
+        let raw = match read_result {
             Ok(b) => b,
             Err(e) => {
                 warn!("[{}] bağlantı sonlandı: {:?}", peer, e);
@@ -389,7 +400,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
     Ok(())
 }
 
-/// Yarım kalan alıcı state'ini — hem yerel hem global — temizler.
+/// Yarım kalan alıcı state'ini temizler.
 ///
 /// Reject, kullanıcı Cancel, peer Disconnect, I/O hatası veya socket
 /// kopması durumlarının hepsinde güvenli biçimde çağrılır; idempotent'tir.
@@ -398,8 +409,12 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
 ///     çağrılır — yarım yazılmış dosyalar ve açık dosya kulpları temizlenir,
 ///     disk sızıntısı önlenir.
 ///   * `pending_texts` ve `pending_names` tamamen boşaltılır.
-///   * Global `cancel_flag` sıfırlanır (bir sonraki bağlantıyı etkilemesin).
 ///   * Progress durumu `Idle` yapılır (UI "alınıyor…" takılı kalmasın).
+///
+/// Not: Global cancel root'a DOKUNULMAZ (H#1). Paralel koşan diğer handler'ların
+/// child token'ları aynı root'tan türediği için burada sıfırlama, bir tarafın
+/// tamamlanması esnasında diğer tarafa gelen cancel'i kaybetmeye yol açardı.
+/// Per-transfer map temizliği `TransferGuard::drop` ile yapılır.
 fn cleanup_transfer_state(
     peer: &SocketAddr,
     assembler: &mut PayloadAssembler,
@@ -407,7 +422,6 @@ fn cleanup_transfer_state(
     pending_texts: &mut HashMap<i64, TextType>,
 ) {
     let n = drain_pending(assembler, pending_names, pending_texts);
-    state::clear_cancel();
     state::set_progress(ProgressState::Idle);
 
     if n > 0 {
@@ -518,7 +532,43 @@ async fn handle_sharing_frame(
             let mut planned_files: Vec<(i64, std::path::PathBuf, String)> = Vec::new();
             for f in &intro.file_metadata {
                 let name = f.name.clone().unwrap_or_else(|| "dosya".into());
-                let size = f.size.unwrap_or(0);
+                let raw_size = f.size.unwrap_or(0);
+                let size = match crate::file_size_guard::classify_file_size(raw_size) {
+                    crate::file_size_guard::FileSizeGuard::Accept(s) => s,
+                    crate::file_size_guard::FileSizeGuard::Clamped => {
+                        warn!(
+                            "[{}] FileMetadata.size negatif ({}) — 0'a clamp edildi (ad: {})",
+                            peer,
+                            raw_size,
+                            crate::log_redact::path_basename(std::path::Path::new(&name))
+                        );
+                        0
+                    }
+                    crate::file_size_guard::FileSizeGuard::Reject => {
+                        warn!(
+                            "[{}] FileMetadata.size MAX_FILE_BYTES sınırını aştı ({} > {}) — Introduction reddediliyor",
+                            peer,
+                            raw_size,
+                            crate::file_size_guard::MAX_FILE_BYTES
+                        );
+                        for (_pid, path, _name) in &planned_files {
+                            if let Err(e) = std::fs::remove_file(path) {
+                                if e.kind() != std::io::ErrorKind::NotFound {
+                                    tracing::debug!(
+                                        "size-guard cleanup: placeholder silinemedi {}: {}",
+                                        crate::log_redact::path_basename(path),
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        send_sharing_frame(socket, ctx, &build_sharing_cancel()).await?;
+                        bail!(
+                            "FileMetadata.size absürt büyük: {} bayt (>1 TiB limit)",
+                            raw_size
+                        );
+                    }
+                };
                 summaries.push(ui::FileSummary {
                     name: name.clone(),
                     size,

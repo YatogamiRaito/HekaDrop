@@ -66,11 +66,35 @@ jobs:
           git archive --format=tar.gz --prefix="HekaDrop-${VERSION}/" -o "$TARBALL" HEAD
           ls -la "$TARBALL"
 
+      - name: Assemble universal dSYM
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DSYM_X86="target/x86_64-apple-darwin/release/hekadrop.dSYM"
+          DSYM_ARM="target/aarch64-apple-darwin/release/hekadrop.dSYM"
+          if [ ! -d "$DSYM_X86" ] || [ ! -d "$DSYM_ARM" ]; then
+            echo "HATA: Per-arch dSYM bundle'ları bulunamadı." >&2
+            ls -la target/x86_64-apple-darwin/release/ || true
+            ls -la target/aarch64-apple-darwin/release/ || true
+            exit 1
+          fi
+          DSYM_OUT="target/HekaDrop-${VERSION}.dSYM"
+          rm -rf "$DSYM_OUT"
+          cp -R "$DSYM_ARM" "$DSYM_OUT"
+          lipo -create \
+            "$DSYM_X86/Contents/Resources/DWARF/hekadrop" \
+            "$DSYM_ARM/Contents/Resources/DWARF/hekadrop" \
+            -output "$DSYM_OUT/Contents/Resources/DWARF/hekadrop"
+          file "$DSYM_OUT/Contents/Resources/DWARF/hekadrop"
+          (cd target && zip -r "HekaDrop-${VERSION}-macos.dSYM.zip" "HekaDrop-${VERSION}.dSYM")
+          ls -la "target/HekaDrop-${VERSION}-macos.dSYM.zip"
+
       - name: Stage macOS artifacts
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release-artifacts
           cp target/HekaDrop-*.dmg release-artifacts/
           cp target/HekaDrop-*-src.tar.gz release-artifacts/
+          cp "target/HekaDrop-${VERSION}-macos.dSYM.zip" release-artifacts/
           ls -la release-artifacts/
 
       - name: Upload macOS artifacts
@@ -117,14 +141,27 @@ jobs:
           chmod +x scripts/make-deb.sh
           ./scripts/make-deb.sh
 
+      - name: Package debug symbols (DWARF)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DWP="target/release/hekadrop.dwp"
+          if [ ! -f "$DWP" ]; then
+            echo "HATA: $DWP bulunamadı — split-debuginfo ayarı üretmedi." >&2
+            ls -la target/release/ | head -50
+            exit 1
+          fi
+          OUT="target/HekaDrop-${VERSION}-linux-x86_64.dwp"
+          cp "$DWP" "$OUT"
+          xz -9 -T0 -f "$OUT"
+          ls -la "${OUT}.xz"
+
       - name: Stage Linux artifacts
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release-artifacts
-          # make-deb.sh proje köküne HekaDrop-<version>.deb kopyalıyor
           cp HekaDrop-"${VERSION}".deb release-artifacts/
-          # Raw binary — .deb istemeyenler için fallback
           cp target/release/hekadrop "release-artifacts/hekadrop-${VERSION}-linux-x86_64"
+          cp "target/HekaDrop-${VERSION}-linux-x86_64.dwp.xz" release-artifacts/
           ls -la release-artifacts/
 
       - name: Upload Linux artifacts
@@ -163,6 +200,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
           # Scoop manifest HekaDrop-$version.exe bekliyor (scoop/hekadrop.json)
           Copy-Item "target/release/hekadrop.exe" "release-artifacts/HekaDrop-$Version.exe"
+          $Pdb = "target/release/hekadrop.pdb"
+          if (-not (Test-Path $Pdb)) {
+            Write-Error "HATA: $Pdb bulunamadı — profile.release.debug ayarı PDB üretmedi."
+            Get-ChildItem target/release | Select-Object -First 40
+            exit 1
+          }
+          $PdbZip = "release-artifacts/HekaDrop-$Version-windows-x86_64.pdb.zip"
+          Compress-Archive -Path $Pdb -DestinationPath $PdbZip -CompressionLevel Optimal -Force
           Get-ChildItem release-artifacts
 
       - name: Upload Windows artifact
@@ -216,6 +261,10 @@ jobs:
           echo "── release-assets/ ──"
           ls -la
 
+      - name: Compute version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -223,3 +272,14 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+          body: |
+            ## Debug symbols (crash triage)
+
+            Platform başına ayrı "debug sidecar" artefaktları crash raporu
+            sembolizasyonu (stack trace → fonksiyon adı + satır) için ekleniyor.
+            Son kullanıcı kurulumu için gerekli değildir; sadece crash/issue
+            triage sırasında indirilir.
+
+            - `HekaDrop-${{ steps.ver.outputs.version }}-macos.dSYM.zip` — universal (x86_64 + arm64) dSYM bundle, `dsymutil`/`atos` uyumlu.
+            - `HekaDrop-${{ steps.ver.outputs.version }}-linux-x86_64.dwp.xz` — DWARF package (split-debuginfo), `gdb`/`addr2line` uyumlu.
+            - `HekaDrop-${{ steps.ver.outputs.version }}-windows-x86_64.pdb.zip` — MSVC PDB, WinDbg/Visual Studio uyumlu.

@@ -6,13 +6,14 @@
 use crate::identity::DeviceIdentity;
 use crate::settings::Settings;
 use crate::stats::Stats;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
+use tokio_util::sync::CancellationToken;
 
 const HISTORY_CAP: usize = 10;
 
@@ -64,8 +65,14 @@ pub struct AppState {
     pub progress_gen: AtomicU64,
     pub history: RwLock<VecDeque<HistoryItem>>,
     pub listen_port: RwLock<u16>,
-    /// Aktif aktarımı iptal etmek için ayarlanır. Transfer loop'ları kontrol edip temiz kapanış yapar.
-    pub cancel_flag: AtomicBool,
+    /// Broadcast iptal kökü — `request_cancel_all()` bu token'ı cancel eder ve
+    /// ondan türeyen tüm child token'lar (her per-transfer handler) tetiklenir.
+    /// Cancel'den sonra yeni child'lar için `clear_cancel()` taze bir root üretir.
+    pub cancel_root: RwLock<CancellationToken>,
+    /// Aktif transferlerin id → token eşleşmesi. UI'dan spesifik bir transfer
+    /// iptal edilmek istendiğinde (gelecekteki feature) bu haritadan bulunur.
+    /// Her handler başlarken kendini kaydeder, biterken kaldırır.
+    pub active_transfers: Mutex<HashMap<String, CancellationToken>>,
     /// IPC thread'inden pencereyi gizlemek için event loop'a istek.
     pub hide_window_flag: AtomicBool,
     /// IPC thread'inden pencereyi göstermek için event loop'a istek.
@@ -135,7 +142,8 @@ pub fn init(settings: Settings) {
         progress_gen: AtomicU64::new(0),
         history: RwLock::new(VecDeque::with_capacity(HISTORY_CAP)),
         listen_port: RwLock::new(0),
-        cancel_flag: AtomicBool::new(false),
+        cancel_root: RwLock::new(CancellationToken::new()),
+        active_transfers: Mutex::new(HashMap::new()),
         hide_window_flag: AtomicBool::new(false),
         show_window_flag: AtomicBool::new(false),
         pending_js: RwLock::new(Vec::new()),
@@ -172,19 +180,95 @@ pub fn consume_show_window() -> bool {
     get().show_window_flag.swap(false, Ordering::SeqCst)
 }
 
-/// UI'dan aktif transferin iptali istenir. Transfer loop'u görür ve temiz kapanır.
-pub fn request_cancel() {
-    get().cancel_flag.store(true, Ordering::SeqCst);
+/// Yeni bir inbound/outbound transfer handler'ı çağırmadan önce bu fonksiyonu
+/// kullanarak root'tan türeyen bir child token alır. Broadcast cancel
+/// (`request_cancel_all`) hem root'u hem tüm child'ları tetikler.
+pub fn new_child_token() -> CancellationToken {
+    get().cancel_root.read().child_token()
 }
 
-/// Transfer loop'u iptal bayrağını okur; true dönerse kullanıcı iptal istemiş demektir.
-pub fn is_cancelled() -> bool {
-    get().cancel_flag.load(Ordering::SeqCst)
+/// Transferi id ile kaydeder. Aynı id daha önce kayıtlıysa üzerine yazılır —
+/// bu senaryo pratikte olmamalı (her handler unique id üretir), ama idempotent
+/// davranış test edilebilirlik için tercih edildi.
+pub fn register_transfer(id: impl Into<String>, token: CancellationToken) {
+    get().active_transfers.lock().insert(id.into(), token);
 }
 
-/// İptal bayrağını temizler — yeni bir transfer başladığında sıfırlanmalıdır.
+pub fn unregister_transfer(id: &str) {
+    get().active_transfers.lock().remove(id);
+}
+
+/// RAII: scope sonunda `unregister_transfer` çağırır. Early-return / `?`
+/// yollarında da temizlik garantili.
+pub struct TransferGuard {
+    id: String,
+    pub token: CancellationToken,
+}
+
+impl TransferGuard {
+    /// Yeni bir transfer guard'ı kurar. Eğer önceki broadcast cancel sonrası
+    /// root hâlâ cancelled durumdaysa önce `clear_cancel()` ile taze root'a
+    /// geçer — aksi halde bu yeni transfer doğar doğmaz cancelled olur
+    /// (footgun: eski tasarımda callsite'lar elle `clear_cancel()` çağırmak
+    /// zorundaydı). RAII kapsülü olarak bu çağrıyı tek noktaya topluyoruz.
+    pub fn new(id: impl Into<String>) -> Self {
+        let id = id.into();
+        clear_cancel();
+        let token = new_child_token();
+        register_transfer(id.clone(), token.clone());
+        Self { id, token }
+    }
+}
+
+impl Drop for TransferGuard {
+    fn drop(&mut self) {
+        unregister_transfer(&self.id);
+    }
+}
+
+/// UI'dan iptal isteği. `id == None` → root cancel (tüm aktif transferler).
+/// `id == Some(...)` → yalnız o transfer'e ait child token cancel; diğerleri
+/// etkilenmez. Bilinmeyen id sessizce yutulur (race: transfer bitmiş olabilir).
+pub fn request_cancel(id: Option<&str>) {
+    let st = get();
+    match id {
+        None => {
+            st.cancel_root.read().cancel();
+        }
+        Some(id) => {
+            if let Some(tok) = st.active_transfers.lock().get(id).cloned() {
+                tok.cancel();
+            }
+        }
+    }
+}
+
+/// Legacy kompat: tray menüsündeki "İptal" "hepsini iptal et" anlamındaydı.
+pub fn request_cancel_all() {
+    request_cancel(None);
+}
+
+/// Root token cancel'lenmişse taze bir root üretir. Cancel edilmemişse no-op.
+///
+/// Bir kez cancel edildikten sonra `CancellationToken` kalıcıdır — tekrar
+/// kullanılamaz. `cleanup_transfer_state()` buradan BİLEREK kaçınır: in-flight
+/// diğer transferlerin tokenı canlı kalmalı. Yalnızca tüm broadcast cancel
+/// tamamlandıktan sonra (örn. kullanıcı yeni bir gönderim başlattığında) yeni
+/// root'a geçmek güvenlidir.
 pub fn clear_cancel() {
-    get().cancel_flag.store(false, Ordering::SeqCst);
+    let st = get();
+    // Fast path: ortak durum (root temiz) yalnızca read-lock alır. Yalnızca
+    // gerçekten cancelled ise write-lock'a upgrade ediyoruz — her transfer
+    // başında gereksiz exclusive lock contention'ını engeller.
+    if !st.cancel_root.read().is_cancelled() {
+        return;
+    }
+    let mut guard = st.cancel_root.write();
+    // Write-lock beklerken başka bir thread zaten yeni root yazmış olabilir:
+    // tekrar kontrol et.
+    if guard.is_cancelled() {
+        *guard = CancellationToken::new();
+    }
 }
 
 pub fn set_listen_port(p: u16) {
