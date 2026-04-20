@@ -32,8 +32,9 @@ pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
     // deneyip başarısız olursa transfer düşer.
     //
     // İki filtre katmanı: (1) OS-seviyeli point-to-point flag (if-addrs 0.15+
-    // `is_p2p`; Windows/macOS/Linux'ta tutarlı olmayan tunel bayrağı), (2) isim
-    // prefix whitelisti — p2p flag yakalamadığı VPN / köprü arayüzleri için.
+    // `is_p2p()`; Windows/macOS/Linux'ta tutarlı olmayan tunel bayrağı),
+    // (2) aşağıdaki `skip_prefix` — p2p flag yakalamadığı VPN / köprü / container
+    // arayüzleri için isim-prefix denylist'i.
     // Defensive: ikisi belt-and-suspenders; biri kaçırırsa diğeri yakalar.
     let skip_prefix = [
         "docker",

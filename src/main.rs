@@ -358,6 +358,8 @@ fn run_app() -> ! {
     push_i18n_to_ui();
 
     let menu_channel = MenuEvent::receiver();
+    #[cfg(not(target_os = "linux"))]
+    let tray_channel = TrayIconEvent::receiver();
     let open_downloads_id = open_downloads.id().clone();
     let open_config_id = open_config.id().clone();
     let about_item_id = about_item.id().clone();
@@ -427,15 +429,19 @@ fn run_app() -> ! {
 
         // Tray ikonunun kendisine tıklama (macOS/Windows): sol tık → pencere aç.
         // Sağ tık menüyü tray-icon tarafından otomatik açılır.
+        // Doğrudan `window.set_visible/set_focus` kullanıyoruz; state flag
+        // üzerinden gitseydik `consume_show_window()` bu tick'te geçildiği için
+        // pencere bir sonraki tick'e (≤250ms) kalırdı.
         #[cfg(not(target_os = "linux"))]
-        while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+        while let Ok(ev) = tray_channel.try_recv() {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
             } = ev
             {
-                state::request_show_window();
+                window.set_visible(true);
+                window.set_focus();
             }
         }
 
