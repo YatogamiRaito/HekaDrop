@@ -56,8 +56,8 @@ notify-rust = "4"
 # SHGetKnownFolderPath, GetComputerNameExW gibi native operasyonlar için
 # external process spawn etmekten daha hızlı ve doğru.
 # Versiyon wry/webview2-com ile uyumlu olsun (iki farklı windows-core sürümü
-# trait implementasyonlarında çakışıyor); wry 0.55 şu anda 0.62 kullanıyor.
-windows = { version = "0.62", features = [
+# trait implementasyonlarında çakışıyor); wry 0.55 şu anda 0.61 kullanıyor.
+windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
