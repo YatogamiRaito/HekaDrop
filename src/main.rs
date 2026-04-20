@@ -801,7 +801,10 @@ fn open_downloads_folder() {
 fn open_config_file() {
     let path = settings::config_path();
     if !path.exists() {
-        let _ = state::get().settings.read().save();
+        // Snapshot clone + drop guard → disk I/O lock dışında. Yavaş FS'te
+        // (encrypted home, FUSE) read() guard tüm write()'ları bloklardı.
+        let snap = state::get().settings.read().clone();
+        let _ = snap.save();
     }
     platform::reveal_path(&path);
 }
