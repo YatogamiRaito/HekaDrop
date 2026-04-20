@@ -302,7 +302,11 @@ pub async fn send(req: SendRequest) -> Result<()> {
                                 for plan in &plans {
                                     s.record_sent(&peer_label, plan.size.max(0) as u64);
                                 }
-                                if keep { Some(s.clone()) } else { None }
+                                if keep {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
                             };
                             if let Some(snap) = snap_opt {
                                 let _ = snap.save();

@@ -324,7 +324,11 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 let snap_opt = {
                                     let mut s = st.stats.write();
                                     s.record_received(&remote_name_shared, total_size as u64);
-                                    if keep { Some(s.clone()) } else { None }
+                                    if keep {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
                                 };
                                 if let Some(snap) = snap_opt {
                                     let _ = snap.save();
