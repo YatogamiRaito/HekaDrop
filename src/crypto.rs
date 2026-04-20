@@ -152,6 +152,38 @@ mod tests {
         assert_eq!(pin_code_from_auth_key(&k4), "0000");
     }
 
+    /// Known-answer golden vector: 32-baytlık sabit bir `auth_key` → sabit 4-haneli PIN.
+    ///
+    /// Amaç: gelecekte HKDF info string'i, `MOD=9973`, `mult*=31` çarpanı, `rem_euclid`
+    /// ya da signed-byte yorumlaması **sessizce** değişirse bu testin kırılmasıyla fark edilsin.
+    /// Mutation testing survivor'larını da kapatır (operatör flip, sabit değişikliği,
+    /// signedness kaybı).
+    ///
+    /// Kaynak: NearDrop referans algoritmasının Python'a birebir port'u ile bağımsız
+    /// olarak türetildi (vektörü değiştirmek = algoritmayı değiştirmek).
+    ///   https://github.com/grishka/NearDrop (PIN türetme Android paketinde benzer akış)
+    ///
+    /// **Bu vektör bir kez kaydedildi — gelecekte değişirse HKDF/algoritma değişti demek,
+    /// incele.** Değişiklik kasıtlıysa yeni beklenen PIN'i güncelle ve CHANGELOG'a düş.
+    #[test]
+    fn pin_code_known_vector_golden() {
+        // Hex "auth_key" — 32 bayt, NearDrop test fixture stilinde sabit değer
+        let auth_key =
+            hex::decode("deadbeefcafef00d0123456789abcdef00112233445566778899aabbccddeeff")
+                .expect("hex geçerli");
+        assert_eq!(auth_key.len(), 32);
+        // Python referansı:
+        //   key = bytes.fromhex("deadbeef...ddeeff")
+        //   h, m, MOD = 0, 1, 9973
+        //   for b in key:
+        //       s = b if b < 128 else b - 256
+        //       h = (h + s*m) % MOD
+        //       m = (m * 31) % MOD
+        //   f"{abs(h):04d}"  →  "2544"
+        let expected_pin = "2544";
+        assert_eq!(pin_code_from_auth_key(&auth_key), expected_pin);
+    }
+
     #[test]
     fn test_aes_cbc_roundtrip() {
         let key = [0u8; 32];
