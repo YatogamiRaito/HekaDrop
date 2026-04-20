@@ -289,17 +289,28 @@ pub async fn send(req: SendRequest) -> Result<()> {
                         };
                         // Stats'i progress güncellemesinden ÖNCE yaz — böylece UI
                         // Completed'ı gördüğünde istatistikler zaten tutarlı olur.
+                        //
+                        // H#4 privacy: `keep_stats=false` iken disk yazımı atlanır;
+                        // RAM state (UI Tanı paneli) güncellenmeye devam eder.
                         {
                             // Save'i lock dışında çalıştır — yavaş diskte UI dondurmasın.
+                            // `keep_stats=false` iken snapshot clone da yapılmaz.
                             let st = state::get();
-                            let snap = {
+                            let keep = st.settings.read().keep_stats;
+                            let snap_opt = {
                                 let mut s = st.stats.write();
                                 for plan in &plans {
                                     s.record_sent(&peer_label, plan.size.max(0) as u64);
                                 }
-                                s.clone()
+                                if keep {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
                             };
-                            let _ = snap.save();
+                            if let Some(snap) = snap_opt {
+                                let _ = snap.save();
+                            }
                         }
                         // Bug #31: Completed gösteriminden sonra birkaç saniye içinde
                         // otomatik Idle'a dönsün — kullanıcı pencereyi sonra açtığında

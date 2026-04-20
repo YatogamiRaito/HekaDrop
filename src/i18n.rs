@@ -254,6 +254,25 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "webview.trusted.ttl_label" => "Son kullanım: {0} gün önce",
         "webview.trusted.ttl_expired" => "Süre doldu — yeniden onay gerekiyor",
 
+        // Webview — privacy panel (H#4)
+        "webview.privacy.title" => "Gizlilik",
+        "webview.privacy.advertise.label" => "LAN'da görünür ol (mDNS yayını)",
+        "webview.privacy.advertise.desc" => "Kapatınca cihaz Android \"Quick Share\" listesinde çıkmaz; sen yine gönderebilirsin.",
+        "webview.privacy.log_level.label" => "Log seviyesi",
+        "webview.privacy.log_level.desc" => "Warn+: sadece uyarı/hata kaydedilir. RUST_LOG env'i set ise o öncelikli.",
+        "webview.privacy.log_level.error" => "Error (sadece hata)",
+        "webview.privacy.log_level.warn" => "Warn (uyarı + hata)",
+        "webview.privacy.log_level.info" => "Info (varsayılan)",
+        "webview.privacy.log_level.debug" => "Debug (geliştirici)",
+        "webview.privacy.keep_stats.label" => "Aktarım istatistiklerini kaydet",
+        "webview.privacy.keep_stats.desc" => "Kapatınca yeni aktarımlar diske yazılmaz; mevcut stats.json silinmez.",
+        "webview.privacy.update_check.label" => "Güncellemeleri otomatik kontrol et",
+        "webview.privacy.update_check.desc" => "Kapalıysa GitHub API'ye istek atılmaz. HEKADROP_NO_UPDATE_CHECK env'i de aynı etki.",
+        "webview.privacy.restart_notice" => "Değişiklik için uygulamayı yeniden başlat.",
+        "webview.badge.on" => "Açık",
+        "webview.badge.off" => "Kapalı",
+        "dialog.update.disabled" => "Güncelleme kontrolü kapatılmış (Ayarlar → Gizlilik).",
+
         // Webview — diagnostics panel
         "webview.diag.section.app" => "Uygulama",
         "webview.diag.version" => "Sürüm",
@@ -400,6 +419,25 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "webview.settings.trust_ttl_days" => "Trust TTL (days)",
         "webview.trusted.ttl_label" => "Last used: {0} days ago",
         "webview.trusted.ttl_expired" => "Expired — re-approval required",
+
+        // Webview — privacy panel (H#4)
+        "webview.privacy.title" => "Privacy",
+        "webview.privacy.advertise.label" => "Advertise on LAN (mDNS)",
+        "webview.privacy.advertise.desc" => "When off, this device is hidden from Android's Quick Share list; you can still send.",
+        "webview.privacy.log_level.label" => "Log level",
+        "webview.privacy.log_level.desc" => "Warn+ only records warnings/errors. RUST_LOG env var takes precedence if set.",
+        "webview.privacy.log_level.error" => "Error (errors only)",
+        "webview.privacy.log_level.warn" => "Warn (warnings + errors)",
+        "webview.privacy.log_level.info" => "Info (default)",
+        "webview.privacy.log_level.debug" => "Debug (developer)",
+        "webview.privacy.keep_stats.label" => "Record transfer statistics",
+        "webview.privacy.keep_stats.desc" => "When off, new transfers are not written to disk; existing stats.json is kept.",
+        "webview.privacy.update_check.label" => "Check for updates automatically",
+        "webview.privacy.update_check.desc" => "When off, no request is sent to GitHub. HEKADROP_NO_UPDATE_CHECK env var has the same effect.",
+        "webview.privacy.restart_notice" => "Restart the app for changes to take effect.",
+        "webview.badge.on" => "On",
+        "webview.badge.off" => "Off",
+        "dialog.update.disabled" => "Update check is disabled (Settings → Privacy).",
 
         // Webview — diagnostics panel
         "webview.diag.section.app" => "Application",

@@ -109,7 +109,17 @@ async fn async_main() -> Result<()> {
     state::set_listen_port(port);
     info!("TCP dinleniyor: 0.0.0.0:{}", port);
 
-    let _mdns_handle = mdns::advertise(&device_name, port)?;
+    // H#4 privacy control: advertise=false iken LAN'da görünmez ("receive-only"
+    // mod). Kullanıcı hâlâ `sender` flow'u ile dosya gönderebilir ama mDNS
+    // yayını yapılmadığından Android tarafı bu cihazı listede göstermez.
+    // Değişiklik restart gerektirir — mDNS daemon hot-swap henüz yok.
+    let advertise_enabled = state::get().settings.read().advertise;
+    let _mdns_handle = if advertise_enabled {
+        mdns::advertise(&device_name, port)?
+    } else {
+        info!("mDNS advertise devre dışı (Settings.advertise=false) — receive-only mod");
+        None
+    };
 
     tokio::select! {
         res = server::accept_loop(listener) => {
@@ -126,9 +136,14 @@ async fn async_main() -> Result<()> {
 }
 
 fn main() {
-    setup_logging();
+    // H#4 privacy control: log level Settings'ten okunur. `RUST_LOG` env var
+    // varsa o öncelikli (geliştirici kaçış vanası). Settings'i logger'dan
+    // ÖNCE yüklememiz lazım → state::init'ten önce lokal load yapıp iki
+    // kere okumamak için aynı instance'ı state'e taşıyoruz.
+    let settings = settings::Settings::load();
+    setup_logging(settings.log_level);
 
-    state::init(settings::Settings::load());
+    state::init(settings);
 
     std::thread::Builder::new()
         .name("hekadrop-async".into())
@@ -156,12 +171,16 @@ fn main() {
 ///   - Maksimum 3 gün tutulur (`max_log_files(3)`)
 ///   - Başlangıçta 10 MB'ı aşan günlük dosya truncate edilir
 ///   - Eski (>3 gün) dosyalar mekanik olarak silinir
-fn setup_logging() {
+///
+/// `log_level` Settings'ten gelir (H#4 privacy control). `RUST_LOG` env var
+/// set ise o öncelikli — geliştirici kaçış vanası; aksi halde verilen
+/// LogLevel `hekadrop=<seviye>` direktifine dönüşür.
+fn setup_logging(log_level: settings::LogLevel) {
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("hekadrop=info"));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(log_level.filter_directive()));
 
     let log_dir = platform::logs_dir();
     let _ = std::fs::create_dir_all(&log_dir);
@@ -550,11 +569,25 @@ fn handle_ipc(cmd: &str) {
 }
 
 fn handle_settings_save(json: &str) {
+    // H#4: JSON payload'ına 4 yeni privacy alanı eklendi. Privacy alanları
+    // Option ile tanımlı — UI eski sürümse ya da alanı göndermezse mevcut
+    // değer korunur (partial update); None → no-op, Some(v) → yaz.
+    // `auto_accept` geriye dönük uyumluluk için zorunlu `bool` kalmıştır.
+    // `log_level` UI'dan serbest string olarak gelir, `parse_or_default`
+    // ile güvenli parse edilir (bilinmeyen input Info'ya düşer, reject yok).
     #[derive(serde::Deserialize, Debug)]
     struct Incoming {
         device_name: Option<String>,
         download_dir: Option<String>,
         auto_accept: bool,
+        #[serde(default)]
+        advertise: Option<bool>,
+        #[serde(default)]
+        log_level: Option<String>,
+        #[serde(default)]
+        keep_stats: Option<bool>,
+        #[serde(default)]
+        disable_update_check: Option<bool>,
     }
     let parsed: Incoming = match serde_json::from_str(json) {
         Ok(v) => v,
@@ -570,6 +603,18 @@ fn handle_settings_save(json: &str) {
             s.device_name = parsed.device_name.filter(|x| !x.is_empty());
             s.download_dir = parsed.download_dir.map(std::path::PathBuf::from);
             s.auto_accept = parsed.auto_accept;
+            if let Some(v) = parsed.advertise {
+                s.advertise = v;
+            }
+            if let Some(ref raw) = parsed.log_level {
+                s.log_level = settings::LogLevel::parse_or_default(raw);
+            }
+            if let Some(v) = parsed.keep_stats {
+                s.keep_stats = v;
+            }
+            if let Some(v) = parsed.disable_update_check {
+                s.disable_update_check = v;
+            }
             s.clone()
         };
         let _ = snap.save();
@@ -620,6 +665,21 @@ fn push_i18n_to_ui() {
         "webview.settings.trust_ttl_days",
         "webview.trusted.ttl_label",
         "webview.trusted.ttl_expired",
+        // H#4 privacy section
+        "webview.privacy.title",
+        "webview.privacy.advertise.label",
+        "webview.privacy.advertise.desc",
+        "webview.privacy.log_level.label",
+        "webview.privacy.log_level.desc",
+        "webview.privacy.log_level.error",
+        "webview.privacy.log_level.warn",
+        "webview.privacy.log_level.info",
+        "webview.privacy.log_level.debug",
+        "webview.privacy.keep_stats.label",
+        "webview.privacy.keep_stats.desc",
+        "webview.privacy.update_check.label",
+        "webview.privacy.update_check.desc",
+        "webview.privacy.restart_notice",
         "webview.diag.section.app",
         "webview.diag.version",
         "webview.diag.device",
@@ -665,10 +725,17 @@ fn push_settings_to_ui() {
     let s = st.settings.read();
     let resolved_name = s.resolved_device_name();
     let resolved_dl = s.resolved_download_dir().to_string_lossy().to_string();
+    // H#4: 4 yeni privacy alanı JS'ye push edilir; UI Settings sekmesinde
+    // checkbox/select olarak render. `log_level` lowercase string, option
+    // karşılaştırması JS tarafında direkt bu değerle yapılır.
     let payload = serde_json::json!({
         "device_name": s.device_name.clone().unwrap_or(resolved_name),
         "download_dir": s.download_dir.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or(resolved_dl),
         "auto_accept": s.auto_accept,
+        "advertise": s.advertise,
+        "log_level": s.log_level.as_str(),
+        "keep_stats": s.keep_stats,
+        "disable_update_check": s.disable_update_check,
     });
     drop(s);
     let js = format!("window.applySettings && window.applySettings({})", payload);
@@ -970,6 +1037,24 @@ fn show_history() {
 }
 
 async fn check_update_async() {
+    // H#4 privacy control: iki opt-out yolu OR'lanır.
+    //   - `HEKADROP_NO_UPDATE_CHECK` env var (CI / dev / deterministic test)
+    //   - `Settings.disable_update_check` (UI toggle)
+    // Her ikisi de "skip" anlamına gelir; kullanıcıya şeffaf bilgi ver.
+    let env_off = std::env::var_os("HEKADROP_NO_UPDATE_CHECK").is_some();
+    let setting_off = state::get().settings.read().disable_update_check;
+    if env_off || setting_off {
+        info!(
+            "update_check skipped (env={}, setting={})",
+            env_off, setting_off
+        );
+        ui::show_info(
+            i18n::t("notify.app_name"),
+            i18n::t("dialog.update.disabled"),
+        );
+        return;
+    }
+
     let current = env!("CARGO_PKG_VERSION");
     let fetched = tokio::task::spawn_blocking(|| -> Option<(String, String)> {
         let out = std::process::Command::new("curl")

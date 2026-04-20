@@ -4,15 +4,18 @@
 //! Binary `src/main.rs` bu lib'e bağımlı değildir; modül ağacı ikisinde de
 //! bağımsızca derlenir (Cargo lib+bin hibrit projeyi bu şekilde ele alır).
 //! Buradaki amaç `benches/crypto.rs` ve `tests/*.rs` gibi harici consumer'lara
-//! dar bir yüzey (crypto + UKEY2 downgrade validator) açmaktır.
+//! dar bir yüzey (crypto + file_size_guard + UKEY2 downgrade validator
+//! + H#4 privacy controls için settings) açmaktır.
 
-// Lib crate yalnız dar bir yüzey re-export eder; modüllerin geri kalan öğeleri
-// `bin` tarafında kullanılıyor. Lib-only build'de onlar için dead_code uyarısı
-// çıkar — crate seviyesinde sustur.
 #![allow(dead_code)]
 
 pub mod crypto;
 pub mod file_size_guard;
+
+pub mod config;
+pub mod log_redact;
+pub mod platform;
+pub mod settings;
 
 mod error;
 mod frame;

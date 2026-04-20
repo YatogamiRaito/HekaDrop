@@ -605,6 +605,37 @@
     font-weight: normal;
   }
 
+  /* H#4 Privacy section — visually grouped within Settings panel. */
+  .privacy-section {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-top: 6px;
+  }
+  .privacy-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-secondary);
+    margin: 0 0 6px 0;
+    font-weight: 600;
+  }
+  .privacy-restart-notice {
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    margin: 0 0 10px 0;
+    font-style: italic;
+  }
+  .privacy-section select {
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--bg-primary);
+    color: var(--fg-primary);
+    border: 1px solid var(--border-input);
+    border-radius: 6px;
+    font: inherit;
+  }
+
   /* Focus management: hide ring for pointer users, show for keyboard.
      Ring uses --focus-ring (= --accent) — contrast verified in :root
      token blocks; exceeds WCAG 1.4.11 UI-component 3:1 both modes. */
@@ -794,6 +825,59 @@
         </button>
       </div>
 
+      <!-- H#4 Privacy controls — advertise / log_level / keep_stats / disable_update_check -->
+      <div class="field privacy-section" role="group" aria-labelledby="privacy-title">
+        <h3 id="privacy-title" class="privacy-title" data-i18n="webview.privacy.title">Gizlilik</h3>
+        <p class="privacy-restart-notice" data-i18n="webview.privacy.restart_notice">Değişiklik için uygulamayı yeniden başlat.</p>
+
+        <label class="toggle" id="set-advertise-wrap" for="set-advertise">
+          <span class="toggle-main">
+            <span data-i18n="webview.privacy.advertise.label">LAN'da görünür ol (mDNS yayını)</span>
+            <span class="toggle-desc" data-i18n="webview.privacy.advertise.desc">Kapatınca cihaz Android "Quick Share" listesinde çıkmaz; sen yine gönderebilirsin.</span>
+          </span>
+          <span class="toggle-control">
+            <span class="toggle-badge" id="set-advertise-badge" aria-hidden="true">Açık</span>
+            <input type="checkbox" id="set-advertise" role="switch" class="sr-only">
+            <span class="switch" aria-hidden="true"></span>
+          </span>
+        </label>
+
+        <div class="field" style="margin-top:10px">
+          <label for="set-log-level" data-i18n="webview.privacy.log_level.label">Log seviyesi</label>
+          <select id="set-log-level" autocomplete="off">
+            <option value="error" data-i18n="webview.privacy.log_level.error">Error (sadece hata)</option>
+            <option value="warn" data-i18n="webview.privacy.log_level.warn">Warn (uyarı + hata)</option>
+            <option value="info" data-i18n="webview.privacy.log_level.info">Info (varsayılan)</option>
+            <option value="debug" data-i18n="webview.privacy.log_level.debug">Debug (geliştirici)</option>
+          </select>
+          <span class="toggle-desc" data-i18n="webview.privacy.log_level.desc">Warn+: sadece uyarı/hata kaydedilir. RUST_LOG env'i set ise o öncelikli.</span>
+        </div>
+
+        <label class="toggle" id="set-keep-stats-wrap" for="set-keep-stats" style="margin-top:10px">
+          <span class="toggle-main">
+            <span data-i18n="webview.privacy.keep_stats.label">Aktarım istatistiklerini kaydet</span>
+            <span class="toggle-desc" data-i18n="webview.privacy.keep_stats.desc">Kapatınca yeni aktarımlar diske yazılmaz; mevcut stats.json silinmez.</span>
+          </span>
+          <span class="toggle-control">
+            <span class="toggle-badge" id="set-keep-stats-badge" aria-hidden="true">Açık</span>
+            <input type="checkbox" id="set-keep-stats" role="switch" class="sr-only">
+            <span class="switch" aria-hidden="true"></span>
+          </span>
+        </label>
+
+        <label class="toggle" id="set-update-check-wrap" for="set-update-check" style="margin-top:10px">
+          <span class="toggle-main">
+            <span data-i18n="webview.privacy.update_check.label">Güncellemeleri otomatik kontrol et</span>
+            <span class="toggle-desc" data-i18n="webview.privacy.update_check.desc">Kapalıysa GitHub API'ye istek atılmaz. HEKADROP_NO_UPDATE_CHECK env'i de aynı etki.</span>
+          </span>
+          <span class="toggle-control">
+            <span class="toggle-badge" id="set-update-check-badge" aria-hidden="true">Açık</span>
+            <input type="checkbox" id="set-update-check" role="switch" class="sr-only">
+            <span class="switch" aria-hidden="true"></span>
+          </span>
+        </label>
+      </div>
+
       <button type="button" class="primary" onclick="saveSettings()" data-i18n="webview.settings.save">Kaydet</button>
       <div class="save-note" id="save-note" role="status"
            aria-live="polite" aria-atomic="true" data-i18n="webview.settings.saved">✓ Kaydedildi</div>
@@ -945,16 +1029,47 @@
     function syncAutoState() {
       const on = autoCheckbox.checked;
       autoWrap.classList.toggle('on', on);
-      autoBadge.textContent = on ? 'Açık' : 'Kapalı';
+      autoBadge.textContent = on ? t('webview.badge.on') : t('webview.badge.off');
     }
     autoCheckbox.addEventListener('change', syncAutoState);
     syncAutoState();
 
+    // ---- H#4 Privacy toggles — pattern mirrors auto-accept ----
+    // Her toggle bir checkbox + badge + .on sınıfı; badge metni hard-coded
+    // Badge text i18n üzerinden (`webview.badge.on/off`). Key yoksa
+    // `t()` `?key?` döndürür — dev fark eder, HTML'deki TR fallback
+    // görünür kalır.
+    function wirePrivacyToggle(id) {
+      const cb = document.getElementById('set-' + id);
+      const wrap = document.getElementById('set-' + id + '-wrap');
+      const badge = document.getElementById('set-' + id + '-badge');
+      if (!cb || !wrap || !badge) return { cb: null, sync: () => {} };
+      function sync() {
+        const on = cb.checked;
+        wrap.classList.toggle('on', on);
+        badge.textContent = on ? t('webview.badge.on') : t('webview.badge.off');
+      }
+      cb.addEventListener('change', sync);
+      sync();
+      return { cb, sync };
+    }
+    const advertiseT = wirePrivacyToggle('advertise');
+    const keepStatsT = wirePrivacyToggle('keep-stats');
+    const updateCheckT = wirePrivacyToggle('update-check');
+    const logLevelSelect = document.getElementById('set-log-level');
+
     function saveSettings() {
+      // H#4: privacy alanları payload'a eklenir. `disable_update_check`
+      // UI'da "güncellemeleri kontrol et" olarak pozitif ifade edilir —
+      // burada NOT alınır (UI açık = setting false = disable yok).
       const payload = {
         device_name: document.getElementById('set-device').value.trim() || null,
         download_dir: document.getElementById('set-downloads').value.trim() || null,
         auto_accept: autoCheckbox.checked,
+        advertise: advertiseT.cb ? advertiseT.cb.checked : true,
+        log_level: logLevelSelect ? logLevelSelect.value : 'info',
+        keep_stats: keepStatsT.cb ? keepStatsT.cb.checked : true,
+        disable_update_check: updateCheckT.cb ? !updateCheckT.cb.checked : false,
       };
       act('settings_save::' + JSON.stringify(payload));
     }
@@ -975,6 +1090,23 @@
       document.getElementById('set-downloads').value = cfg.download_dir || '';
       autoCheckbox.checked = !!cfg.auto_accept;
       syncAutoState();
+      // H#4 privacy — cfg'de alan yoksa default güvenli (undefined → true/false).
+      if (advertiseT.cb) {
+        advertiseT.cb.checked = cfg.advertise !== false; // default true
+        advertiseT.sync();
+      }
+      if (keepStatsT.cb) {
+        keepStatsT.cb.checked = cfg.keep_stats !== false; // default true
+        keepStatsT.sync();
+      }
+      if (updateCheckT.cb) {
+        // UI pozitif: "güncellemeleri kontrol et" = NOT disable_update_check.
+        updateCheckT.cb.checked = !cfg.disable_update_check;
+        updateCheckT.sync();
+      }
+      if (logLevelSelect && cfg.log_level) {
+        logLevelSelect.value = String(cfg.log_level);
+      }
     };
 
     window.showSaved = function() {
