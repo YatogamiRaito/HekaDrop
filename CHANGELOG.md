@@ -5,7 +5,60 @@ All notable changes to HekaDrop will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-04-20
+
+**"Prime time" release — Homebrew tap public yayın sürümü.**
+
+HekaDrop v0.6.0, 6 ay süren geliştirme döngüsünün kilometre taşı: Issue #17
+kripto kimlik sertleştirmesi, WCAG 2.1 AA webview, per-platform release
+workflow ve pre-release research programının (6 paralel ajan, 58 bulgu)
+akan 5 High + 1 Medium düzeltmesinin hepsi bu sürümde. CVE/GHSA advisory'si
+release notes'a ek olarak yayınlanır.
+
+### Security (research v2 — 5 High + 1 Medium)
+- **[HIGH] Per-transfer CancellationToken** (PR #37). Global
+  `STATE.cancel_flag: AtomicBool` kaldırıldı; `tokio_util::sync::CancellationToken`
+  hiyerarşisi: `cancel_root` + `active_transfers` HashMap + `TransferGuard`
+  RAII. İki paralel receiver/sender semantiği artık doğru: birinin cancel'ı
+  diğerine sızmaz; `cleanup_transfer_state` root'u sıfırlamıyor.
+  `tokio::select!` ile cancel sinyali `read_frame_timeout` await'ini
+  kesiyor (60 sn steady timeout'a kadar bekleme yok). `TransferGuard::new`
+  içinde otomatik `clear_cancel` — footgun kapandı.
+- **[HIGH] `save()` snapshot pattern** (PR #39). `Settings` ve `Stats`
+  `save()` çağrıları artık write-lock dışında çalışıyor: `snap = {let g =
+  write(); ...mutate...; g.clone()}; drop(g); snap.save()`. Yavaş FS
+  (encrypted home, FUSE) altında UI tick donmaz.
+- **[HIGH] Release debug symbols** (PR #38). Per-platform `dSYM`/`PDB`/
+  `dwp` artifact'leri GH Release'e ayrı dosya olarak yükleniyor —
+  `HekaDrop-<ver>-macos.dSYM.zip`, `-linux-x86_64.dwp.xz`,
+  `-windows-x86_64.pdb.zip`. `Cargo.toml` `[profile.release]`
+  `debug = "full"` + `split-debuginfo = "packed"` + `strip = true`.
+  Crash symbolication triage'ı mümkün.
+- **[HIGH] Privacy controls UI** (PR #42). 4 yeni Settings alanı:
+  - `advertise: bool` (default true) — mDNS LAN visibility.
+    `false` → receive-only mod (Android tarafı cihazı listede göstermez).
+  - `log_level: LogLevel` (error/warn/info/debug, default info) — tracing
+    filter. `RUST_LOG` env var override.
+  - `keep_stats: bool` (default true) — `Stats::save()` guard.
+    `false` iken yeni yazım + snapshot clone atlanır; mevcut `stats.json`
+    silinmez.
+  - `disable_update_check: bool` (default false) — GitHub release poll
+    kapat. `HEKADROP_NO_UPDATE_CHECK` env var OR setting.
+  Tüm yeni alanlar `#[serde(default)]` → eski config.json otomatik
+  migrate.
+- **[HIGH] Known-vector crypto + UKEY2 downgrade regression tests**
+  (PR #41). `pin_code_from_auth_key` için donmuş golden vektör —
+  HKDF/label değişikliğinde test kırılır. `tests/ukey2_downgrade.rs`:
+  gerçek wire-bytes encode → decode → `validate_server_init` pipeline'ı
+  üzerinden 9 senaryo (happy path + cipher downgrade + version downgrade
+  + malformed message_type). `src/lib.rs` `validate_server_init` ve
+  `securegcm::*` tipleri integration testten erişilebilir şekilde
+  expose edildi.
+- **[MED] `FileMetadata.size` guard** (PR #40, defense-in-depth).
+  Negatif `size` → 0'a clamp + warn log; `MAX_FILE_BYTES` (1 TiB) üstü
+  → `Cancel` + `bail!`. `src/file_size_guard.rs` yeni modül +
+  `classify_file_size` pure helper + 7 unit + 4 integration test.
+  UI "-5 GB" cosmetic bug + absürt allocation overflow savunması.
 
 ### Security (v0.6 hotfix #2 — PR #35 review aftermath)
 - **[HIGH] Legacy spoofing vektörü kapatıldı** (`connection.rs` —
