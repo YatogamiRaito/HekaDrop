@@ -58,14 +58,13 @@ doğrudan — bulut yok, hesap yok, tracker yok.
 
 ## Kurulum
 
-### Homebrew (macOS — yakında)
+### Homebrew (macOS)
 
 ```bash
 brew install --cask yatogamiraito/tap/hekadrop
 ```
 
-> Tap (`yatogamiraito/homebrew-tap`) henüz yayında değil — **coming soon**.
-> `Casks/hekadrop.rb` dosyası repoda hazır (v0.4.0 zip + SHA ile); tap repo'ya kopyalandığında doğrudan çalışır.
+Tap (`yatogamiraito/homebrew-tap`) v0.6.0 ile public yayına girdi. Cask her yeni release'te güncellenir.
 
 ### Releases (zip / deb / exe)
 
