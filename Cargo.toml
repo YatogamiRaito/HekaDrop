@@ -16,7 +16,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 tokio-util = { version = "0.7", features = ["rt"] }
 bytes = "1"
 prost = "0.13"
-mdns-sd = "0.11"
+mdns-sd = "0.19"
 sha2 = "0.10"
 hex = "0.4"
 anyhow = "1"

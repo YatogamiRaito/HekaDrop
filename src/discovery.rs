@@ -8,7 +8,7 @@ use crate::config;
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use mdns_sd::{ServiceDaemon, ServiceEvent};
+use mdns_sd::{ResolvedService, ServiceDaemon, ServiceEvent};
 use std::net::IpAddr;
 use std::time::Duration;
 use tracing::debug;
@@ -80,12 +80,17 @@ pub async fn scan(duration: Duration, own_port: u16) -> Result<Vec<DiscoveredDev
     Ok(devices)
 }
 
-fn parse(info: &mdns_sd::ServiceInfo) -> Option<DiscoveredDevice> {
-    let addr: IpAddr = info.get_addresses().iter().find(|a| a.is_ipv4()).copied()?;
+fn parse(info: &ResolvedService) -> Option<DiscoveredDevice> {
+    // v0.15+ API: get_addresses() artık `&HashSet<ScopedIp>` döner; IPv4 için
+    // get_addresses_v4() → `&HashSet<&Ipv4Addr>` ile doğrudan Ipv4Addr verir.
+    let addr: IpAddr = info
+        .get_addresses_v4()
+        .iter()
+        .next()
+        .map(|ip| IpAddr::V4(*ip))?;
     let port = info.get_port();
 
-    let txt = info.get_properties();
-    let n_b64 = txt.get("n").and_then(|p| p.val_str().into())?;
+    let n_b64 = info.get_property_val_str("n")?;
     let endpoint_info = URL_SAFE_NO_PAD.decode(n_b64).ok()?;
 
     if endpoint_info.len() < 17 {
