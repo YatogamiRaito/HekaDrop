@@ -82,11 +82,13 @@ pub async fn scan(duration: Duration, own_port: u16) -> Result<Vec<DiscoveredDev
 
 fn parse(info: &ResolvedService) -> Option<DiscoveredDevice> {
     // v0.15+ API: get_addresses() artık `&HashSet<ScopedIp>` döner; IPv4 için
-    // get_addresses_v4() → `&HashSet<&Ipv4Addr>` ile doğrudan Ipv4Addr verir.
+    // get_addresses_v4() → `&HashSet<Ipv4Addr>`; .iter() `&Ipv4Addr` verir.
+    // Çok adresli (multi-homed) cihazlarda deterministik seçim için `.min()`:
+    // HashSet iteration sırası belirsizdir, aynı taramada aynı IP dönsün.
     let addr: IpAddr = info
         .get_addresses_v4()
         .iter()
-        .next()
+        .min()
         .map(|ip| IpAddr::V4(*ip))?;
     let port = info.get_port();
 
