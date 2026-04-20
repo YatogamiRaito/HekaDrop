@@ -35,7 +35,7 @@ serde_json = "1"
 parking_lot = "0.12"
 p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
 hkdf = "0.12"
-hmac = "0.12"
+hmac = "0.13"
 aes = "0.8"
 cbc = { version = "0.1", features = ["std"] }
 cipher = { version = "0.4", features = ["block-padding"] }
