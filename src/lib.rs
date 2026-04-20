@@ -7,3 +7,4 @@
 //! `hekadrop::crypto` yüzeyini açmaktır.
 
 pub mod crypto;
+pub mod file_size_guard;

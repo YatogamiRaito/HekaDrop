@@ -17,6 +17,7 @@ mod connection;
 mod crypto;
 mod discovery;
 mod error;
+mod file_size_guard;
 mod frame;
 mod i18n;
 mod identity;
