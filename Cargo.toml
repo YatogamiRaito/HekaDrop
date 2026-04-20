@@ -13,6 +13,7 @@ categories = ["network-programming", "command-line-utilities"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time", "fs"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 bytes = "1"
 prost = "0.13"
 mdns-sd = "0.11"
