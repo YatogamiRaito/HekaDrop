@@ -4,7 +4,7 @@
   "homepage": "https://github.com/YatogamiRaito/HekaDrop",
   "license": "MIT",
   "url": "https://github.com/YatogamiRaito/HekaDrop/releases/download/v$version/HekaDrop-$version.exe",
-  "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "hash": "d33c26c049d5d31d5eb4f129265299a14afff1161a24ffa2048eb3975c8712a5",
   "bin": [
     [
       "HekaDrop-$version.exe",
