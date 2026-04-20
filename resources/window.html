@@ -1221,7 +1221,7 @@
     }
     // escapeJsInAttr — `onclick="act('${x}')"` gibi "HTML attr içinde tek
     // tırnaklı JS string" bağlamı için iki-katmanlı escape. Önce JS
-    // string-literal düzeyinde ters bölü + tek tırnak + newline + </script>
+    // string-literal düzeyinde ters bölü + tek tırnak + newline + <\/script>
     // kaçırılır; sonra HTML attribute düzeyinde `&` + `<` + `>` + `"`
     // entity'lerine dönüşür. `escapeAttr` saf HTML için (aria-label vb.),
     // bu helper JS-mixed bağlam için.

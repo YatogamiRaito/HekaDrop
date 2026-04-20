@@ -680,6 +680,8 @@ fn push_i18n_to_ui() {
         "webview.privacy.update_check.label",
         "webview.privacy.update_check.desc",
         "webview.privacy.restart_notice",
+        "webview.badge.on",
+        "webview.badge.off",
         "webview.diag.section.app",
         "webview.diag.version",
         "webview.diag.device",

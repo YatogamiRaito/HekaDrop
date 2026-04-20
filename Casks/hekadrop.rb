@@ -1,6 +1,6 @@
 cask "hekadrop" do
-  version "0.5.2"
-  sha256 "a3e9612143a6811c05609369984c9eb0b49f27ef39632864b7444575392a083f"
+  version "0.6.0"
+  sha256 :no_check
 
   url "https://github.com/YatogamiRaito/HekaDrop/releases/download/v#{version}/HekaDrop-#{version}.dmg"
   name "HekaDrop"
