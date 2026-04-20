@@ -154,17 +154,22 @@ mod tests {
 
     /// Known-answer golden vector: 32-baytlık sabit bir `auth_key` → sabit 4-haneli PIN.
     ///
-    /// Amaç: gelecekte HKDF info string'i, `MOD=9973`, `mult*=31` çarpanı, `rem_euclid`
-    /// ya da signed-byte yorumlaması **sessizce** değişirse bu testin kırılmasıyla fark edilsin.
-    /// Mutation testing survivor'larını da kapatır (operatör flip, sabit değişikliği,
-    /// signedness kaybı).
+    /// Kapsam: yalnız `pin_code_from_auth_key` regression guard'ı — HKDF burada
+    /// çalıştırılmıyor, test doğrudan sabit bir auth_key besliyor. Amaç, gelecekte
+    /// `MOD=9973`, `mult*=31` çarpanı, `rem_euclid` ya da signed-byte yorumlaması
+    /// **sessizce** değişirse bu testin kırılmasıyla fark edilsin. Mutation testing
+    /// survivor'larını da kapatır (operatör flip, sabit değişikliği, signedness kaybı).
+    ///
+    /// HKDF → auth_key → PIN uçtan uca KAT testi ayrı bir vektör olarak eklenebilir;
+    /// bu test özellikle PIN derivation adımını izole tutar.
     ///
     /// Kaynak: NearDrop referans algoritmasının Python'a birebir port'u ile bağımsız
     /// olarak türetildi (vektörü değiştirmek = algoritmayı değiştirmek).
     ///   https://github.com/grishka/NearDrop (PIN türetme Android paketinde benzer akış)
     ///
-    /// **Bu vektör bir kez kaydedildi — gelecekte değişirse HKDF/algoritma değişti demek,
-    /// incele.** Değişiklik kasıtlıysa yeni beklenen PIN'i güncelle ve CHANGELOG'a düş.
+    /// **Bu vektör bir kez kaydedildi — gelecekte değişirse PIN derivation algoritması
+    /// değişti demek, incele.** Değişiklik kasıtlıysa yeni beklenen PIN'i güncelle
+    /// ve CHANGELOG'a düş.
     #[test]
     fn pin_code_known_vector_golden() {
         // Hex "auth_key" — 32 bayt, NearDrop test fixture stilinde sabit değer

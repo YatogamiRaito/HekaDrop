@@ -214,7 +214,7 @@ fn to_signed_bytes(v: &[u8]) -> Vec<u8> {
 /// olması için saf fonksiyona ayrıldı (mutation survivor #10 — research-v2
 /// raporundaki "ServerInit cipher downgrade" kontrolü artık unit test ile
 /// kapatılıyor).
-pub(crate) fn validate_server_init(s: &Ukey2ServerInit) -> Result<()> {
+pub fn validate_server_init(s: &Ukey2ServerInit) -> Result<()> {
     if s.handshake_cipher != Some(Ukey2HandshakeCipher::P256Sha512 as i32) {
         bail!(
             "ServerInit cipher downgrade reddedildi: {:?} (beklenen P256_SHA512)",

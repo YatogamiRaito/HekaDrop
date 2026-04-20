@@ -6,76 +6,25 @@
 //! validator BAIL etmeli, yoksa sessizce düşülmüş bir handshake olur).
 //!
 //! Bu integration test:
-//!   1) `prost::Message::encode_to_vec` ile gerçek UKEY2 wire bytes üretir.
-//!   2) Aynı byte dizisini decode edip validator'a geçirir — ürün koduyla
-//!      birebir özdeş validator yüzeyi (`src/ukey2.rs::validate_server_init`).
+//!   1) `prost::Message::encode_to_vec` ile gerçek UKEY2 wire bytes üretir —
+//!      üretim kodunun kullandığı `hekadrop::securegcm::Ukey2Message` ve
+//!      `Ukey2ServerInit` tipleri ile, yani proto tag/tip numaraları birebir
+//!      üretim tarafıyla paylaşılır.
+//!   2) Aynı byte dizisini decode edip `hekadrop::validate_server_init`'e
+//!      besler — üretim kodunun çağırdığı fonksiyonun aynısı.
 //!   3) P256_SHA512 dışı her cipher için hata mesajı `cipher downgrade` içerir.
 //!   4) Version 1 dışı her değer için `yalnız V1` hata yolu çalışır.
 //!   5) Happy path (V1 + P256_SHA512) regresyona karşı yeşil kalır.
 //!
-//! Neden integration (binary-external)? `src/ukey2.rs`'teki unit test'ler
-//! struct alanlarını doğrudan kurar; wire-format decode yolunu atlar. Gerçek
-//! Android peer'ı bizimle protobuf bytes değiş tokuşur, decode sırasında
-//! `prost` varsayılanlarını (absent = `None`) doğru yorumlamak validator'ın
-//! ilk sözleşmesi. Bu test o sözleşmeyi kilitler.
+//! Neden integration (binary-external)? Üretim decode pipeline'ı `prost`
+//! varsayılanlarının (absent = `None`) doğru yorumlanmasına bağlı; bu test
+//! gerçek wire bytes → decode → validate zincirini uçtan uca koşturur. Unit
+//! test'ler struct alanlarını doğrudan kurar ve bu decode sözleşmesini atlar.
 
 use anyhow::{bail, Result};
+use hekadrop::securegcm::{Ukey2HandshakeCipher, Ukey2Message, Ukey2ServerInit};
+use hekadrop::validate_server_init;
 use prost::Message;
-
-// --- UKEY2 wire-format mirror (proto/ukey.proto ile birebir) ---------------
-// Neden mirror? `tests/` binary-external: `hekadrop::securegcm` yüzeyi lib.rs'te
-// açık değil. Mirror `prost::Message` derive ile aynı proto tag/tip numaralarını
-// kullanır → ürün kodunun decode'u ile birebir uyumlu byte üretir.
-// Kaynak: proto/ukey.proto (securegcm paketi).
-
-/// Ukey2HandshakeCipher enum değerleri — `proto/ukey.proto` ile aynı.
-/// Değer değiştirmeyin: wire-format compat bozar.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(i32)]
-enum Cipher {
-    Reserved = 0,
-    P256Sha512 = 100,
-    Curve25519Sha512 = 200,
-}
-
-#[derive(Clone, PartialEq, Message)]
-struct Ukey2Message {
-    #[prost(int32, optional, tag = "1")]
-    message_type: Option<i32>,
-    #[prost(bytes = "vec", optional, tag = "2")]
-    message_data: Option<Vec<u8>>,
-}
-
-#[derive(Clone, PartialEq, Message)]
-struct Ukey2ServerInit {
-    #[prost(int32, optional, tag = "1")]
-    version: Option<i32>,
-    #[prost(bytes = "vec", optional, tag = "2")]
-    random: Option<Vec<u8>>,
-    #[prost(int32, optional, tag = "3")]
-    handshake_cipher: Option<i32>,
-    #[prost(bytes = "vec", optional, tag = "4")]
-    public_key: Option<Vec<u8>>,
-}
-
-/// `src/ukey2.rs::validate_server_init` birebir davranış kopyası.
-/// Mirror olması kasıtlı: ürün kodu değişirse bu test'i de güncellemek
-/// gerekir — drift alarmı niyetiyle tutuyoruz.
-fn validate_server_init(s: &Ukey2ServerInit) -> Result<()> {
-    if s.handshake_cipher != Some(Cipher::P256Sha512 as i32) {
-        bail!(
-            "ServerInit cipher downgrade reddedildi: {:?} (beklenen P256_SHA512)",
-            s.handshake_cipher
-        );
-    }
-    if s.version != Some(1) {
-        bail!(
-            "ServerInit version={:?} — yalnız V1 destekleniyor",
-            s.version
-        );
-    }
-    Ok(())
-}
 
 /// Bir `Ukey2ServerInit`'i `Ukey2Message` zarfına sarıp wire bytes döner.
 /// Gerçek peer'dan gelen TAM frame body'si budur.
@@ -112,13 +61,16 @@ fn happy_path_p256_sha512_v1_kabul_edilir() {
     let si = Ukey2ServerInit {
         version: Some(1),
         random: Some(vec![0x42u8; 32]),
-        handshake_cipher: Some(Cipher::P256Sha512 as i32),
+        handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
         public_key: Some(vec![0x04, 0xAA, 0xBB]),
     };
     let wire = wrap_server_init_to_wire(&si);
     let parsed = decode_and_validate(&wire).expect("happy path geçmeli");
     assert_eq!(parsed.version, Some(1));
-    assert_eq!(parsed.handshake_cipher, Some(Cipher::P256Sha512 as i32));
+    assert_eq!(
+        parsed.handshake_cipher,
+        Some(Ukey2HandshakeCipher::P256Sha512 as i32)
+    );
 }
 
 #[test]
@@ -129,7 +81,7 @@ fn downgrade_curve25519_sha512_reddedilir() {
     let si = Ukey2ServerInit {
         version: Some(1),
         random: Some(vec![0u8; 32]),
-        handshake_cipher: Some(Cipher::Curve25519Sha512 as i32),
+        handshake_cipher: Some(Ukey2HandshakeCipher::Curve25519Sha512 as i32),
         public_key: Some(vec![0u8; 33]),
     };
     let wire = wrap_server_init_to_wire(&si);
@@ -148,7 +100,7 @@ fn downgrade_reserved_cipher_reddedilir() {
     let si = Ukey2ServerInit {
         version: Some(1),
         random: Some(vec![0u8; 32]),
-        handshake_cipher: Some(Cipher::Reserved as i32),
+        handshake_cipher: Some(Ukey2HandshakeCipher::Reserved as i32),
         public_key: Some(vec![0u8; 16]),
     };
     let wire = wrap_server_init_to_wire(&si);
@@ -193,7 +145,7 @@ fn version_downgrade_v0_reddedilir() {
     let si = Ukey2ServerInit {
         version: Some(0),
         random: Some(vec![0u8; 32]),
-        handshake_cipher: Some(Cipher::P256Sha512 as i32),
+        handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
         public_key: Some(vec![0u8; 16]),
     };
     let wire = wrap_server_init_to_wire(&si);
@@ -212,7 +164,7 @@ fn version_downgrade_bilinmeyen_numerik_reddedilir() {
         let si = Ukey2ServerInit {
             version: Some(bad),
             random: Some(vec![0u8; 32]),
-            handshake_cipher: Some(Cipher::P256Sha512 as i32),
+            handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
             public_key: Some(vec![0u8; 16]),
         };
         let wire = wrap_server_init_to_wire(&si);
@@ -231,7 +183,7 @@ fn version_alani_eksikse_reddedilir() {
     let si = Ukey2ServerInit {
         version: None,
         random: Some(vec![0u8; 32]),
-        handshake_cipher: Some(Cipher::P256Sha512 as i32),
+        handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
         public_key: Some(vec![0u8; 16]),
     };
     let wire = wrap_server_init_to_wire(&si);
@@ -246,7 +198,7 @@ fn hatali_message_type_reddedilir() {
     let si = Ukey2ServerInit {
         version: Some(1),
         random: Some(vec![0u8; 32]),
-        handshake_cipher: Some(Cipher::P256Sha512 as i32),
+        handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
         public_key: Some(vec![0u8; 16]),
     };
     let wrong_type = Ukey2Message {
