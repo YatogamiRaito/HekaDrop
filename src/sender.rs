@@ -48,6 +48,12 @@ use tracing::{info, warn};
 /// Quick Share yönergeleri 512 KB civarını öneriyor; 1 MB sınırı zorlar.
 const CHUNK_SIZE: usize = 512 * 1024;
 
+/// Son chunk gönderildikten sonra peer'in Disconnection frame'ini (veya
+/// EOF'u) beklemek için üst sınır. Android dosyayı diske yazıp doğrulamayı
+/// bitirmeden bizim TCP'yi kapatmamamız için gerekli. 10 sn, 1 GB'lık bir
+/// dosyanın Android tarafında fsync + doğrulama süresinden rahat geniştir.
+const PEER_DISCONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub struct SendRequest {
     pub device: DiscoveredDevice,
     pub files: Vec<std::path::PathBuf>,
@@ -284,7 +290,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                         // alıcı son chunk'ı işlerken bizim tarafımız TCP'yi
                         // kapatmış oluyor.
                         let _ = tokio::time::timeout(
-                            std::time::Duration::from_secs(10),
+                            PEER_DISCONNECT_TIMEOUT,
                             wait_peer_disconnect(&mut socket, &mut ctx),
                         )
                         .await;
@@ -423,10 +429,12 @@ async fn send_file_chunks(
     Ok(())
 }
 
-/// Son chunk'tan sonra peer'in Disconnection veya herhangi bir kapanış sinyalini
-/// göndermesini bekler. Böylece Android dosyayı diske yazıp doğrularken bizim
-/// tarafımız TCP'yi kapatmış olmaz. Hata/EOF durumlarında sessizce döner —
-/// caller tarafında `timeout` sarmalayıcısı zaten üst sınırı koyuyor.
+/// Son chunk'tan sonra peer'in `Disconnection` frame'ini göndermesini veya
+/// bağlantının EOF/okuma hatasıyla kapanmasını bekler. Arada gelen
+/// `KeepAlive` çağrılarına yanıt verir; diğer frame tipleri yok sayılır.
+/// Böylece Android dosyayı diske yazıp doğrularken bizim tarafımız TCP'yi
+/// kapatmış olmaz. Üst sınır caller'daki [`PEER_DISCONNECT_TIMEOUT`]
+/// sarmalayıcısıyla uygulanır.
 async fn wait_peer_disconnect(socket: &mut TcpStream, ctx: &mut SecureCtx) -> Result<()> {
     loop {
         let raw = match frame::read_frame(socket).await {
