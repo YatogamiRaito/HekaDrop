@@ -66,35 +66,14 @@ jobs:
           git archive --format=tar.gz --prefix="HekaDrop-${VERSION}/" -o "$TARBALL" HEAD
           ls -la "$TARBALL"
 
-      - name: Assemble universal dSYM
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          DSYM_X86="target/x86_64-apple-darwin/release/hekadrop.dSYM"
-          DSYM_ARM="target/aarch64-apple-darwin/release/hekadrop.dSYM"
-          if [ ! -d "$DSYM_X86" ] || [ ! -d "$DSYM_ARM" ]; then
-            echo "HATA: Per-arch dSYM bundle'ları bulunamadı." >&2
-            ls -la target/x86_64-apple-darwin/release/ || true
-            ls -la target/aarch64-apple-darwin/release/ || true
-            exit 1
-          fi
-          DSYM_OUT="target/HekaDrop-${VERSION}.dSYM"
-          rm -rf "$DSYM_OUT"
-          cp -R "$DSYM_ARM" "$DSYM_OUT"
-          lipo -create \
-            "$DSYM_X86/Contents/Resources/DWARF/hekadrop" \
-            "$DSYM_ARM/Contents/Resources/DWARF/hekadrop" \
-            -output "$DSYM_OUT/Contents/Resources/DWARF/hekadrop"
-          file "$DSYM_OUT/Contents/Resources/DWARF/hekadrop"
-          (cd target && zip -r "HekaDrop-${VERSION}-macos.dSYM.zip" "HekaDrop-${VERSION}.dSYM")
-          ls -la "target/HekaDrop-${VERSION}-macos.dSYM.zip"
+      # macOS dSYM üniversal assemble şu an v0.6.0 için devre dışı — H#3 workflow
+      # config'i split-debuginfo ile uyumsuz; düzgün implementasyon v0.6.1.
 
       - name: Stage macOS artifacts
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p release-artifacts
           cp target/HekaDrop-*.dmg release-artifacts/
           cp target/HekaDrop-*-src.tar.gz release-artifacts/
-          cp "target/HekaDrop-${VERSION}-macos.dSYM.zip" release-artifacts/
           ls -la release-artifacts/
 
       - name: Upload macOS artifacts
@@ -141,19 +120,9 @@ jobs:
           chmod +x scripts/make-deb.sh
           ./scripts/make-deb.sh
 
-      - name: Package debug symbols (DWARF)
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          DWP="target/release/hekadrop.dwp"
-          if [ ! -f "$DWP" ]; then
-            echo "HATA: $DWP bulunamadı — split-debuginfo ayarı üretmedi." >&2
-            ls -la target/release/ | head -50
-            exit 1
-          fi
-          OUT="target/HekaDrop-${VERSION}-linux-x86_64.dwp"
-          cp "$DWP" "$OUT"
-          xz -9 -T0 -f "$OUT"
-          ls -la "${OUT}.xz"
+      # Debug symbols (DWARF/dwp) şu an v0.6.0 için devre dışı — H#3 workflow
+      # config'i split-debuginfo ile uyumsuz; düzgün implementasyon v0.6.1.
+      # Atlama yerine adım tamamen kaldırıldı (sessiz fail yerine net davranış).
 
       - name: Stage Linux artifacts
         run: |
@@ -161,7 +130,6 @@ jobs:
           mkdir -p release-artifacts
           cp HekaDrop-"${VERSION}".deb release-artifacts/
           cp target/release/hekadrop "release-artifacts/hekadrop-${VERSION}-linux-x86_64"
-          cp "target/HekaDrop-${VERSION}-linux-x86_64.dwp.xz" release-artifacts/
           ls -la release-artifacts/
 
       - name: Upload Linux artifacts
@@ -273,13 +241,8 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            ## Debug symbols (crash triage)
+            Ayrıntılar için [CHANGELOG](https://github.com/YatogamiRaito/HekaDrop/blob/v${{ steps.ver.outputs.version }}/CHANGELOG.md).
 
-            Platform başına ayrı "debug sidecar" artefaktları crash raporu
-            sembolizasyonu (stack trace → fonksiyon adı + satır) için ekleniyor.
-            Son kullanıcı kurulumu için gerekli değildir; sadece crash/issue
-            triage sırasında indirilir.
-
-            - `HekaDrop-${{ steps.ver.outputs.version }}-macos.dSYM.zip` — universal (x86_64 + arm64) dSYM bundle, `dsymutil`/`atos` uyumlu.
-            - `HekaDrop-${{ steps.ver.outputs.version }}-linux-x86_64.dwp.xz` — DWARF package (split-debuginfo), `gdb`/`addr2line` uyumlu.
-            - `HekaDrop-${{ steps.ver.outputs.version }}-windows-x86_64.pdb.zip` — MSVC PDB, WinDbg/Visual Studio uyumlu.
+            Windows PDB sidecar'ı (crash triage) bu yayında mevcut; macOS dSYM
+            ve Linux dwp debug sembolleri v0.6.1'e ertelendi (split-debuginfo
+            workflow uyumsuzluğu).
