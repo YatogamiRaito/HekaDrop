@@ -569,11 +569,12 @@ fn handle_ipc(cmd: &str) {
 }
 
 fn handle_settings_save(json: &str) {
-    // H#4: JSON payload'ına 4 yeni privacy alanı eklendi. Hepsi Option ile
-    // tanımlı — UI eski sürümse ya da alanı göndermezse mevcut değer
-    // korunur (partial update); None → no-op, Some(v) → yaz. `log_level`
-    // UI'dan serbest string olarak gelir, `parse_or_default` ile güvenli
-    // parse edilir (bilinmeyen input Info'ya düşer, rejection yok).
+    // H#4: JSON payload'ına 4 yeni privacy alanı eklendi. Privacy alanları
+    // Option ile tanımlı — UI eski sürümse ya da alanı göndermezse mevcut
+    // değer korunur (partial update); None → no-op, Some(v) → yaz.
+    // `auto_accept` geriye dönük uyumluluk için zorunlu `bool` kalmıştır.
+    // `log_level` UI'dan serbest string olarak gelir, `parse_or_default`
+    // ile güvenli parse edilir (bilinmeyen input Info'ya düşer, reject yok).
     #[derive(serde::Deserialize, Debug)]
     struct Incoming {
         device_name: Option<String>,

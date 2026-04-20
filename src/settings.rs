@@ -51,7 +51,7 @@ fn default_keep_stats() -> bool {
 ///
 /// `tracing_subscriber::EnvFilter` stringine çevrilir: `hekadrop=<level>`.
 /// `RUST_LOG` env var varsa o öncelikli; bu enum yalnızca env yokken devreye
-/// girer. JSON'da camelCase string olarak serialize edilir (`"info"`, `"warn"`
+/// girer. JSON'da lowercase string olarak serialize edilir (`"info"`, `"warn"`
 /// vb.) — config.json manuel düzenlenirken okunabilir.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -64,9 +64,10 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    /// `tracing_subscriber::EnvFilter` string'ine dönüştür. Hedef: `hekadrop`
-    /// crate'i bu seviyede, geri kalanı default (warn) seviyesinde logsun —
-    /// dependency noise'u (tokio/hyper) üst seviyelerde gürültü yapmaz.
+    /// `tracing_subscriber::EnvFilter` string'ine dönüştür: yalnızca
+    /// `hekadrop` crate'i için seviye set edilir; directive'e dahil
+    /// olmayan modüller (tokio/hyper vb.) `EnvFilter` default'una (warn)
+    /// düşer.
     pub fn filter_directive(self) -> &'static str {
         match self {
             LogLevel::Error => "hekadrop=error",

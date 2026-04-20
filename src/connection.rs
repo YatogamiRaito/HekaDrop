@@ -321,12 +321,12 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 // kullanıcı sonradan tekrar açabilir, eski metrik kaybolmaz.
                                 let st = state::get();
                                 let keep = st.settings.read().keep_stats;
-                                let snap = {
+                                let snap_opt = {
                                     let mut s = st.stats.write();
                                     s.record_received(&remote_name_shared, total_size as u64);
-                                    s.clone()
+                                    if keep { Some(s.clone()) } else { None }
                                 };
-                                if keep {
+                                if let Some(snap) = snap_opt {
                                     let _ = snap.save();
                                 }
                             }

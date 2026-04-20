@@ -1029,14 +1029,16 @@
     function syncAutoState() {
       const on = autoCheckbox.checked;
       autoWrap.classList.toggle('on', on);
-      autoBadge.textContent = on ? 'Açık' : 'Kapalı';
+      autoBadge.textContent = on ? t('webview.badge.on') : t('webview.badge.off');
     }
     autoCheckbox.addEventListener('change', syncAutoState);
     syncAutoState();
 
     // ---- H#4 Privacy toggles — pattern mirrors auto-accept ----
     // Her toggle bir checkbox + badge + .on sınıfı; badge metni hard-coded
-    // TR fallback (Açık/Kapalı) — i18n sözlüğünde key yoksa görünür kalır.
+    // Badge text i18n üzerinden (`webview.badge.on/off`). Key yoksa
+    // `t()` `?key?` döndürür — dev fark eder, HTML'deki TR fallback
+    // görünür kalır.
     function wirePrivacyToggle(id) {
       const cb = document.getElementById('set-' + id);
       const wrap = document.getElementById('set-' + id + '-wrap');
@@ -1045,7 +1047,7 @@
       function sync() {
         const on = cb.checked;
         wrap.classList.toggle('on', on);
-        badge.textContent = on ? 'Açık' : 'Kapalı';
+        badge.textContent = on ? t('webview.badge.on') : t('webview.badge.off');
       }
       cb.addEventListener('change', sync);
       sync();

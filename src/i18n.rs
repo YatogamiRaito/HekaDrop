@@ -269,6 +269,8 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "webview.privacy.update_check.label" => "Güncellemeleri otomatik kontrol et",
         "webview.privacy.update_check.desc" => "Kapalıysa GitHub API'ye istek atılmaz. HEKADROP_NO_UPDATE_CHECK env'i de aynı etki.",
         "webview.privacy.restart_notice" => "Değişiklik için uygulamayı yeniden başlat.",
+        "webview.badge.on" => "Açık",
+        "webview.badge.off" => "Kapalı",
         "dialog.update.disabled" => "Güncelleme kontrolü kapatılmış (Ayarlar → Gizlilik).",
 
         // Webview — diagnostics panel
@@ -433,6 +435,8 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "webview.privacy.update_check.label" => "Check for updates automatically",
         "webview.privacy.update_check.desc" => "When off, no request is sent to GitHub. HEKADROP_NO_UPDATE_CHECK env var has the same effect.",
         "webview.privacy.restart_notice" => "Restart the app for changes to take effect.",
+        "webview.badge.on" => "On",
+        "webview.badge.off" => "Off",
         "dialog.update.disabled" => "Update check is disabled (Settings → Privacy).",
 
         // Webview — diagnostics panel

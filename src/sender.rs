@@ -294,16 +294,17 @@ pub async fn send(req: SendRequest) -> Result<()> {
                         // RAM state (UI Tanı paneli) güncellenmeye devam eder.
                         {
                             // Save'i lock dışında çalıştır — yavaş diskte UI dondurmasın.
+                            // `keep_stats=false` iken snapshot clone da yapılmaz.
                             let st = state::get();
                             let keep = st.settings.read().keep_stats;
-                            let snap = {
+                            let snap_opt = {
                                 let mut s = st.stats.write();
                                 for plan in &plans {
                                     s.record_sent(&peer_label, plan.size.max(0) as u64);
                                 }
-                                s.clone()
+                                if keep { Some(s.clone()) } else { None }
                             };
-                            if keep {
+                            if let Some(snap) = snap_opt {
                                 let _ = snap.save();
                             }
                         }
