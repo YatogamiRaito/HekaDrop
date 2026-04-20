@@ -1129,7 +1129,7 @@ pub(crate) async fn send_sharing_frame(
     sharing: &SharingFrame,
 ) -> Result<()> {
     let body = sharing.encode_to_vec();
-    let payload_id: i64 = rand::thread_rng().next_u64() as i64;
+    let payload_id: i64 = (rand::thread_rng().next_u64() >> 1) as i64;
     let total = body.len() as i64;
 
     // İlk chunk: tam gövde, offset=0, flags=0
