@@ -510,7 +510,43 @@ async fn handle_sharing_frame(
             let mut planned_files: Vec<(i64, std::path::PathBuf, String)> = Vec::new();
             for f in &intro.file_metadata {
                 let name = f.name.clone().unwrap_or_else(|| "dosya".into());
-                let size = f.size.unwrap_or(0);
+                let raw_size = f.size.unwrap_or(0);
+                let size = match crate::file_size_guard::classify_file_size(raw_size) {
+                    crate::file_size_guard::FileSizeGuard::Accept(s) => s,
+                    crate::file_size_guard::FileSizeGuard::Clamped => {
+                        warn!(
+                            "[{}] FileMetadata.size negatif ({}) — 0'a clamp edildi (ad: {})",
+                            peer,
+                            raw_size,
+                            crate::log_redact::path_basename(std::path::Path::new(&name))
+                        );
+                        0
+                    }
+                    crate::file_size_guard::FileSizeGuard::Reject => {
+                        warn!(
+                            "[{}] FileMetadata.size MAX_FILE_BYTES sınırını aştı ({} > {}) — Introduction reddediliyor",
+                            peer,
+                            raw_size,
+                            crate::file_size_guard::MAX_FILE_BYTES
+                        );
+                        for (_pid, path, _name) in &planned_files {
+                            if let Err(e) = std::fs::remove_file(path) {
+                                if e.kind() != std::io::ErrorKind::NotFound {
+                                    tracing::debug!(
+                                        "size-guard cleanup: placeholder silinemedi {}: {}",
+                                        crate::log_redact::path_basename(path),
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        send_sharing_frame(socket, ctx, &build_sharing_cancel()).await?;
+                        bail!(
+                            "FileMetadata.size absürt büyük: {} bayt (>1 TiB limit)",
+                            raw_size
+                        );
+                    }
+                };
                 summaries.push(ui::FileSummary {
                     name: name.clone(),
                     size,
