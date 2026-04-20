@@ -39,6 +39,66 @@ fn default_trust_ttl_secs() -> u64 {
     DEFAULT_TRUST_TTL_SECS
 }
 
+fn default_advertise() -> bool {
+    true
+}
+
+fn default_keep_stats() -> bool {
+    true
+}
+
+/// Kullanıcı-seçimli log verbosity seviyesi (H#4 privacy controls).
+///
+/// `tracing_subscriber::EnvFilter` stringine çevrilir: `hekadrop=<level>`.
+/// `RUST_LOG` env var varsa o öncelikli; bu enum yalnızca env yokken devreye
+/// girer. JSON'da camelCase string olarak serialize edilir (`"info"`, `"warn"`
+/// vb.) — config.json manuel düzenlenirken okunabilir.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Error,
+    Warn,
+    #[default]
+    Info,
+    Debug,
+}
+
+impl LogLevel {
+    /// `tracing_subscriber::EnvFilter` string'ine dönüştür. Hedef: `hekadrop`
+    /// crate'i bu seviyede, geri kalanı default (warn) seviyesinde logsun —
+    /// dependency noise'u (tokio/hyper) üst seviyelerde gürültü yapmaz.
+    pub fn filter_directive(self) -> &'static str {
+        match self {
+            LogLevel::Error => "hekadrop=error",
+            LogLevel::Warn => "hekadrop=warn",
+            LogLevel::Info => "hekadrop=info",
+            LogLevel::Debug => "hekadrop=debug",
+        }
+    }
+
+    /// UI / JSON için küçük harfli etiket — serde `rename_all = "lowercase"`
+    /// ile aynı değer. IPC JSON parsing tarafında string karşılaştırması için.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+        }
+    }
+
+    /// UI'dan gelen serbest string değeri LogLevel'e çevirir; bilinmeyen
+    /// değerler `Info` default'una düşer (invalid input'ta sessiz güven).
+    pub fn parse_or_default(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "error" => LogLevel::Error,
+            "warn" | "warning" => LogLevel::Warn,
+            "debug" => LogLevel::Debug,
+            _ => LogLevel::Info,
+        }
+    }
+}
+
 /// Kullanıcının "Kabul + güven" ile onayladığı bir cihaz kaydı.
 ///
 /// v0.6'dan itibaren güven kararı **`secret_id_hash`** (cihaz-kalıcı HKDF
@@ -162,6 +222,42 @@ pub struct Settings {
     /// devre dışı bırakır — trust sonsuza kadar geçerli kalır (önerilmez).
     #[serde(default = "default_trust_ttl_secs")]
     pub trust_ttl_secs: u64,
+
+    /// mDNS yayınını aç/kapat — H#4 privacy control.
+    ///
+    /// `true` (default): uygulama `_FC9F5ED42C8A._tcp.local.` altında ilan
+    /// edilir, Android phone "nearby devices" listesinde görünür.
+    /// `false`: "receive-only" mod — LAN'da görünmez, ama **gönderici**
+    /// olarak hâlâ çalışabilir (keşif tarama aynı şekilde işler).
+    /// Değişiklik restart gerektirir (mDNS daemon hot-swap henüz yok).
+    #[serde(default = "default_advertise")]
+    pub advertise: bool,
+
+    /// Log verbosity — H#4 privacy control.
+    ///
+    /// `RUST_LOG` env var varsa o öncelikli (geliştirici kaçış vanası).
+    /// Aksi halde `tracing_subscriber::EnvFilter` bu değerden üretilir.
+    /// Sadece `hekadrop` crate'i hedeflenir; dependency loglar default warn.
+    #[serde(default)]
+    pub log_level: LogLevel,
+
+    /// İstatistik kaydı — H#4 privacy control.
+    ///
+    /// `true` (default): her transfer sonrası `stats.json` diske yazılır.
+    /// `false`: privacy-conscious kullanıcı için transferler metriğe
+    /// geçmez; mevcut stats.json **silinmez** (kullanıcı tekrar açabilir
+    /// ve geçmiş metrik kaybolmaz), yalnızca yeni yazımlar durur.
+    #[serde(default = "default_keep_stats")]
+    pub keep_stats: bool,
+
+    /// GitHub "yeni sürüm var mı" kontrolü opt-out — H#4 privacy control.
+    ///
+    /// `false` (default): "Güncelleme kontrol et" butonu GitHub API'ye
+    /// istek atar (User-Agent exposure). `true`: istek hiç çıkmaz, UI
+    /// kullanıcıya opt-out durumunu söyler. `HEKADROP_NO_UPDATE_CHECK`
+    /// env var ile OR'lanır — env set ise setting bağımsız olarak skip.
+    #[serde(default)]
+    pub disable_update_check: bool,
 }
 
 impl Default for Settings {
@@ -172,6 +268,10 @@ impl Default for Settings {
             auto_accept: false,
             trusted_devices: Vec::new(),
             trust_ttl_secs: DEFAULT_TRUST_TTL_SECS,
+            advertise: true,
+            log_level: LogLevel::Info,
+            keep_stats: true,
+            disable_update_check: false,
         }
     }
 }
@@ -1245,6 +1345,122 @@ mod tests {
         assert_eq!(s.trusted_devices[0].secret_id_hash, Some(peer_hash));
         assert!(s.trusted_devices[0].trusted_at_epoch > 0);
         assert!(s.is_trusted_by_hash(&peer_hash));
+    }
+
+    // =======================================================================
+    // H#4 privacy controls — settings migration + defaults
+    // =======================================================================
+
+    #[test]
+    fn h4_default_privacy_alanlari() {
+        let s = Settings::default();
+        assert!(
+            s.advertise,
+            "advertise default true (v0.5 davranışı korunur)"
+        );
+        assert_eq!(s.log_level, LogLevel::Info);
+        assert!(
+            s.keep_stats,
+            "keep_stats default true (eski config'ler migrate olduğunda kayıp olmasın)"
+        );
+        assert!(!s.disable_update_check);
+    }
+
+    #[test]
+    fn h4_v05_config_json_eski_alanlar_eksik_default_dolar() {
+        // Pre-H#4 config'i — hiçbir privacy alanı yok. `#[serde(default)]`
+        // ile default değerler otomatik uygulanmalı.
+        let legacy = r#"{
+            "device_name": "MacBook",
+            "auto_accept": false,
+            "trusted_devices": []
+        }"#;
+        let s: Settings = serde_json::from_str(legacy).expect("parse");
+        assert!(s.advertise);
+        assert_eq!(s.log_level, LogLevel::Info);
+        assert!(s.keep_stats);
+        assert!(!s.disable_update_check);
+    }
+
+    #[test]
+    fn h4_log_level_camelcase_hayir_lowercase_serialize() {
+        // `#[serde(rename_all = "lowercase")]` — "Info" değil "info".
+        let s = Settings {
+            log_level: LogLevel::Warn,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"warn\""), "lowercase beklenir: {}", json);
+    }
+
+    #[test]
+    fn h4_log_level_roundtrip() {
+        for lvl in [
+            LogLevel::Error,
+            LogLevel::Warn,
+            LogLevel::Info,
+            LogLevel::Debug,
+        ] {
+            let s = Settings {
+                log_level: lvl,
+                ..Settings::default()
+            };
+            let json = serde_json::to_string(&s).expect("ser");
+            let back: Settings = serde_json::from_str(&json).expect("de");
+            assert_eq!(back.log_level, lvl);
+        }
+    }
+
+    #[test]
+    fn h4_log_level_parse_or_default() {
+        assert_eq!(LogLevel::parse_or_default("error"), LogLevel::Error);
+        assert_eq!(LogLevel::parse_or_default("WARN"), LogLevel::Warn);
+        assert_eq!(LogLevel::parse_or_default("warning"), LogLevel::Warn);
+        assert_eq!(LogLevel::parse_or_default("info"), LogLevel::Info);
+        assert_eq!(LogLevel::parse_or_default("debug"), LogLevel::Debug);
+        // Bilinmeyen → Info (güvenli default, data loss yok).
+        assert_eq!(LogLevel::parse_or_default("verbose"), LogLevel::Info);
+        assert_eq!(LogLevel::parse_or_default(""), LogLevel::Info);
+    }
+
+    #[test]
+    fn h4_log_level_filter_directive() {
+        assert_eq!(LogLevel::Error.filter_directive(), "hekadrop=error");
+        assert_eq!(LogLevel::Warn.filter_directive(), "hekadrop=warn");
+        assert_eq!(LogLevel::Info.filter_directive(), "hekadrop=info");
+        assert_eq!(LogLevel::Debug.filter_directive(), "hekadrop=debug");
+    }
+
+    #[test]
+    fn h4_advertise_kullanici_false_korunur() {
+        let json = r#"{"advertise": false}"#;
+        let s: Settings = serde_json::from_str(json).expect("parse");
+        assert!(!s.advertise);
+        // Diğer alanlar hâlâ default.
+        assert!(s.keep_stats);
+    }
+
+    #[test]
+    fn h4_disable_update_check_kullanici_true_korunur() {
+        let json = r#"{"disable_update_check": true}"#;
+        let s: Settings = serde_json::from_str(json).expect("parse");
+        assert!(s.disable_update_check);
+    }
+
+    #[test]
+    fn h4_keep_stats_false_korunur() {
+        let json = r#"{"keep_stats": false}"#;
+        let s: Settings = serde_json::from_str(json).expect("parse");
+        assert!(!s.keep_stats);
+    }
+
+    #[test]
+    fn h4_bozuk_log_level_deserialize_hata() {
+        // Geçersiz enum variant serde hatası — Settings tamamen parse edilemez.
+        // `load()` bu durumda default Settings'e düşer (fallback davranışı).
+        let bad = r#"{"log_level": "trace"}"#;
+        let r: Result<Settings, _> = serde_json::from_str(bad);
+        assert!(r.is_err());
     }
 
     #[test]

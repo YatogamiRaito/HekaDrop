@@ -303,13 +303,21 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 // PERF/SAFETY: RwLock write guard altında senkron disk I/O
                                 // yapılmamalı — yavaş diskte tüm okuyucular (UI event loop)
                                 // bloklanır. Snapshot clone + drop guard + lock-dışı save.
+                                //
+                                // H#4 privacy: `keep_stats=false` iken RAM'deki Stats yine
+                                // güncellenir (UI Tanı sekmesi session boyunca doğru kalsın)
+                                // ama disk yazma atlanır. Mevcut stats.json silinmez —
+                                // kullanıcı sonradan tekrar açabilir, eski metrik kaybolmaz.
                                 let st = state::get();
+                                let keep = st.settings.read().keep_stats;
                                 let snap = {
                                     let mut s = st.stats.write();
                                     s.record_received(&remote_name_shared, total_size as u64);
                                     s.clone()
                                 };
-                                let _ = snap.save();
+                                if keep {
+                                    let _ = snap.save();
+                                }
                             }
                             let file_name = path
                                 .file_name()
