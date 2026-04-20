@@ -26,11 +26,13 @@ fi
 echo "==> cargo deb (HekaDrop v${VERSION})"
 cargo deb
 
-# cargo-deb çıktı dosyası: target/debian/hekadrop_<version>_amd64.deb
-# Mimari host'a göre değişebilir (aarch64, arm64, vb.) — o yüzden glob ile bul.
-DEB_SRC="$(ls -t target/debian/hekadrop_"${VERSION}"_*.deb 2>/dev/null | head -n1 || true)"
+# cargo-deb iki isim şeması üretebilir:
+#   1) hekadrop_<version>_<arch>.deb              (eski davranış)
+#   2) hekadrop_<version>-<revision>_<arch>.deb   (cargo-deb v3+ default — revision 1)
+# Glob her ikisini yakalar; mimari host'a göre değişebilir (amd64, arm64, …).
+DEB_SRC="$(ls -t target/debian/hekadrop_"${VERSION}"*_*.deb 2>/dev/null | head -n1 || true)"
 if [[ -z "$DEB_SRC" || ! -f "$DEB_SRC" ]]; then
-  echo "HATA: cargo-deb çıktısı bulunamadı (target/debian/hekadrop_${VERSION}_*.deb)." >&2
+  echo "HATA: cargo-deb çıktısı bulunamadı (target/debian/hekadrop_${VERSION}*_*.deb)." >&2
   exit 1
 fi
 
