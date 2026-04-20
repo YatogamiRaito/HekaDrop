@@ -31,23 +31,14 @@ ignore = [
     "RUSTSEC-2024-0420", # gtk-sys unmaintained
 
     # --- tao/wry dolaylı bağımlılıkları ---
-    # `instant 0.1.13` → `tao` → `web-time` kullanımı planlı (tao 0.32+).
-    "RUSTSEC-2024-0384", # instant unmaintained
     # `proc-macro-error 1.0.4` → `glib-macros` build-dep; macro crate,
     # compile-time only, runtime yüzeyi yok. gtk4-rs geçişinde düşer.
     "RUSTSEC-2024-0370", # proc-macro-error unmaintained
-    # `fxhash 0.2.1` → `selectors` → `kuchikiki` → `wry` HTML parser.
-    # rustc-hash'e geçiş upstream'de tartışılıyor.
-    "RUSTSEC-2025-0057", # fxhash unmaintained
 
     # --- unsound ama fonksiyonel etkisiz ---
     # `glib 0.18.5` VariantStrIter — biz bu iteratörü kullanmıyoruz,
     # tao/wry da kullanmıyor (grep edildi). gtk4-rs'te düzeltildi.
     "RUSTSEC-2024-0429", # glib VariantStrIter unsound
-    # `rand 0.7.3` → `phf_generator` (build-time, compile-only kod
-    # üretir). Runtime'da rand 0.9 kullanıyoruz; bu sadece macro
-    # expansion sırasında deterministic hash için.
-    "RUSTSEC-2026-0097", # rand 0.7 unsound-with-custom-logger
 ]
 
 [licenses]
