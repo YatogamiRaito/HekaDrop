@@ -30,6 +30,11 @@ pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
     // Sadece fiziksel/kablosuz arayüzleri yayınla. Docker, libvirt, Tailscale ve
     // benzerleri LAN üzerinden erişilebilir değil; Android phone yanlış IP'yi
     // deneyip başarısız olursa transfer düşer.
+    //
+    // İki filtre katmanı: (1) OS-seviyeli point-to-point flag (if-addrs 0.15+
+    // `is_p2p`; Windows/macOS/Linux'ta tutarlı olmayan tunel bayrağı), (2) isim
+    // prefix whitelisti — p2p flag yakalamadığı VPN / köprü arayüzleri için.
+    // Defensive: ikisi belt-and-suspenders; biri kaçırırsa diğeri yakalar.
     let skip_prefix = [
         "docker",
         "br-",
@@ -45,6 +50,7 @@ pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
     let addrs: Vec<IpAddr> = if_addrs::get_if_addrs()?
         .into_iter()
         .filter(|i| !i.is_loopback())
+        .filter(|i| !i.is_p2p())
         .filter(|i| !skip_prefix.iter().any(|p| i.name.starts_with(p)))
         .map(|i| i.ip())
         .filter(|ip| ip.is_ipv4())
