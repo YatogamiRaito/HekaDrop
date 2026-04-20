@@ -12,11 +12,8 @@
 #![allow(dead_code)]
 
 pub mod crypto;
+pub mod file_size_guard;
 
-// UKEY2 validator'ına entegrasyon testlerinden erişim için gerekli minimum
-// modül ağacı. Bunlar `ukey2::validate_server_init`'in derlenmesi için şart
-// (use crate::{frame, crypto, securegcm, securemessage}). `pub` değil — sadece
-// re-export ettiğimiz sembolleri dışa açıyoruz.
 mod error;
 mod frame;
 
