@@ -48,6 +48,12 @@ use tracing::{info, warn};
 /// Quick Share yönergeleri 512 KB civarını öneriyor; 1 MB sınırı zorlar.
 const CHUNK_SIZE: usize = 512 * 1024;
 
+/// Son chunk gönderildikten sonra peer'in Disconnection frame'ini (veya
+/// EOF'u) beklemek için üst sınır. Android dosyayı diske yazıp doğrulamayı
+/// bitirmeden bizim TCP'yi kapatmamamız için gerekli. 10 sn, 1 GB'lık bir
+/// dosyanın Android tarafında fsync + doğrulama süresinden rahat geniştir.
+const PEER_DISCONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub struct SendRequest {
     pub device: DiscoveredDevice,
     pub files: Vec<std::path::PathBuf>,
@@ -91,7 +97,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
             path: path.clone(),
             name,
             size: raw_size as i64,
-            payload_id: rand::thread_rng().next_u64() as i64,
+            payload_id: (rand::thread_rng().next_u64() >> 1) as i64,
         });
     }
     // Multi-file toplamda i64 overflow olmaması için checked_add kullan.
@@ -279,6 +285,15 @@ pub async fn send(req: SendRequest) -> Result<()> {
                             .await?;
                             bytes_sent += plan.size;
                         }
+                        // Peer'in son chunk'ı işleyip Disconnection göndermesini
+                        // bekle. Aksi halde Android "Dosya alınamadı" der çünkü
+                        // alıcı son chunk'ı işlerken bizim tarafımız TCP'yi
+                        // kapatmış oluyor.
+                        let _ = tokio::time::timeout(
+                            PEER_DISCONNECT_TIMEOUT,
+                            wait_peer_disconnect(&mut socket, &mut ctx),
+                        )
+                        .await;
                         connection::send_disconnection(&mut socket, &mut ctx)
                             .await
                             .ok();
@@ -412,6 +427,48 @@ async fn send_file_chunks(
         }
     }
     Ok(())
+}
+
+/// Son chunk'tan sonra peer'in `Disconnection` frame'ini göndermesini veya
+/// bağlantının EOF/okuma hatasıyla kapanmasını bekler. Arada gelen
+/// `KeepAlive` çağrılarına yanıt verir; diğer frame tipleri yok sayılır.
+/// Böylece Android dosyayı diske yazıp doğrularken bizim tarafımız TCP'yi
+/// kapatmış olmaz. Üst sınır caller'daki [`PEER_DISCONNECT_TIMEOUT`]
+/// sarmalayıcısıyla uygulanır.
+async fn wait_peer_disconnect(socket: &mut TcpStream, ctx: &mut SecureCtx) -> Result<()> {
+    loop {
+        let raw = match frame::read_frame(socket).await {
+            Ok(r) => r,
+            Err(_) => return Ok(()),
+        };
+        let inner = match ctx.decrypt(&raw) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let Ok(offline) = OfflineFrame::decode(inner.as_ref()) else {
+            continue;
+        };
+        let Some(v1) = offline.v1 else { continue };
+        let ftype = v1
+            .r#type
+            .and_then(|t| v1_frame::FrameType::try_from(t).ok());
+        match ftype {
+            Some(v1_frame::FrameType::Disconnection) => return Ok(()),
+            Some(v1_frame::FrameType::KeepAlive) => {
+                let reply = OfflineFrame {
+                    version: Some(1),
+                    v1: Some(V1Frame {
+                        r#type: Some(v1_frame::FrameType::KeepAlive as i32),
+                        keep_alive: Some(Default::default()),
+                        ..Default::default()
+                    }),
+                };
+                let enc = ctx.encrypt(&reply.encode_to_vec())?;
+                frame::write_frame(socket, &enc).await?;
+            }
+            _ => {}
+        }
+    }
 }
 
 fn wrap_payload_transfer(

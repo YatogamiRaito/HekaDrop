@@ -88,16 +88,28 @@ fn parse(info: &mdns_sd::ServiceInfo) -> Option<DiscoveredDevice> {
     let n_b64 = txt.get("n").and_then(|p| p.val_str().into())?;
     let endpoint_info = URL_SAFE_NO_PAD.decode(n_b64).ok()?;
 
-    if endpoint_info.len() < 18 {
+    if endpoint_info.len() < 17 {
         return None;
     }
     let bitmap = endpoint_info[0];
     let device_type = (bitmap >> 1) & 0x07;
-    let name_len = endpoint_info[17] as usize;
-    if endpoint_info.len() < 18 + name_len {
-        return None;
+
+    let name = if endpoint_info.len() >= 18 {
+        let name_len = endpoint_info[17] as usize;
+        if endpoint_info.len() >= 18 + name_len && name_len > 0 {
+            String::from_utf8(endpoint_info[18..18 + name_len].to_vec()).ok()
+        } else {
+            None
+        }
+    } else {
+        None
     }
-    let name = String::from_utf8(endpoint_info[18..18 + name_len].to_vec()).ok()?;
+    .unwrap_or_else(|| {
+        info.get_hostname()
+            .trim_end_matches('.')
+            .trim_end_matches(".local")
+            .to_string()
+    });
 
     Some(DiscoveredDevice {
         name,
