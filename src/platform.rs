@@ -316,6 +316,48 @@ pub fn open_url(url: &str) {
     }
 }
 
+/// Panodan UTF-8 metin okur. Metin yoksa veya okuma başarısızsa `None`.
+///
+/// - macOS: `pbpaste`
+/// - Linux: Wayland (`wl-paste`) → X11 (`xclip` → `xsel`) sırayla
+/// - Windows: `GetClipboardData(CF_UNICODETEXT)` — UTF-16 → UTF-8 lossy
+pub fn paste_from_clipboard() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        win::clipboard_get().ok().flatten()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::process::Stdio;
+
+        #[cfg(target_os = "macos")]
+        let candidates: &[&[&str]] = &[&["pbpaste"]];
+        #[cfg(target_os = "linux")]
+        let candidates: &[&[&str]] = &[
+            &["wl-paste", "--no-newline"],
+            &["xclip", "-selection", "clipboard", "-o"],
+            &["xsel", "--clipboard", "--output"],
+        ];
+
+        for args in candidates {
+            let mut cmd = Command::new(args[0]);
+            if args.len() > 1 {
+                cmd.args(&args[1..]);
+            }
+            let out = cmd.stderr(Stdio::null()).output();
+            if let Ok(o) = out {
+                if o.status.success() {
+                    if let Ok(s) = String::from_utf8(o.stdout) {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 /// Metni sistem panosuna kopyalar.
 ///
 /// - macOS: `pbcopy`
@@ -380,9 +422,11 @@ pub(crate) mod win {
         CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
     };
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+        CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows::Win32::System::Memory::{
+        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, HGLOBAL,
+    };
     use windows::Win32::System::SystemInformation::{ComputerNameDnsHostname, GetComputerNameExW};
     use windows::Win32::UI::Shell::{
         ILCreateFromPathW, ILFree, SHGetKnownFolderPath, SHOpenFolderAndSelectItems, ShellExecuteW,
@@ -636,6 +680,39 @@ pub(crate) mod win {
                     Err(e)
                 }
             }
+        }
+    }
+
+    /// Clipboard'dan UTF-16 metni okur; UTF-8 string'e `from_utf16_lossy`
+    /// ile çevirir. Clipboard'da metin yoksa veya format uygun değilse
+    /// `Ok(None)`; API hataları `Err`.
+    pub(super) fn clipboard_get() -> Result<Option<String>> {
+        const CF_UNICODETEXT: u32 = 13;
+        // SAFETY: OpenClipboard alır → GetClipboardData handle'ı döner (sahiplik
+        // clipboard'ta kalır, biz sadece okuruz). GlobalLock → sabit pointer,
+        // ardından PCWSTR::len ile NUL'a kadar sayılır; slice `len` bayt ile
+        // sınırlı. GlobalUnlock ve CloseClipboard her yoldan çağrılır.
+        unsafe {
+            OpenClipboard(None)?;
+            let handle = match GetClipboardData(CF_UNICODETEXT) {
+                Ok(h) => h,
+                Err(_) => {
+                    let _ = CloseClipboard();
+                    return Ok(None);
+                }
+            };
+            let hglobal = HGLOBAL(handle.0 as _);
+            let ptr = GlobalLock(hglobal) as *const u16;
+            if ptr.is_null() {
+                let _ = CloseClipboard();
+                return Ok(None);
+            }
+            let len = PCWSTR::from_raw(ptr).len();
+            let slice = std::slice::from_raw_parts(ptr, len);
+            let s = String::from_utf16_lossy(slice);
+            let _ = GlobalUnlock(hglobal);
+            let _ = CloseClipboard();
+            Ok(Some(s))
         }
     }
 }
