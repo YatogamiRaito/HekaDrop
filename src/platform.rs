@@ -425,7 +425,7 @@ pub(crate) mod win {
         CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
     };
     use windows::Win32::System::Memory::{
-        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, HGLOBAL,
+        GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE, HGLOBAL,
     };
     use windows::Win32::System::SystemInformation::{ComputerNameDnsHostname, GetComputerNameExW};
     use windows::Win32::UI::Shell::{
@@ -684,14 +684,24 @@ pub(crate) mod win {
     }
 
     /// Clipboard'dan UTF-16 metni okur; UTF-8 string'e `from_utf16_lossy`
-    /// ile çevirir. Clipboard'da metin yoksa veya format uygun değilse
-    /// `Ok(None)`; API hataları `Err`.
+    /// ile çevirir.
+    ///
+    /// Dönüş semantiği:
+    ///   - `Ok(Some(s))`: Clipboard'da CF_UNICODETEXT formatı var ve başarıyla okundu.
+    ///   - `Ok(None)`: Pano metin formatı içermiyor (`GetClipboardData` başarısız).
+    ///   - `Err(_)`: `OpenClipboard`/`GlobalLock`/`GlobalSize` gibi Win32 API
+    ///     hataları — caller handle'layabilsin.
+    ///
+    /// SECURITY: CF_UNICODETEXT MSDN spec'i gereği NUL-terminated, ama yine
+    /// de `GlobalSize` ile hafıza blokunun gerçek üst sınırını alıp okumayı
+    /// buraya clamp ediyoruz (malformed/oob handle'da buffer over-read yok).
     pub(super) fn clipboard_get() -> Result<Option<String>> {
         const CF_UNICODETEXT: u32 = 13;
         // SAFETY: OpenClipboard alır → GetClipboardData handle'ı döner (sahiplik
-        // clipboard'ta kalır, biz sadece okuruz). GlobalLock → sabit pointer,
-        // ardından PCWSTR::len ile NUL'a kadar sayılır; slice `len` bayt ile
-        // sınırlı. GlobalUnlock ve CloseClipboard her yoldan çağrılır.
+        // clipboard'ta kalır, biz sadece okuruz). GlobalLock → sabit pointer.
+        // Okunacak u16 sayısı MIN(GlobalSize/2, PCWSTR::len()) — iki bağımsız
+        // üst sınır, ikisi de NUL'a kadar garanti verir. GlobalUnlock ve
+        // CloseClipboard her yoldan çağrılır; handle'ın sahipliği clipboard'ta.
         unsafe {
             OpenClipboard(None)?;
             let handle = match GetClipboardData(CF_UNICODETEXT) {
@@ -705,9 +715,14 @@ pub(crate) mod win {
             let ptr = GlobalLock(hglobal) as *const u16;
             if ptr.is_null() {
                 let _ = CloseClipboard();
-                return Ok(None);
+                return Err(windows::core::Error::from_win32());
             }
-            let len = PCWSTR::from_raw(ptr).len();
+            // GlobalSize bayt döner; u16 slot sayısına çevir.
+            let size_bytes = GlobalSize(hglobal);
+            let max_u16 = if size_bytes >= 2 { size_bytes / 2 } else { 0 };
+            // İkinci üst sınır: NUL'a kadar say. İkisi de NUL/OOM'a karşı savunma.
+            let nul_len = PCWSTR::from_raw(ptr).len();
+            let len = nul_len.min(max_u16);
             let slice = std::slice::from_raw_parts(ptr, len);
             let s = String::from_utf16_lossy(slice);
             let _ = GlobalUnlock(hglobal);

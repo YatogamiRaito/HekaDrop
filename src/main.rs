@@ -500,8 +500,10 @@ fn run_app() -> ! {
 fn handle_ipc(cmd: &str) {
     // PRIVACY: Metin gönderim komutları kullanıcı verisi içerir; log'a düşmesin.
     // `send_text::` prefix'i yalnız başlangıç kısmıyla logla, geri kalanı redact.
+    // PERF: IPC handler UI/event-loop thread'inde çalışır; `len()` O(1) bayt
+    // sayısı yeter — `chars().count()` büyük metinlerde O(n) gecikme yaratır.
     if let Some(rest) = cmd.strip_prefix("send_text::") {
-        info!("[ui] ipc: send_text:: ({} karakter)", rest.chars().count());
+        info!("[ui] ipc: send_text:: ({} bayt)", rest.len());
         if let Some(rt) = RUNTIME.get() {
             let text = rest.to_string();
             rt.spawn(initiate_text_send_flow(text));
@@ -539,18 +541,26 @@ fn handle_ipc(cmd: &str) {
             }
         }
         "paste_send" => {
-            // Ctrl/Cmd+V global handler — pano boşsa sessizce bildir; doluysa
-            // text send flow'u başlat.
-            let clipboard = platform::paste_from_clipboard();
-            match clipboard {
-                Some(t) if !t.trim().is_empty() => {
-                    if let Some(rt) = RUNTIME.get() {
-                        rt.spawn(initiate_text_send_flow(t));
+            // Ctrl/Cmd+V global handler — pano okuması Linux/macOS'ta external
+            // command spawn içerir (xclip/pbpaste), Windows'ta OpenClipboard
+            // bir komşu uygulamayı bekleyebilir. Her ikisi de IPC thread'ini
+            // bloklar; `spawn_blocking` ile arkaplana al.
+            if let Some(rt) = RUNTIME.get() {
+                let rt_handle = rt.clone();
+                rt.spawn(async move {
+                    let clipboard = tokio::task::spawn_blocking(platform::paste_from_clipboard)
+                        .await
+                        .ok()
+                        .flatten();
+                    match clipboard {
+                        Some(t) if !t.trim().is_empty() => {
+                            rt_handle.spawn(initiate_text_send_flow(t));
+                        }
+                        _ => {
+                            ui::notify(i18n::t("notify.app_name"), i18n::t("notify.text_empty"));
+                        }
                     }
-                }
-                _ => {
-                    ui::notify(i18n::t("notify.app_name"), i18n::t("notify.text_empty"));
-                }
+                });
             }
         }
         "settings_get" => {

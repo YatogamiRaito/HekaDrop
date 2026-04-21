@@ -381,12 +381,20 @@ pub struct SendTextRequest {
     pub text: String,
 }
 
+/// TcpStream::connect için üst sınır. Hedef cihaz kapalı/erişilemez iken
+/// OS TCP SYN retry'ını ~75 sn bekletmesin diye 10 sn ile keser.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub async fn send_text(req: SendTextRequest) -> Result<()> {
     let text = req.text;
     if text.is_empty() {
         bail!("boş metin gönderilemez");
     }
-    let total_bytes: i64 = text.len() as i64;
+    // `as i64` cast i64::MAX üstü uzunlukta wrap/negatif üretir; protokol
+    // field'ları (`size`, `total_size`) bozulur. Pratikte bir String bu boyuta
+    // ulaşamaz ama savunma amaçlı erken hata.
+    let total_bytes: i64 = i64::try_from(text.len())
+        .map_err(|_| anyhow!("metin payload çok büyük: {} bayt", text.len()))?;
     let payload_id = (rand::thread_rng().next_u64() >> 1) as i64;
     // TEXT (1) — URL tipini peer URL schema doğrulayıp otomatik açar; genel
     // metin için TEXT güvenli default. URL şeklinde ise gene TEXT olarak
@@ -397,8 +405,27 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
         req.device.name, req.device.addr, req.device.port, total_bytes
     );
 
+    // Guard'ı connect'ten ÖNCE oluşturuyoruz — TCP connect takılırsa kullanıcı
+    // tray'den "İptal"le durdurabilsin. Guard drop edildiğinde cancel_token
+    // otomatik düşer.
+    let peer_label = req.device.name.clone();
+    let transfer_id = format!("out-text:{}:{}", req.device.addr, req.device.port);
+    let _guard = state::TransferGuard::new(&transfer_id);
+    let cancel_token: CancellationToken = _guard.token.clone();
+
     let addr = format!("{}:{}", req.device.addr, req.device.port);
-    let mut socket = TcpStream::connect(&addr).await?;
+    // Connect'i hem timeout hem cancel ile sarmala — erişilemez host ~75 sn
+    // SYN retry bekletmesin, iptal anında çıkabilsin.
+    let mut socket = tokio::select! {
+        biased;
+        _ = cancel_token.cancelled() => bail!("kullanıcı aktarımı iptal etti"),
+        res = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr)) => {
+            match res {
+                Ok(r) => r?,
+                Err(_) => bail!("bağlantı zaman aşımına uğradı ({} sn): {}", CONNECT_TIMEOUT.as_secs(), addr),
+            }
+        }
+    };
     if let Err(e) = socket.set_nodelay(true) {
         warn!("[sender] set_nodelay başarısız ({}): {}", addr, e);
     }
@@ -432,10 +459,6 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
 
     let mut introduction_sent = false;
     let mut sent_paired_result = false;
-    let peer_label = req.device.name.clone();
-    let transfer_id = format!("out-text:{}:{}", req.device.addr, req.device.port);
-    let _guard = state::TransferGuard::new(&transfer_id);
-    let cancel_token: CancellationToken = _guard.token.clone();
 
     loop {
         let raw = tokio::select! {
@@ -477,27 +500,23 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                     .ok_or_else(|| anyhow!("sharing v1 yok"))?;
                 let stype = shv1.r#type.and_then(|t| sh_v1::FrameType::try_from(t).ok());
                 match stype {
-                    Some(sh_v1::FrameType::PairedKeyEncryption) => {
-                        if !sent_paired_result {
-                            connection::send_sharing_frame(
-                                &mut socket,
-                                &mut ctx,
-                                &connection::build_paired_key_result(),
-                            )
-                            .await?;
-                            sent_paired_result = true;
-                        }
+                    Some(sh_v1::FrameType::PairedKeyEncryption) if !sent_paired_result => {
+                        connection::send_sharing_frame(
+                            &mut socket,
+                            &mut ctx,
+                            &connection::build_paired_key_result(),
+                        )
+                        .await?;
+                        sent_paired_result = true;
                     }
-                    Some(sh_v1::FrameType::PairedKeyResult) => {
-                        if !introduction_sent {
-                            let intro = build_introduction_text(payload_id, text_kind, total_bytes);
-                            connection::send_sharing_frame(&mut socket, &mut ctx, &intro).await?;
-                            introduction_sent = true;
-                            info!(
-                                "[sender] Introduction gönderildi — metin ({} bayt)",
-                                total_bytes
-                            );
-                        }
+                    Some(sh_v1::FrameType::PairedKeyResult) if !introduction_sent => {
+                        let intro = build_introduction_text(payload_id, text_kind, total_bytes);
+                        connection::send_sharing_frame(&mut socket, &mut ctx, &intro).await?;
+                        introduction_sent = true;
+                        info!(
+                            "[sender] Introduction gönderildi — metin ({} bayt)",
+                            total_bytes
+                        );
                     }
                     Some(sh_v1::FrameType::Response) => {
                         let status = shv1
@@ -594,20 +613,28 @@ async fn send_text_bytes(
     peer_label: &str,
     cancel: &CancellationToken,
 ) -> Result<()> {
-    let total = data.len() as i64;
-    let mut offset: i64 = 0;
-    while (offset as usize) < data.len() {
+    // `as i64` cast i64::MAX üstünde wrap üretir; header'ın `total_size`'ı
+    // negatif olup receiver protokol hatası verir. Pratikte erişilemez ama
+    // erken ve anlamlı hata daha iyi.
+    let total = i64::try_from(data.len())
+        .map_err(|_| anyhow!("metin payload çok büyük: {} bayt", data.len()))?;
+    let mut offset: usize = 0;
+    while offset < data.len() {
         if cancel.is_cancelled() {
             bail!("metin chunk gönderim sırasında iptal");
         }
-        let end = ((offset as usize) + CHUNK_SIZE).min(data.len());
-        let body = data[offset as usize..end].to_vec();
+        let end = (offset + CHUNK_SIZE).min(data.len());
+        let body = data[offset..end].to_vec();
         let last_flag = 0;
-        let wrapped = wrap_bytes_payload_transfer(payload_id, total, offset, last_flag, body);
+        let offset_i64 = i64::try_from(offset)
+            .map_err(|_| anyhow!("metin payload offset'i çok büyük: {}", offset))?;
+        let wrapped = wrap_bytes_payload_transfer(payload_id, total, offset_i64, last_flag, body);
         let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
         frame::write_frame(socket, &enc).await?;
-        offset = end as i64;
-        if let Some(percent) = compute_percent(0, offset, total) {
+        offset = end;
+        let offset_i64 = i64::try_from(offset)
+            .map_err(|_| anyhow!("metin payload offset'i çok büyük: {}", offset))?;
+        if let Some(percent) = compute_percent(0, offset_i64, total) {
             state::set_progress(ProgressState::Receiving {
                 device: peer_label.to_string(),
                 file: crate::i18n::t("sender.text_summary").to_string(),
@@ -960,5 +987,40 @@ mod tests {
         assert_eq!(guess_mime("belge.pdf"), "application/pdf");
         assert_eq!(guess_mime("bilinmiyor.xyz"), "application/octet-stream");
         assert_eq!(guess_mime("uzantisiz"), "application/octet-stream");
+    }
+
+    // Regression: text_metadata alanları payload_id/size/type doğru eşlenmeli,
+    // receiver introduction'ı dolu (planned_texts boş değil) olarak görsün.
+    #[test]
+    fn build_introduction_text_alanlari_dogru_doldurur() {
+        let frame = build_introduction_text(42, TextKind::Text as i32, 128);
+        assert_eq!(frame.version, Some(ShVersion::V1 as i32));
+        let v1 = frame.v1.expect("v1 frame yok");
+        assert_eq!(v1.r#type, Some(sh_v1::FrameType::Introduction as i32));
+        let intro = v1.introduction.expect("introduction yok");
+        assert!(intro.file_metadata.is_empty());
+        assert_eq!(intro.text_metadata.len(), 1);
+        let m = &intro.text_metadata[0];
+        assert_eq!(m.payload_id, Some(42));
+        assert_eq!(m.size, Some(128));
+        assert_eq!(m.r#type, Some(TextKind::Text as i32));
+    }
+
+    // Regression: Bytes payload header type File DEĞİL, Bytes olmalı —
+    // receiver Bytes dışı payload'ı dosya olarak yazmaya çalışır.
+    #[test]
+    fn wrap_bytes_payload_transfer_bytes_header_ve_chunk_uretir() {
+        let frame = wrap_bytes_payload_transfer(7, 10, 3, 0, vec![1, 2, 3]);
+        let v1 = frame.v1.expect("v1 yok");
+        assert_eq!(v1.r#type, Some(v1_frame::FrameType::PayloadTransfer as i32));
+        let pt = v1.payload_transfer.expect("payload_transfer yok");
+        let hdr = pt.payload_header.expect("header yok");
+        assert_eq!(hdr.r#type, Some(PayloadType::Bytes as i32));
+        assert_eq!(hdr.id, Some(7));
+        assert_eq!(hdr.total_size, Some(10));
+        let ch = pt.payload_chunk.expect("chunk yok");
+        assert_eq!(ch.offset, Some(3));
+        assert_eq!(ch.flags, Some(0));
+        assert_eq!(ch.body.as_deref(), Some(&[1u8, 2, 3][..]));
     }
 }

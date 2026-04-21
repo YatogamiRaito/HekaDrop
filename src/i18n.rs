@@ -231,7 +231,7 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "webview.drop.line2" => "veya tıkla",
         "webview.progress.preparing" => "Hazırlanıyor…",
         "webview.progress.default" => "Aktarım…",
-        "webview.text.placeholder" => "Göndermek istediğin metni yaz ya da yapıştır (Ctrl+V)",
+        "webview.text.placeholder" => "Göndermek istediğin metni yaz ya da yapıştır (Ctrl/Cmd+V)",
         "webview.text.send" => "Gönder",
         "webview.btn.open_downloads" => "İndirme klasörünü aç",
         "webview.btn.hide_to_tray" => "Menü çubuğuna gizle",
