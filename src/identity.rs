@@ -17,8 +17,10 @@
 //!   `tmp-file + rename` kullanıldığı için yarım yazılmış anahtar dosyası
 //!   kalmaz ve dosya hiçbir zaman world-readable olarak görünmez (rename
 //!   inode'u koruduğu için izinler final path'e aynen taşınır).
-//! - **Windows:** NTFS default owner-only ACL kabul; tam `SetNamedSecurityInfoW`
-//!   ile ACL sıkılaştırma follow-up (v0.7).
+//! - **Windows:** `atomic_write_mode` sonrası `icacls` ile DACL explicit
+//!   sertleştirilir: inheritance disable (`/inheritance:r`) + yalnız
+//!   `OWNER RIGHTS` SID'ine Full (`*S-1-3-4:(F)`). NTFS default ACL'ye
+//!   güvenmek yerine runtime'da deterministik garanti.
 //! - Korrupt (boyut ≠ 32) dosya → hata döner; **auto-regenerate etmeyiz**,
 //!   kullanıcı manuel müdahale etmeli (aksi halde eski trust ilişkileri
 //!   sessizce kaybolurdu).
@@ -88,11 +90,19 @@ impl DeviceIdentity {
         crate::settings::atomic_write_mode(path, &key, Some(0o600))
             .with_context(|| format!("identity.key yazılamadı: {}", path.display()))?;
 
-        // Windows: NTFS default ACL (kullanıcı profili altında owner-only)
-        // kabul edilebilir. Tam ACL sıkılaştırma (SetNamedSecurityInfoW) v0.7
-        // follow-up — şu an en-iyi-çaba.
-        // TODO(v0.7): Windows ACL sıkılaştırma — SetNamedSecurityInfoW ile
-        // yalnız current user SID'ine KEY_READ + KEY_WRITE bırak.
+        // Windows: DACL'i explicit sıkılaştır. NTFS default ACL kullanıcı
+        // profili altında owner-only olmayı **genellikle** sağlar ama bu
+        // garantili değil (group policy, inherited ACE'ler, taşınan profiller
+        // varyasyon üretebilir). `harden_identity_file_acl` inheritance'ı
+        // keser + yalnız OWNER RIGHTS SID'ine Full verir.
+        //
+        // Hata fatal değil — ACL sertleştirme başarısız olsa bile
+        // `atomic_write_mode` zaten dosyayı yazdı ve çoğu ortamda default ACL
+        // yeterli. Warn log'la devam ediyoruz; kullanıcı identity üretimi
+        // tamamen başarısız olmuş gibi algılamasın.
+        if let Err(e) = harden_identity_file_acl(path) {
+            tracing::warn!("identity.key Windows ACL sertleştirme başarısız: {e} (devam ediliyor)");
+        }
 
         Ok(Self { long_term_key: key })
     }
@@ -132,6 +142,63 @@ impl DeviceIdentity {
 
 pub(crate) fn identity_path() -> PathBuf {
     crate::platform::config_dir().join("identity.key")
+}
+
+/// Windows: `identity.key` DACL'ini sıkılaştır.
+///
+/// **Neden:** NTFS default ACL kullanıcı profili altında owner-only olmayı
+/// genellikle verir, ama GPO / inherited ACE / migrate edilmiş profil gibi
+/// senaryolarda bu varsayım kırılabilir. `identity.key`, trust ilişkisini
+/// belirleyen uzun-süreli cihaz kimlik anahtarı olduğu için **runtime'da
+/// deterministik** DACL istiyoruz.
+///
+/// **Yaklaşım — `icacls.exe`:** `windows` crate ile doğrudan
+/// `SetNamedSecurityInfoW` çağırmak daha hızlı/temiz olurdu ancak
+/// `Win32_Security_Authorization` feature şu an `Cargo.toml`'da etkin değil
+/// ve v0.61'e yeni feature eklemek wry/webview2-com uyumluluğunu test
+/// gerektiriyor. `icacls.exe` Windows'un built-in aracı (System32) — ek
+/// bağımlılık yok ve argümanlar self-documenting:
+///
+/// - `/inheritance:r` — parent dizinden gelen miras ACE'leri temizle.
+/// - `/grant:r *S-1-3-4:(F)` — **yalnız** `OWNER RIGHTS` well-known SID'ine
+///   Full access ver (`:r` = replace, kümülatif değil).
+///
+/// `*S-1-3-4` (OWNER RIGHTS) dosyanın owner'ı her kim ise onu eşler —
+/// username/SID hard-code etmekten kaçınırız, user profilinde dosya zaten
+/// current user'a ait oluyor.
+///
+/// **Test:** Windows CI yok; manuel doğrulama `icacls <path>` çıktısının
+/// yalnız `OWNER RIGHTS:(F)` ACE'si içerdiğini göstermeli.
+#[cfg(target_os = "windows")]
+fn harden_identity_file_acl(path: &std::path::Path) -> Result<()> {
+    use std::process::Command;
+
+    // `icacls` PATH'te olmalı (System32 varsayılan olarak PATH'te) — sistem
+    // PATH'i sabotaj edilmişse fallback absolute path. Absolute path tercihen
+    // %SystemRoot%\System32\icacls.exe; %SystemRoot% tipik olarak C:\Windows.
+    let output = Command::new("icacls")
+        .arg(path)
+        .arg("/inheritance:r")
+        .args(["/grant:r", "*S-1-3-4:(F)"])
+        .output()
+        .context("icacls.exe çalıştırılamadı")?;
+
+    if !output.status.success() {
+        bail!(
+            "icacls başarısız (exit={:?}): stderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// POSIX: no-op — `atomic_write_mode(..., Some(0o600))` zaten
+/// `O_EXCL | mode(0o600)` ile açtığı için izinler ilk andan itibaren
+/// owner-only. Rename inode'u koruduğundan final path de 0o600 olur.
+#[cfg(not(target_os = "windows"))]
+fn harden_identity_file_acl(_path: &std::path::Path) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]

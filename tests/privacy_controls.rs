@@ -91,11 +91,12 @@ fn keep_stats_false_mevcut_json_silmez_sadece_yazmayi_durdurur() {
 }
 
 #[test]
-fn disable_update_check_default_false_v05_davranisi() {
-    // v0.5'te kullanıcı "Güncelleme kontrol et" butonuna bastığında
-    // GitHub API'ye istek giderdi; default=false ile bu davranış korunur.
+fn disable_update_check_default_true_privacy_first() {
+    // v0.7 privacy-first karar: update check varsayılan KAPALI. Kullanıcı
+    // Ayarlar'dan açmadıkça GitHub API'ye istek gitmez. Migrate eden v0.5
+    // kullanıcıları da aynı default'u alır (serde field default).
     let s = Settings::default();
-    assert!(!s.disable_update_check);
+    assert!(s.disable_update_check);
 }
 
 #[test]
@@ -106,14 +107,15 @@ fn disable_update_check_env_var_or_setting_or_davranisi() {
     // iken env olsun ya da olmasın skip.
     //
     // Env var okuma main.rs içinde (`std::env::var_os`); burada sadece
-    // Settings tarafının flag olarak davranışını test ediyoruz.
-    let s_off = Settings::default();
-    assert!(!s_off.disable_update_check);
-    let s_on = Settings {
-        disable_update_check: true,
+    // Settings tarafının flag olarak davranışını test ediyoruz. v0.7:
+    // default=true (privacy-first). User explicit false yazarsa enabled.
+    let s_default = Settings::default();
+    assert!(s_default.disable_update_check);
+    let s_opt_in = Settings {
+        disable_update_check: false,
         ..Settings::default()
     };
-    assert!(s_on.disable_update_check);
+    assert!(!s_opt_in.disable_update_check);
 }
 
 #[test]
@@ -152,7 +154,9 @@ fn pre_h4_config_yeni_alanlar_default_olarak_yuklenir() {
     assert!(s.advertise, "v0.5→H#4 migration: advertise true default");
     assert_eq!(s.log_level, LogLevel::Info);
     assert!(s.keep_stats, "v0.5→H#4 migration: keep_stats true default");
-    assert!(!s.disable_update_check);
+    // v0.7 privacy-first: update check varsayılan kapalı (migrate eden
+    // kullanıcılar dahil). Kullanıcı opt-in yapmalı.
+    assert!(s.disable_update_check);
 }
 
 #[test]

@@ -636,6 +636,130 @@
     font: inherit;
   }
 
+  /* Inline restart/hot-swap badge next to privacy toggles/selects.
+     Restart badge uses a warning tint; hot-swap badge is quieter (success). */
+  .restart-badge, .hotswap-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .restart-badge {
+    /* --danger is the best token-aligned warning signal we have; used at
+       low emphasis — the text + border convey the meaning redundantly. */
+    color: var(--danger);
+  }
+  .hotswap-badge {
+    color: var(--success);
+  }
+
+  /* Expired trusted-item visual state (badge + grayscale + order). */
+  .trusted-item.expired {
+    opacity: 0.72;
+    border: 1px solid var(--danger);
+  }
+  .trusted-item .badge-expired {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+    color: var(--danger);
+    margin-top: 2px;
+    width: fit-content;
+  }
+
+  /* Modal dialog (bulk trust clear confirmation). Simple centered overlay;
+     focus trapped via JS (Cancel button receives focus on open). */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal-dialog {
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    padding: 16px;
+    max-width: 320px;
+    width: calc(100% - 32px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .modal-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--fg-primary);
+  }
+  .modal-body {
+    font-size: 12px;
+    color: var(--fg-secondary);
+    margin: 0;
+    line-height: 1.4;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .modal-actions button {
+    width: auto;
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 12px;
+    justify-content: center;
+    text-align: center;
+  }
+
+  /* Auto-save toast (bottom-centered, fades out). Reuses --success color. */
+  .toast {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--bg-secondary);
+    color: var(--success);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid var(--border-hairline);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    z-index: 90;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* Update-status line under the Diagnostics "check update" button. */
+  .update-status {
+    font-size: 11px;
+    color: var(--fg-secondary);
+    padding: 4px 0;
+    min-height: 1em;
+  }
+  .update-status.error { color: var(--danger); }
+  .update-status.success { color: var(--success); }
+
   /* Focus management: hide ring for pointer users, show for keyboard.
      Ring uses --focus-ring (= --accent) — contrast verified in :root
      token blocks; exceeds WCAG 1.4.11 UI-component 3:1 both modes. */
@@ -827,7 +951,7 @@
         <div id="trusted-list" role="list" aria-labelledby="trusted-label">
           <div class="trusted-empty" data-i18n="webview.settings.trusted_empty">Henüz güvenilen cihaz yok</div>
         </div>
-        <button type="button" class="danger" onclick="act('trusted_clear')"
+        <button type="button" class="danger" id="trusted-clear-btn"
                 style="margin-top:6px"
                 aria-label="Güvenilen cihazların tümünü temizle (sil)">
           <span class="icon" aria-hidden="true">✕</span><span data-i18n="webview.settings.clear_all">Tümünü temizle</span>
@@ -837,11 +961,14 @@
       <!-- H#4 Privacy controls — advertise / log_level / keep_stats / disable_update_check -->
       <div class="field privacy-section" role="group" aria-labelledby="privacy-title">
         <h3 id="privacy-title" class="privacy-title" data-i18n="webview.privacy.title">Gizlilik</h3>
-        <p class="privacy-restart-notice" data-i18n="webview.privacy.restart_notice">Değişiklik için uygulamayı yeniden başlat.</p>
+        <p class="privacy-restart-notice" data-i18n="webview.privacy.restart_notice">Bazı ayarlar için yeniden başlatma gerekir (rozetlere bakın).</p>
 
         <label class="toggle" id="set-advertise-wrap" for="set-advertise">
           <span class="toggle-main">
-            <span data-i18n="webview.privacy.advertise.label">LAN'da görünür ol (mDNS yayını)</span>
+            <span>
+              <span data-i18n="webview.privacy.advertise.label">LAN'da görünür ol (mDNS yayını)</span>
+              <span class="restart-badge" data-i18n="webview.privacy.restart_badge" title="Değişiklik uygulama yeniden başlatılınca etkin olur">Restart gerekli</span>
+            </span>
             <span class="toggle-desc" data-i18n="webview.privacy.advertise.desc">Kapatınca cihaz Android "Quick Share" listesinde çıkmaz; sen yine gönderebilirsin.</span>
           </span>
           <span class="toggle-control">
@@ -852,7 +979,10 @@
         </label>
 
         <div class="field" style="margin-top:10px">
-          <label for="set-log-level" data-i18n="webview.privacy.log_level.label">Log seviyesi</label>
+          <label for="set-log-level">
+            <span data-i18n="webview.privacy.log_level.label">Log seviyesi</span>
+            <span class="restart-badge" data-i18n="webview.privacy.restart_badge" title="Değişiklik uygulama yeniden başlatılınca etkin olur">Restart gerekli</span>
+          </label>
           <select id="set-log-level" autocomplete="off">
             <option value="error" data-i18n="webview.privacy.log_level.error">Error (sadece hata)</option>
             <option value="warn" data-i18n="webview.privacy.log_level.warn">Warn (uyarı + hata)</option>
@@ -864,7 +994,10 @@
 
         <label class="toggle" id="set-keep-stats-wrap" for="set-keep-stats" style="margin-top:10px">
           <span class="toggle-main">
-            <span data-i18n="webview.privacy.keep_stats.label">Aktarım istatistiklerini kaydet</span>
+            <span>
+              <span data-i18n="webview.privacy.keep_stats.label">Aktarım istatistiklerini kaydet</span>
+              <span class="hotswap-badge" data-i18n="webview.privacy.hotswap_badge" title="Değişiklik anında uygulanır">Anında uygulanır</span>
+            </span>
             <span class="toggle-desc" data-i18n="webview.privacy.keep_stats.desc">Kapatınca yeni aktarımlar diske yazılmaz; mevcut stats.json silinmez.</span>
           </span>
           <span class="toggle-control">
@@ -876,21 +1009,63 @@
 
         <label class="toggle" id="set-update-check-wrap" for="set-update-check" style="margin-top:10px">
           <span class="toggle-main">
-            <span data-i18n="webview.privacy.update_check.label">Güncellemeleri otomatik kontrol et</span>
-            <span class="toggle-desc" data-i18n="webview.privacy.update_check.desc">Kapalıysa GitHub API'ye istek atılmaz. HEKADROP_NO_UPDATE_CHECK env'i de aynı etki.</span>
+            <span>
+              <span data-i18n="webview.privacy.update_check.label">Güncelleme kontrolü (GitHub Releases API'sine bağlanır)</span>
+              <span class="hotswap-badge" data-i18n="webview.privacy.hotswap_badge" title="Değişiklik anında uygulanır">Anında uygulanır</span>
+            </span>
+            <span class="toggle-desc" data-i18n="webview.privacy.update_check.desc">Varsayılan kapalıdır. Otomatik güncelleme bildirimi için açın. HEKADROP_NO_UPDATE_CHECK env'i de aynı etkidedir.</span>
           </span>
           <span class="toggle-control">
-            <span class="toggle-badge" id="set-update-check-badge" aria-hidden="true">Açık</span>
+            <span class="toggle-badge" id="set-update-check-badge" aria-hidden="true">Kapalı</span>
             <input type="checkbox" id="set-update-check" role="switch" class="sr-only">
             <span class="switch" aria-hidden="true"></span>
           </span>
         </label>
       </div>
 
-      <button type="button" class="primary" onclick="saveSettings()" data-i18n="webview.settings.save">Kaydet</button>
-      <div class="save-note" id="save-note" role="status"
-           aria-live="polite" aria-atomic="true" data-i18n="webview.settings.saved">✓ Kaydedildi</div>
+      <!-- Auto-save: "Kaydet" butonu kaldırıldı; tüm değişiklikler
+           debounce ile arka planda kaydedilir. `save-note` artık toast
+           olarak gösterilmiyor (bkz. `#autosave-toast`). -->
     </section>
+
+    <!-- Bulk-clear confirmation modal (trusted devices) -->
+    <div class="modal-backdrop" id="clear-trusted-modal" role="dialog"
+         aria-modal="true" aria-labelledby="clear-trusted-title"
+         aria-describedby="clear-trusted-body" hidden>
+      <div class="modal-dialog">
+        <h3 class="modal-title" id="clear-trusted-title"
+            data-i18n="webview.settings.trust_clear_title">Tüm güvenilen cihazları temizle</h3>
+        <p class="modal-body" id="clear-trusted-body"
+           data-i18n="webview.settings.trust_clear_body">Tüm güvenilen cihazlar silinecek. Bu işlem geri alınamaz. Devam edilsin mi?</p>
+        <div class="modal-actions">
+          <button type="button" id="clear-trusted-cancel"
+                  data-i18n="webview.settings.trust_clear_cancel">İptal</button>
+          <button type="button" class="danger" id="clear-trusted-confirm"
+                  data-i18n="webview.settings.trust_clear_confirm">Temizle</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Onboarding modal — ilk açılışta tek sefer gösterilir. Rust tarafı
+         `window.showOnboarding({title, body, cta_settings, cta_dismiss})`
+         ile tetikler; flag `first_launch_completed` set edilip diske yazılır. -->
+    <div class="modal-backdrop" id="onboarding-modal" role="dialog"
+         aria-modal="true" aria-labelledby="onboarding-title"
+         aria-describedby="onboarding-body" hidden>
+      <div class="modal-dialog">
+        <h3 class="modal-title" id="onboarding-title">HekaDrop</h3>
+        <p class="modal-body" id="onboarding-body"></p>
+        <div class="modal-actions">
+          <button type="button" id="onboarding-settings">Ayarları aç</button>
+          <button type="button" class="primary" id="onboarding-dismiss">Anladım</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Auto-save toast (şu an `save-note` yerine bunu kullanıyoruz). -->
+    <div class="toast" id="autosave-toast" role="status"
+         aria-live="polite" aria-atomic="true"
+         data-i18n="webview.settings.saved">✓ Kaydedildi</div>
 
     <section role="tabpanel" id="panel-diag" class="panel"
              aria-labelledby="tab-diag" tabindex="0" hidden>
@@ -918,6 +1093,10 @@
       <button type="button" onclick="act('check_update')">
         <span class="icon" aria-hidden="true">⬆︎</span><span data-i18n="webview.diag.check_update">Güncelleme kontrol et</span>
       </button>
+      <!-- Update check result line — backend `window.setUpdateStatus(msg, kind)`
+           ile günceller. Varsayılan boş; "kind" = "error" | "success" | "info". -->
+      <div id="update-status" class="update-status" role="status"
+           aria-live="polite" aria-atomic="true"></div>
       <button type="button" onclick="act('open_logs')">
         <span class="icon" aria-hidden="true">📄</span><span data-i18n="webview.diag.open_logs">Log klasörünü aç</span>
       </button>
@@ -1102,11 +1281,11 @@
     const updateCheckT = wirePrivacyToggle('update-check');
     const logLevelSelect = document.getElementById('set-log-level');
 
-    function saveSettings() {
+    function buildSettingsPayload() {
       // H#4: privacy alanları payload'a eklenir. `disable_update_check`
       // UI'da "güncellemeleri kontrol et" olarak pozitif ifade edilir —
       // burada NOT alınır (UI açık = setting false = disable yok).
-      const payload = {
+      return {
         device_name: document.getElementById('set-device').value.trim() || null,
         download_dir: document.getElementById('set-downloads').value.trim() || null,
         auto_accept: autoCheckbox.checked,
@@ -1115,7 +1294,188 @@
         keep_stats: keepStatsT.cb ? keepStatsT.cb.checked : true,
         disable_update_check: updateCheckT.cb ? !updateCheckT.cb.checked : false,
       };
-      act('settings_save::' + JSON.stringify(payload));
+    }
+
+    function saveSettings() {
+      act('settings_save::' + JSON.stringify(buildSettingsPayload()));
+    }
+
+    // ---- Auto-save (Dalga 1): Settings panelindeki herhangi bir alan
+    // değişince 100ms debounce ile mevcut `settings_save` komutunu gönderir.
+    // Backend (main.rs) `handle_settings_save` tarafında zaten tüm payload'u
+    // işliyor — yeni bir IPC komutu eklemiyoruz. (Dalga 2'de per-field
+    // `setting_update::<field>::<value>` komutu düşünülebilir.)
+    let autosaveTimer = null;
+    let suppressAutosave = false;   // applySettings anında tetiklenmesini engelle
+    function scheduleAutosave() {
+      if (suppressAutosave) return;
+      if (autosaveTimer) clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(() => {
+        autosaveTimer = null;
+        saveSettings();
+      }, 100);
+    }
+    // Tüm Settings input'larına bağla — `change` (toggle/select/readonly text)
+    // + `input` (device_name text box için anlık karakterler). input ayrıca
+    // change event'ini de dolduracağı için event'ler duplike tetiklenebilir;
+    // debounce zaten tek sefer save'e indirger.
+    function wireAutosave() {
+      const ids = ['set-device', 'set-downloads', 'set-auto',
+                   'set-advertise', 'set-log-level',
+                   'set-keep-stats', 'set-update-check'];
+      ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', scheduleAutosave);
+        if (el.tagName === 'INPUT' && el.type === 'text') {
+          el.addEventListener('input', scheduleAutosave);
+        }
+      });
+    }
+    wireAutosave();
+
+    // Auto-save toast — eski `save-note` yerine global toast. Backend
+    // `window.showSaved()` çağırırsa toast'u gösterir.
+    function showAutosaveToast() {
+      const t = document.getElementById('autosave-toast');
+      if (!t) return;
+      t.classList.add('show');
+      clearTimeout(showAutosaveToast._timer);
+      showAutosaveToast._timer = setTimeout(() => t.classList.remove('show'), 2000);
+    }
+
+    // ---- Bulk trust clear confirmation modal ----
+    const clearModal = document.getElementById('clear-trusted-modal');
+    const clearBtn = document.getElementById('trusted-clear-btn');
+    const clearCancel = document.getElementById('clear-trusted-cancel');
+    const clearConfirm = document.getElementById('clear-trusted-confirm');
+    let clearModalPrevFocus = null;
+
+    function openClearModal() {
+      clearModalPrevFocus = document.activeElement;
+      clearModal.classList.add('show');
+      clearModal.removeAttribute('hidden');
+      // A11y: focus Cancel (safer default than destructive).
+      setTimeout(() => clearCancel.focus(), 0);
+    }
+    function closeClearModal() {
+      clearModal.classList.remove('show');
+      clearModal.setAttribute('hidden', '');
+      if (clearModalPrevFocus && typeof clearModalPrevFocus.focus === 'function') {
+        clearModalPrevFocus.focus();
+      }
+    }
+    if (clearBtn) clearBtn.addEventListener('click', openClearModal);
+    if (clearCancel) clearCancel.addEventListener('click', closeClearModal);
+    if (clearConfirm) clearConfirm.addEventListener('click', () => {
+      act('trusted_clear');
+      closeClearModal();
+    });
+    // ESC to close + simple focus trap (Tab cycles between Cancel/Confirm).
+    if (clearModal) {
+      clearModal.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeClearModal();
+          return;
+        }
+        if (e.key === 'Tab') {
+          const focusables = [clearCancel, clearConfirm];
+          const i = focusables.indexOf(document.activeElement);
+          if (i === -1) return;
+          e.preventDefault();
+          const next = e.shiftKey
+            ? focusables[(i - 1 + focusables.length) % focusables.length]
+            : focusables[(i + 1) % focusables.length];
+          next.focus();
+        }
+      });
+      // Backdrop click closes (clicks on dialog bubble don't match).
+      clearModal.addEventListener('click', (e) => {
+        if (e.target === clearModal) closeClearModal();
+      });
+    }
+
+    // ---- Onboarding modal (ilk açılış) ----
+    // Rust `maybe_push_onboarding()` → `window.showOnboarding(cfg)` çağırır.
+    // Herhangi bir dismiss yolu (buton, ESC, backdrop) `act('onboarding_done')`
+    // tetikler — kullanıcı modal'ı bir kere görsün, restart'ta tekrar
+    // açılmasın. Settings butonu ekstra olarak Settings sekmesine geçer.
+    const onboardingModal = document.getElementById('onboarding-modal');
+    const onboardingBody = document.getElementById('onboarding-body');
+    const onboardingTitle = document.getElementById('onboarding-title');
+    const onboardingSettings = document.getElementById('onboarding-settings');
+    const onboardingDismiss = document.getElementById('onboarding-dismiss');
+    let onboardingPrevFocus = null;
+
+    function closeOnboarding(done) {
+      if (!onboardingModal || onboardingModal.hasAttribute('hidden')) return;
+      onboardingModal.classList.remove('show');
+      onboardingModal.setAttribute('hidden', '');
+      if (done) act('onboarding_done');
+      if (onboardingPrevFocus && typeof onboardingPrevFocus.focus === 'function') {
+        try { onboardingPrevFocus.focus(); } catch (_) {}
+      }
+    }
+
+    window.showOnboarding = function(cfg) {
+      if (!onboardingModal) return;
+      cfg = cfg || {};
+      if (onboardingTitle) onboardingTitle.textContent = cfg.title || 'HekaDrop';
+      if (onboardingBody) {
+        // `\n` → <br> (i18n.body içinde çok satırlı metin var).
+        // innerHTML güvenliği: cfg Rust tarafından gelir ve yalnızca i18n
+        // sözlüğündeki sabit stringler + device_name içerir. Yine de
+        // textContent yolu kullanıp satır bölme yapalım: her satırı ayrı
+        // <p> yerine tek <p>'de <br> ile koyuyoruz → DOM'u sade tut.
+        onboardingBody.textContent = '';
+        const raw = cfg.body || '';
+        const parts = raw.split('\n');
+        parts.forEach((line, i) => {
+          if (i > 0) onboardingBody.appendChild(document.createElement('br'));
+          onboardingBody.appendChild(document.createTextNode(line));
+        });
+      }
+      if (onboardingSettings) onboardingSettings.textContent = cfg.cta_settings || 'Ayarları aç';
+      if (onboardingDismiss) onboardingDismiss.textContent = cfg.cta_dismiss || 'Anladım';
+      onboardingPrevFocus = document.activeElement;
+      onboardingModal.removeAttribute('hidden');
+      onboardingModal.classList.add('show');
+      // Primary aksiyona odak (destructive değil; safe default).
+      setTimeout(() => { if (onboardingDismiss) onboardingDismiss.focus(); }, 0);
+    };
+
+    if (onboardingSettings) {
+      onboardingSettings.addEventListener('click', () => {
+        closeOnboarding(true);
+        try { switchTab('settings'); } catch (_) {}
+      });
+    }
+    if (onboardingDismiss) {
+      onboardingDismiss.addEventListener('click', () => closeOnboarding(true));
+    }
+    if (onboardingModal) {
+      onboardingModal.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeOnboarding(true);
+          return;
+        }
+        if (e.key === 'Tab') {
+          const focusables = [onboardingSettings, onboardingDismiss].filter(Boolean);
+          if (focusables.length < 2) return;
+          const i = focusables.indexOf(document.activeElement);
+          if (i === -1) return;
+          e.preventDefault();
+          const next = e.shiftKey
+            ? focusables[(i - 1 + focusables.length) % focusables.length]
+            : focusables[(i + 1) % focusables.length];
+          next.focus();
+        }
+      });
+      onboardingModal.addEventListener('click', (e) => {
+        if (e.target === onboardingModal) closeOnboarding(true);
+      });
     }
 
     // ---- Drag-drop feedback (visual + announcement) ----
@@ -1130,33 +1490,52 @@
 
     // ---- Rust → JS callbacks ----
     window.applySettings = function(cfg) {
-      document.getElementById('set-device').value = cfg.device_name || '';
-      document.getElementById('set-downloads').value = cfg.download_dir || '';
-      autoCheckbox.checked = !!cfg.auto_accept;
-      syncAutoState();
-      // H#4 privacy — cfg'de alan yoksa default güvenli (undefined → true/false).
-      if (advertiseT.cb) {
-        advertiseT.cb.checked = cfg.advertise !== false; // default true
-        advertiseT.sync();
-      }
-      if (keepStatsT.cb) {
-        keepStatsT.cb.checked = cfg.keep_stats !== false; // default true
-        keepStatsT.sync();
-      }
-      if (updateCheckT.cb) {
-        // UI pozitif: "güncellemeleri kontrol et" = NOT disable_update_check.
-        updateCheckT.cb.checked = !cfg.disable_update_check;
-        updateCheckT.sync();
-      }
-      if (logLevelSelect && cfg.log_level) {
-        logLevelSelect.value = String(cfg.log_level);
+      // Rust push'ı sırasında change event'leri autosave tetikler → loop
+      // riski. `suppressAutosave` bayrağı ile programatic set'ler
+      // debounce'a düşmez.
+      suppressAutosave = true;
+      try {
+        document.getElementById('set-device').value = cfg.device_name || '';
+        document.getElementById('set-downloads').value = cfg.download_dir || '';
+        autoCheckbox.checked = !!cfg.auto_accept;
+        syncAutoState();
+        // H#4 privacy — cfg'de alan yoksa default güvenli (undefined → true/false).
+        if (advertiseT.cb) {
+          advertiseT.cb.checked = cfg.advertise !== false; // default true
+          advertiseT.sync();
+        }
+        if (keepStatsT.cb) {
+          keepStatsT.cb.checked = cfg.keep_stats !== false; // default true
+          keepStatsT.sync();
+        }
+        if (updateCheckT.cb) {
+          // UI pozitif: "güncellemeleri kontrol et" = NOT disable_update_check.
+          updateCheckT.cb.checked = !cfg.disable_update_check;
+          updateCheckT.sync();
+        }
+        if (logLevelSelect && cfg.log_level) {
+          logLevelSelect.value = String(cfg.log_level);
+        }
+      } finally {
+        suppressAutosave = false;
       }
     };
 
     window.showSaved = function() {
-      const n = document.getElementById('save-note');
-      n.classList.add('show');
-      setTimeout(() => n.classList.remove('show'), 1500);
+      // Auto-save toast — eski inline `save-note` artık DOM'da yok.
+      showAutosaveToast();
+    };
+
+    // Backend (Dalga 2'de eklenecek) `window.setUpdateStatus(msg, kind)`
+    // çağırarak Diagnostics'teki güncelleme kontrolünün sonucunu gösterir.
+    // kind: 'error' | 'success' | 'info' (varsayılan 'info').
+    window.setUpdateStatus = function(msg, kind) {
+      const el = document.getElementById('update-status');
+      if (!el) return;
+      el.textContent = msg || '';
+      el.classList.remove('error', 'success');
+      if (kind === 'error') el.classList.add('error');
+      else if (kind === 'success') el.classList.add('success');
     };
 
     window.applyTrusted = function(items) {
@@ -1175,7 +1554,21 @@
         }
         return it;
       });
-      el.innerHTML = normalised.map(it => {
+      // Expired olanları hesapla + sona sırala (stable partition).
+      // Not: backend otomatik silmiyor; kullanıcı isterse per-item "x"
+      // ile manuel siler veya bulk "Tümünü temizle" kullanır.
+      function isExpired(it) {
+        return it.has_hash && it.trusted_at_epoch > 0 && it.ttl_secs > 0
+          && (nowSecs - it.trusted_at_epoch) >= it.ttl_secs;
+      }
+      const live = normalised.filter(it => !isExpired(it));
+      const expired = normalised.filter(isExpired);
+      const ordered = live.concat(expired);
+
+      const expiredTitle = escapeAttr(t('webview.trusted.expired_tooltip'));
+      const expiredBadgeLabel = escapeHtml(t('webview.trusted.ttl_expired'));
+
+      el.innerHTML = ordered.map(it => {
         // Fix (review #34 LOW): IPC payload'ı `name` (raw) kullanır; ekranda
         // "Pixel 7 (abcdef01)" gibi display gösterilse bile Rust tarafı
         // `remove_trusted(name)` ile eşleştiğinden id-qualified kayıtlar da
@@ -1183,20 +1576,23 @@
         // eşleşmeyip sessizce başarısız oluyordu.
         const label = it.display || it.name || '';
         const rawName = it.name || it.display || '';
+        const expired = isExpired(it);
         let ttlBadge = '';
         // TTL rozeti yalnız hash-bağlı v0.6+ kayıtlarda anlamlı.
         if (it.has_hash && it.trusted_at_epoch > 0 && it.ttl_secs > 0) {
-          const age = nowSecs - it.trusted_at_epoch;
-          if (age >= it.ttl_secs) {
-            ttlBadge = `<span class="ttl-expired">${escapeHtml(t('webview.trusted.ttl_expired'))}</span>`;
+          if (expired) {
+            ttlBadge = `<span class="badge-expired">${expiredBadgeLabel}</span>`;
           } else {
+            const age = nowSecs - it.trusted_at_epoch;
             const days = Math.max(0, Math.floor(age / 86400));
             const ttlLabel = tf('webview.trusted.ttl_label', [String(days)]);
             ttlBadge = `<span class="ttl-label">${escapeHtml(ttlLabel)}</span>`;
           }
         }
+        const itemClass = expired ? 'trusted-item expired' : 'trusted-item';
+        const tooltipAttr = expired ? ` title="${expiredTitle}"` : '';
         return `
-        <div class="trusted-item" role="listitem">
+        <div class="${itemClass}" role="listitem"${tooltipAttr}>
           <div class="trusted-meta">
             <span class="trusted-name">${escapeHtml(label)}</span>
             ${ttlBadge}

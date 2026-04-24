@@ -147,20 +147,39 @@ fn main() {
 
     state::init(settings);
 
-    std::thread::Builder::new()
+    // Tokio runtime ve async thread: kritik init. Runtime build başarısız
+    // olursa protokol işleyemez — fatal dialog + exit. Thread spawn hatası
+    // aynı sınıfta (çekirdek işçi thread yok → HekaDrop boş pencereden ibaret
+    // kalır), onu da fatal göster.
+    let spawn_result = std::thread::Builder::new()
         .name("hekadrop-async".into())
         .spawn(|| {
-            let rt = tokio::runtime::Builder::new_multi_thread()
+            let rt = match tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
-                .expect("tokio runtime kurulamadı");
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    ui::fatal_error_dialog(
+                        "HekaDrop başlatılamıyor",
+                        &format!("tokio runtime kurulamadı: {}", e),
+                    );
+                    std::process::exit(1);
+                }
+            };
             let _ = RUNTIME.set(rt.handle().clone());
             if let Err(e) = rt.block_on(async_main()) {
                 tracing::error!("async_main hata: {:?}", e);
                 std::process::exit(1);
             }
-        })
-        .expect("async thread başlatılamadı");
+        });
+    if let Err(e) = spawn_result {
+        ui::fatal_error_dialog(
+            "HekaDrop başlatılamıyor",
+            &format!("async thread başlatılamadı: {}", e),
+        );
+        std::process::exit(1);
+    }
 
     run_app();
 }
@@ -191,19 +210,31 @@ fn setup_logging(log_level: settings::LogLevel) {
     truncate_oversized_logs(&log_dir, 10 * 1024 * 1024);
     cleanup_old_logs(&log_dir, 3);
 
-    let file_appender = RollingFileAppender::builder()
+    // File appender opsiyonel — disk doluysa / permission yoksa build hata
+    // döner; bu durumda stdout-only mode ile devam et (degraded). Kullanıcı
+    // uygulamayı başlatabilir, log dosyası yok ama core işlev çalışır.
+    let file_layer = match RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
         .filename_prefix("hekadrop")
         .filename_suffix("log")
         .max_log_files(3)
         .build(&log_dir)
-        .expect("log appender kurulamadı");
-
-    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
-    Box::leak(Box::new(guard));
+    {
+        Ok(appender) => {
+            let (file_writer, guard) = tracing_appender::non_blocking(appender);
+            Box::leak(Box::new(guard));
+            Some(fmt::layer().with_writer(file_writer).with_ansi(false))
+        }
+        Err(e) => {
+            eprintln!(
+                "[HekaDrop] log appender kurulamadı ({}); stdout-only devam",
+                e
+            );
+            None
+        }
+    };
 
     let stdout_layer = fmt::layer().with_writer(std::io::stdout);
-    let file_layer = fmt::layer().with_writer(file_writer).with_ansi(false);
 
     tracing_subscriber::registry()
         .with(filter)
@@ -299,17 +330,36 @@ fn run_app() -> ! {
         .with_tooltip("HekaDrop");
     #[cfg(not(target_os = "linux"))]
     let tray_builder = tray_builder.with_menu_on_left_click(false);
-    let tray = tray_builder.build().expect("tray icon oluşturulamadı");
+    // Tray kritik değil — Linux'ta AppIndicator yoksa, Windows'ta bazı session
+    // config'lerinde build fail edebilir. Tray olmadan ana pencere + IPC
+    // çalışmaya devam eder; kullanıcı tray özelliklerini kaybeder ama
+    // protokol ve dosya aktarımı etkilenmez (degraded mode).
+    let tray = match tray_builder.build() {
+        Ok(t) => Some(t),
+        Err(e) => {
+            tracing::error!("tray icon oluşturulamadı ({}); tray'siz devam", e);
+            None
+        }
+    };
 
-    // Ana pencere + WebView
-    let window = WindowBuilder::new()
+    // Ana pencere + WebView — KRİTİK. Bunlar olmadan UI yok, fatal.
+    let window = match WindowBuilder::new()
         .with_title("HekaDrop")
         .with_inner_size(tao::dpi::LogicalSize::new(340.0, 460.0))
         .with_min_inner_size(tao::dpi::LogicalSize::new(320.0, 400.0))
         .with_resizable(false)
         .with_visible(true)
         .build(&event_loop)
-        .expect("window oluşturulamadı");
+    {
+        Ok(w) => w,
+        Err(e) => {
+            ui::fatal_error_dialog(
+                "HekaDrop başlatılamıyor",
+                &format!("pencere oluşturulamadı: {}", e),
+            );
+            std::process::exit(1);
+        }
+    };
 
     let builder = WebViewBuilder::new()
         .with_html(WINDOW_HTML)
@@ -339,23 +389,50 @@ fn run_app() -> ! {
 
     // Linux (GTK): wry WebView bir gtk::Container içine monte edilmelidir;
     // raw-window-handle yolu desteklenmez. macOS/Windows'ta `.build(&window)`.
+    // WebView kritik — UI'ın tamamı bunun içinde. Hata → fatal + exit.
     #[cfg(target_os = "linux")]
     let webview = {
         use tao::platform::unix::WindowExtUnix;
         use wry::WebViewBuilderExtUnix;
-        let vbox = window
-            .default_vbox()
-            .expect("tao pencere gtk_vbox döndürmedi");
-        builder.build_gtk(vbox).expect("webview oluşturulamadı")
+        let vbox = match window.default_vbox() {
+            Some(v) => v,
+            None => {
+                ui::fatal_error_dialog(
+                    "HekaDrop başlatılamıyor",
+                    "GTK pencere kabı (vbox) alınamadı. GTK3 + WebKit2GTK kurulu olduğundan emin olun.",
+                );
+                std::process::exit(1);
+            }
+        };
+        match builder.build_gtk(vbox) {
+            Ok(w) => w,
+            Err(e) => {
+                ui::fatal_error_dialog(
+                    "HekaDrop başlatılamıyor",
+                    &format!("webview oluşturulamadı: {}", e),
+                );
+                std::process::exit(1);
+            }
+        }
     };
     #[cfg(not(target_os = "linux"))]
-    let webview = builder.build(&window).expect("webview oluşturulamadı");
+    let webview = match builder.build(&window) {
+        Ok(w) => w,
+        Err(e) => {
+            ui::fatal_error_dialog(
+                "HekaDrop başlatılamıyor",
+                &format!("webview oluşturulamadı: {}", e),
+            );
+            std::process::exit(1);
+        }
+    };
 
     // İlk açılışta i18n sözlüğünü hazır tut — HTML `settings_get` IPC'si de
     // push_i18n_to_ui'yi çağırır; fakat `settings_get` gelmeden (race) bazı
     // platformlarda webview `applyI18n` çağrısını kaçırabilir. Kuyruğa ekleyerek
     // event loop ilk tick'te script'i çalıştırır.
     push_i18n_to_ui();
+    maybe_push_onboarding();
 
     let menu_channel = MenuEvent::receiver();
     #[cfg(not(target_os = "linux"))]
@@ -411,7 +488,9 @@ fn run_app() -> ! {
         let status_text = progress_label(&progress);
         if status_text != last_status_text {
             status_item.set_text(&status_text);
-            let _ = tray.set_tooltip(Some(i18n::tf("tray.tooltip_format", &[&status_text])));
+            if let Some(ref t) = tray {
+                let _ = t.set_tooltip(Some(i18n::tf("tray.tooltip_format", &[&status_text])));
+            }
             last_status_text = status_text.clone();
         }
 
@@ -448,8 +527,8 @@ fn run_app() -> ! {
         // Tray menü olayları
         while let Ok(ev) = menu_channel.try_recv() {
             if ev.id == quit_item_id {
-                info!("kullanıcı çıkışı seçti");
-                std::process::exit(0);
+                info!("kullanıcı çıkışı seçti (tray)");
+                graceful_quit();
             } else if ev.id == show_window_item_id {
                 state::request_show_window();
             } else if ev.id == send_item_id {
@@ -467,17 +546,26 @@ fn run_app() -> ! {
             } else if ev.id == open_config_id {
                 open_config_file();
             } else if ev.id == auto_accept_id {
+                // Tray ve Settings panelini tek kod yolundan geçir: tray
+                // değişikliğini de `handle_settings_save` merkezine yollarız
+                // böylece WebView push + tek atomic-write (save_debounced)
+                // davranışı her iki kaynak için aynı olur.
                 let new_val = auto_accept_item.is_checked();
-                {
-                    let st = state::get();
-                    let snap = {
-                        let mut s = st.settings.write();
-                        s.auto_accept = new_val;
-                        s.clone()
-                    };
-                    let _ = snap.save();
-                }
-                info!("auto_accept → {}", new_val);
+                let current = state::get().settings.read().clone();
+                let payload = serde_json::json!({
+                    "device_name": current.device_name,
+                    "download_dir": current.download_dir.as_ref().map(|p| p.to_string_lossy()),
+                    "auto_accept": new_val,
+                    "advertise": current.advertise,
+                    "log_level": current.log_level.as_str(),
+                    "keep_stats": current.keep_stats,
+                    "disable_update_check": current.disable_update_check,
+                });
+                handle_settings_save(&payload.to_string());
+                // WebView Settings sekmesi açıksa tray değişikliğini yansıt —
+                // `handle_settings_save` push etmez; applySettings burada tetiklenir.
+                push_settings_to_ui();
+                info!("auto_accept → {} (tray)", new_val);
                 ui::notify(
                     i18n::t("notify.app_name"),
                     if new_val {
@@ -605,6 +693,24 @@ fn handle_ipc(cmd: &str) {
             ui::notify(i18n::t("notify.app_name"), i18n::t("notify.trust_cleared"));
         }
         "history_refresh" => push_history_to_ui(),
+        "onboarding_done" => {
+            // İlk açılış modal'ı dismiss edildi — flag'i set edip hemen diske
+            // yaz (debounce YOK; kullanıcı restart ederse modal tekrar
+            // açılmasın, kritik persistency noktası).
+            let st = state::get();
+            let snap = {
+                let mut s = st.settings.write();
+                if s.first_launch_completed {
+                    return;
+                }
+                s.first_launch_completed = true;
+                s.clone()
+            };
+            if let Err(e) = snap.save() {
+                tracing::warn!("onboarding_done save: {}", e);
+            }
+            info!("[ui] onboarding tamamlandı");
+        }
         "pick_downloads" => {
             if let Some(rt) = RUNTIME.get() {
                 rt.spawn(async {
@@ -624,9 +730,48 @@ fn handle_ipc(cmd: &str) {
             state::request_hide_window();
             ui::notify(i18n::t("notify.app_name"), i18n::t("notify.hidden"));
         }
-        "quit" => std::process::exit(0),
+        "quit" => {
+            info!("kullanıcı çıkışı seçti (in-app)");
+            graceful_quit();
+        }
         other => tracing::warn!("bilinmeyen ipc: {}", other),
     }
+}
+
+/// Uygulamayı düzgün sonlandır — platform-spesifik "auto-restart" politikalarını
+/// çiğnemeden.
+///
+/// **Kritik:** launchd plist'i `KeepAlive=true` ile kurulu. Düz `std::process::exit`
+/// launchd tarafından "crash" gibi algılanır ve `ThrottleInterval` (10 sn) sonrası
+/// otomatik restart atılır — kullanıcı "Çıkış" dediğinde uygulama dönüyor gibi
+/// görünür. Çözüm: önce launchd agent'ını `unload` et (sadece mevcut oturum;
+/// plist dosyasını **silmeyiz**, bir sonraki login'de yine yüklenir), sonra
+/// process'i sonlandır.
+///
+/// Linux'ta systemd user unit aynı amaçla durdurulur (Restart= direktifi varsa
+/// tekrar başlatmasın diye). Windows'ta autostart HKCU Run key'i pasif —
+/// exit yeterli.
+fn graceful_quit() -> ! {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let plist_path = format!("{}/Library/LaunchAgents/com.sourvice.hekadrop.plist", home);
+            if std::path::Path::new(&plist_path).exists() {
+                info!("launchd agent unload: {}", plist_path);
+                let _ = std::process::Command::new("launchctl")
+                    .args(["unload", &plist_path])
+                    .status();
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Unit yoksa `stop` hata döner — sessiz yoksay.
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "stop", "hekadrop.service"])
+            .status();
+    }
+    std::process::exit(0);
 }
 
 fn handle_settings_save(json: &str) {
@@ -678,7 +823,23 @@ fn handle_settings_save(json: &str) {
             }
             s.clone()
         };
-        let _ = snap.save();
+        // Pre-flight sync validation: save_debounced 100 ms sonra arka planda
+        // yazar, oradaki hata kullanıcıya ulaşmaz — burada eşzamanlı doğrulayıp
+        // erken çıkıyoruz ki geçersiz bir `download_dir` UI'da sessizce
+        // "kaydedildi" gibi görünmesin. None ise resolved default kullanılır;
+        // o path'i `default_download_dir()` platform garantisiyle üretir,
+        // doğrulamaya gerek yok.
+        if let Some(ref dir) = snap.download_dir {
+            if let Err(e) = settings::validate_download_dir(dir) {
+                tracing::warn!("[ui] download_dir geçersiz: {}", e);
+                ui::notify(
+                    i18n::t("notify.app_name"),
+                    &format!("download_dir geçersiz: {}", e),
+                );
+                return;
+            }
+        }
+        snap.save_debounced();
     }
     info!("[ui] ayarlar güncellendi");
     state::enqueue_js("window.showSaved && window.showSaved()".into());
@@ -781,6 +942,38 @@ fn push_i18n_to_ui() {
     let js = format!(
         "window.__I18N__ = {}; window.applyI18n && window.applyI18n();",
         payload
+    );
+    state::enqueue_js(js);
+}
+
+/// İlk açılışta (veya upgrade eden kullanıcının ilk sürüm sonrasında) WebView
+/// yüklenir yüklenmez onboarding modal'ını gösterir. `first_launch_completed`
+/// zaten true ise no-op. `act('onboarding_done')` IPC'si flag'i true'ya çekip
+/// diske yazar → bir sonraki boot'ta modal tekrar gelmez.
+fn maybe_push_onboarding() {
+    let (should_show, device_name) = {
+        let st = state::get();
+        let s = st.settings.read();
+        (!s.first_launch_completed, s.resolved_device_name())
+    };
+    if !should_show {
+        return;
+    }
+    let title = i18n::t("onboarding.title");
+    let body = i18n::tf("onboarding.body", &[&device_name]);
+    let cta_settings = i18n::t("onboarding.cta_settings");
+    let cta_dismiss = i18n::t("onboarding.cta_dismiss");
+    // JSON.stringify-safe: `serde_json::json!` string'leri kendi escape eder,
+    // satır içi concat yapmak yerine bütün payload'u tek bir JSON literal
+    // olarak pass ederiz → JS tarafında window.showOnboarding(cfg).
+    let js = format!(
+        "window.showOnboarding && window.showOnboarding({})",
+        serde_json::json!({
+            "title": title,
+            "body": body,
+            "cta_settings": cta_settings,
+            "cta_dismiss": cta_dismiss,
+        })
     );
     state::enqueue_js(js);
 }
@@ -1163,10 +1356,38 @@ fn show_history() {
     ui::show_info(i18n::t("dialog.history.title"), &body);
 }
 
+/// Update kontrolü sonuç kategorisi — UI'da farklı stil + metin için.
+///
+/// Her varyant Diagnostics tab'indeki `#update-status` div'ine ayrı `kind`
+/// (CSS class) ile render edilir. HTTP failure ile rate-limit ayrımı GitHub'ın
+/// `403 rate limit exceeded` cevabından kategorize edilir (curl stderr +
+/// exit code yeterli ipucu veriyor; gövde parse denemesi yan etkisiz).
+#[derive(Debug)]
+enum UpdateCheckOutcome {
+    Disabled,
+    Current,
+    Available { tag: String, url: String },
+    NetworkError,
+    RateLimited,
+    ApiError(String),
+}
+
+/// UI'a update status push et. `kind` CSS class adıdır: `info` / `success` /
+/// `error`. Window açık değilse JS sessizce yutulur (enqueue_js buffer'lanır,
+/// sonraki eval bunu drain eder).
+fn push_update_status(msg: &str, kind: &str) {
+    state::enqueue_js(format!(
+        "window.setUpdateStatus && window.setUpdateStatus({}, {})",
+        js_string(msg),
+        js_string(kind)
+    ));
+}
+
 async fn check_update_async() {
     // H#4 privacy control: iki opt-out yolu OR'lanır.
     //   - `HEKADROP_NO_UPDATE_CHECK` env var (CI / dev / deterministic test)
-    //   - `Settings.disable_update_check` (UI toggle)
+    //   - `Settings.disable_update_check` (UI toggle; Dalga 2'den itibaren
+    //     default `true` — privacy-first)
     // Her ikisi de "skip" anlamına gelir; kullanıcıya şeffaf bilgi ver.
     let env_off = std::env::var_os("HEKADROP_NO_UPDATE_CHECK").is_some();
     let setting_off = state::get().settings.read().disable_update_check;
@@ -1175,18 +1396,20 @@ async fn check_update_async() {
             "update_check skipped (env={}, setting={})",
             env_off, setting_off
         );
-        ui::show_info(
-            i18n::t("notify.app_name"),
-            i18n::t("dialog.update.disabled"),
-        );
+        render_update_outcome(UpdateCheckOutcome::Disabled);
         return;
     }
 
     let current = env!("CARGO_PKG_VERSION");
-    let fetched = tokio::task::spawn_blocking(|| -> Option<(String, String)> {
-        let out = std::process::Command::new("curl")
+    // `spawn_blocking` içinde curl'ün stdout + exit status'unu birlikte
+    // yakalıyoruz; network hatası vs rate-limit vs parse hatası farkını
+    // burada ayırt edip dışarı structured sonuç veriyoruz.
+    let outcome = tokio::task::spawn_blocking(|| -> UpdateCheckOutcome {
+        let out = match std::process::Command::new("curl")
             .args([
                 "-sL",
+                "-w",
+                "\n%{http_code}",
                 "-H",
                 "Accept: application/vnd.github+json",
                 "-H",
@@ -1196,36 +1419,96 @@ async fn check_update_async() {
                 "https://api.github.com/repos/YatogamiRaito/HekaDrop/releases/latest",
             ])
             .output()
-            .ok()?;
+        {
+            Ok(o) => o,
+            Err(_) => return UpdateCheckOutcome::NetworkError,
+        };
         if !out.status.success() {
-            return None;
+            return UpdateCheckOutcome::NetworkError;
         }
-        let json: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-        let tag = json.get("tag_name")?.as_str()?.to_string();
-        let url = json.get("html_url")?.as_str()?.to_string();
-        Some((tag, url))
+        // Gövdeden HTTP kodunu ayıkla (son satır `-w` ile eklendi).
+        let body_full = String::from_utf8_lossy(&out.stdout);
+        let (body, code) = match body_full.rsplit_once('\n') {
+            Some((b, c)) => (b, c.trim()),
+            None => (body_full.as_ref(), ""),
+        };
+        match code {
+            "403" => return UpdateCheckOutcome::RateLimited,
+            "200" => {}
+            other if !other.is_empty() => {
+                return UpdateCheckOutcome::ApiError(format!("HTTP {}", other));
+            }
+            _ => return UpdateCheckOutcome::NetworkError,
+        }
+        let json: serde_json::Value = match serde_json::from_str(body) {
+            Ok(j) => j,
+            Err(e) => return UpdateCheckOutcome::ApiError(format!("JSON: {}", e)),
+        };
+        let tag = match json.get("tag_name").and_then(|v| v.as_str()) {
+            Some(t) => t.to_string(),
+            None => return UpdateCheckOutcome::ApiError("tag_name yok".into()),
+        };
+        let url = json
+            .get("html_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let latest = tag.trim_start_matches('v');
+        if semver_less(env!("CARGO_PKG_VERSION"), latest) {
+            UpdateCheckOutcome::Available { tag, url }
+        } else {
+            UpdateCheckOutcome::Current
+        }
     })
     .await
-    .ok()
-    .flatten();
+    .unwrap_or(UpdateCheckOutcome::NetworkError);
 
-    match fetched {
-        Some((tag, url)) => {
-            let latest = tag.trim_start_matches('v');
-            if semver_less(current, latest) {
-                ui::show_info(
-                    i18n::t("dialog.update.title"),
-                    &i18n::tf("dialog.update.available", &[current, &tag, &url]),
-                );
-            } else {
-                ui::show_info(
-                    i18n::t("notify.app_name"),
-                    &i18n::tf("dialog.update.latest", &[current]),
-                );
-            }
+    // Mevcut dialog UX'i (Available / Current) korunur; UI push status bar'a
+    // ek bilgi (kind-coded) verir. İki kanal de aynı event üzerinde tetikleniyor
+    // — kullanıcı dialog'u kapatsa bile status div'i durumu gösterir.
+    match &outcome {
+        UpdateCheckOutcome::Available { tag, url } => {
+            ui::show_info(
+                i18n::t("dialog.update.title"),
+                &i18n::tf("dialog.update.available", &[current, tag, url]),
+            );
         }
-        None => {
-            ui::show_info(i18n::t("notify.app_name"), i18n::t("dialog.update.failed"));
+        UpdateCheckOutcome::Current => {
+            ui::show_info(
+                i18n::t("notify.app_name"),
+                &i18n::tf("dialog.update.latest", &[current]),
+            );
+        }
+        _ => {}
+    }
+    render_update_outcome(outcome);
+}
+
+fn render_update_outcome(outcome: UpdateCheckOutcome) {
+    match outcome {
+        UpdateCheckOutcome::Disabled => {
+            push_update_status(i18n::t("dialog.update.disabled"), "info");
+        }
+        UpdateCheckOutcome::Current => {
+            push_update_status("Güncel sürümdesiniz", "info");
+        }
+        UpdateCheckOutcome::Available { tag, url } => {
+            push_update_status(&format!("{} mevcut → {}", tag, url), "success");
+        }
+        UpdateCheckOutcome::NetworkError => {
+            push_update_status(
+                "Ağ hatası — GitHub API'ye ulaşılamadı, bağlantıyı kontrol edin",
+                "error",
+            );
+        }
+        UpdateCheckOutcome::RateLimited => {
+            push_update_status(
+                "GitHub API rate-limit — lütfen birkaç dakika sonra tekrar deneyin",
+                "error",
+            );
+        }
+        UpdateCheckOutcome::ApiError(detail) => {
+            push_update_status(&format!("API hatası: {}", detail), "error");
         }
     }
 }
