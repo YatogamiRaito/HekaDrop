@@ -35,7 +35,7 @@ use crate::sharing::nearby::{
 };
 use crate::state::{self, ProgressState};
 use crate::ukey2;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use prost::Message;
 use rand::RngCore;
