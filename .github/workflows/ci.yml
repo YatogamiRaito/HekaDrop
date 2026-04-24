@@ -33,6 +33,11 @@ jobs:
       - name: Install protoc
         run: brew install protobuf
 
+      - name: MSRV check (Rust 1.90)
+        run: |
+          rustup toolchain install 1.90 --profile minimal
+          cargo +1.90 check --all-targets
+
       - name: Format check
         run: cargo fmt --all -- --check
 
