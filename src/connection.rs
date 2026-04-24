@@ -76,31 +76,28 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
         }
     );
 
-    // Rate limiting — trusted cihazlar BU KONTROLDEN MUAFTIR (memory kuralı).
+    // Rate limiting — gate'de HERKES'e uygulanır (Issue #17 closure).
     //
-    // NOT (Issue #17): Bu noktada `PairedKeyEncryption` henüz gelmedi, peer
-    // hash yok → legacy `(name, id)` lookup kullanılıyor. Asıl trust kararı
-    // (Introduction) ileride hash-first yapılacağından, rate-limit muafiyeti
-    // false-positive ile eşit: saldırgan (name, id)'yi spoof ederse rate
-    // limit'ten geçer ama dosya kabulü için dialog gösterilir. Bu, tasarım
-    // 017 §5.2'de kabul edilen davranış — legacy uyum window'u kapanana
-    // kadar hash-first rate limit eklemek sürdürülebilir değil (her oturumda
-    // UKEY2 tamamlanana kadar beklenmeli).
-    let trusted_early = state::get()
-        .settings
-        .read()
-        .is_trusted_legacy(&remote_name, &remote_id);
-    if !trusted_early {
-        let st = state::get();
-        if st.rate_limiter.check_and_record(peer.ip()) {
-            warn!(
-                "[{}] rate limit aşıldı (60 sn pencerede >10 bağlantı), reddediliyor",
-                peer
-            );
-            return Err(HekaError::RateLimited(peer.to_string()).into());
-        }
-    } else {
-        info!("[{}] trusted cihaz — rate limit uygulanmadı", peer);
+    // Eski davranış (v0.5/erken v0.6): peer'ın iddia ettiği `(remote_name,
+    // remote_id)` çifti trusted listede varsa `check_and_record` hiç
+    // çağrılmaz, rate-limit bypass edilir. Bu alanlar peer-controlled —
+    // saldırgan kurbanın trusted listesindeki bir adı + endpoint_id'yi
+    // spoof edip 10/60s limit'i aşabilir ve 32-permit `Semaphore`'u
+    // handshake-in-progress ile doldurarak meşru peer'ları DoS edebilir.
+    //
+    // Yeni davranış: gate'de muafiyet yok. Trusted kararı yalnızca
+    // `PairedKeyEncryption` sonrası peer'ın secret_id_hash'i doğrulandığında
+    // geriye-dönük uygulanır — o noktada `rate_limiter.forget_most_recent`
+    // ile bu bağlantının kaydı silinir. Böylece hash-doğrulanmış trusted
+    // peer sürekli bağlantılarla throttle olmaz, ama peer-controlled
+    // stringlere güvenmeyiz.
+    let st = state::get();
+    if st.rate_limiter.check_and_record(peer.ip()) {
+        warn!(
+            "[{}] rate limit aşıldı (60 sn pencerede >10 bağlantı), reddediliyor",
+            peer
+        );
+        return Err(HekaError::RateLimited(peer.to_string()).into());
     }
 
     // 2-4) UKEY2 handshake. Bir async bloğa sarıp `?`'lerin tüm adımları
@@ -513,6 +510,21 @@ async fn handle_sharing_frame(
                             raw.len()
                         );
                     }
+                }
+            }
+            // Issue #17 post-hoc muafiyet: Hash-first trust kararı burada
+            // doğrulanırsa, `handle` fonksiyonunun gate'inde kaydettiğimiz
+            // rate-limit timestamp'ini geri alırız. Böylece hash-verified
+            // trusted peer gate'de yakalanan sayaca tabi olmaz, ama
+            // peer-controlled string (name/id) spoof'u muafiyet kazandırmaz.
+            if let Some(h) = *peer_secret_id_hash {
+                let s = state::get();
+                if s.settings.read().is_trusted_by_hash(&h) {
+                    s.rate_limiter.forget_most_recent(peer.ip());
+                    info!(
+                        "[{}] trusted hash doğrulandı — rate-limit kaydı geri alındı",
+                        peer
+                    );
                 }
             }
             send_sharing_frame(socket, ctx, &build_paired_key_result()).await?;

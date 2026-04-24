@@ -404,16 +404,24 @@ impl Settings {
 
     /// TTL dolmuş kayıtları listeden siler; dönen sayı silinen kayıt adedi.
     ///
-    /// **v0.6'da otomatik çağrılmaz** (soft-expire): süresi dolmuş kayıt
-    /// listede kalır, `is_trusted_by_hash` false döner, kullanıcı dialog'da
-    /// tekrar "kabul + güven" seçerse timestamp yenilenir. Bu fonksiyon
-    /// UI/maintenance tarafından elle çağrılır (Settings "expired temizle"
-    /// butonu v0.7 hedefli).
+    /// **v0.6'da startup'ta otomatik çağrılır** (bkz. `main.rs` run_app):
+    /// eskiden "soft-expire" idi (listede kalırdı), ancak Issue #17 kapsamında
+    /// legacy kayıtların kalıcı yaşaması saldırı yüzeyi yarattı — hash-suppress
+    /// saldırısıyla peer hash göndermezse `is_trusted_legacy` yoluyla trust
+    /// kararı alınabilir. Startup prune ile bu pencere kısalır.
     ///
-    /// Legacy kayıtlar (`secret_id_hash == None`) asla süresi dolmuş
-    /// sayılmaz — prune'dan etkilenmez.
-    #[allow(dead_code)]
+    /// Legacy kayıt (`secret_id_hash == None`) TTL politikası:
+    ///   * `trusted_at_epoch == 0` → v0.5'ten v0.6'ya upgrade sırasında
+    ///     epoch bilinmediği için 0 yazıldı; bu kayıtlar **sınırsız
+    ///     korunur** (opportunistic hash-upgrade şansı tanınır: peer
+    ///     sonraki bağlantısında `add_trusted_with_hash` ile kayıt yenilenir).
+    ///   * `trusted_at_epoch > 0` → 90 gün içinde hash-upgrade olmazsa
+    ///     silinir (üç sürümlük uyumluluk window'u).
+    ///
+    /// Hash'li kayıtlar için `trust_ttl_secs` (default 7 gün) uygulanır.
+    /// `trust_ttl_secs == 0` → TTL tamamen kapalı, hiçbir kayıt silinmez.
     pub fn prune_expired(&mut self) -> usize {
+        const LEGACY_TTL_SECS: u64 = 90 * 24 * 3600; // 90 gün
         let ttl = self.trust_ttl_secs;
         if ttl == 0 {
             return 0;
@@ -421,9 +429,11 @@ impl Settings {
         let now = now_epoch();
         let before = self.trusted_devices.len();
         self.trusted_devices.retain(|d| {
-            // Legacy kayıt — dokunma.
             if d.secret_id_hash.is_none() {
-                return true;
+                // Legacy kayıt: epoch=0 (v0.5 upgrade) sınırsız korunur;
+                // epoch>0 kayıtlar 90 gün içinde hash-upgrade olmazsa silinir.
+                return d.trusted_at_epoch == 0
+                    || now.saturating_sub(d.trusted_at_epoch) < LEGACY_TTL_SECS;
             }
             now.saturating_sub(d.trusted_at_epoch) < ttl
         });
