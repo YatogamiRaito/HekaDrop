@@ -839,7 +839,18 @@ fn handle_settings_save(json: &str) {
                 return;
             }
         }
-        snap.save_debounced();
+        // RUNTIME handle tokio async thread init'inde set edilir (main.rs:170).
+        // `handle_settings_save` UI event-loop thread'inden çağrılıyor → burada
+        // `Handle::try_current()` çalışmaz. OnceLock henüz set edilmemişse
+        // (teorik: async init daha başlamadıysa) sync fallback ile yaz.
+        match RUNTIME.get() {
+            Some(h) => snap.save_debounced(h),
+            None => {
+                if let Err(e) = snap.save() {
+                    tracing::warn!("settings save fallback (no runtime): {}", e);
+                }
+            }
+        }
     }
     info!("[ui] ayarlar güncellendi");
     state::enqueue_js("window.showSaved && window.showSaved()".into());
@@ -887,8 +898,13 @@ fn push_i18n_to_ui() {
         "webview.settings.saved",
         "webview.settings.trust_remove",
         "webview.settings.trust_ttl_days",
+        "webview.settings.trust_clear_title",
+        "webview.settings.trust_clear_body",
+        "webview.settings.trust_clear_cancel",
+        "webview.settings.trust_clear_confirm",
         "webview.trusted.ttl_label",
         "webview.trusted.ttl_expired",
+        "webview.trusted.expired_tooltip",
         // H#4 privacy section
         "webview.privacy.title",
         "webview.privacy.advertise.label",
@@ -904,6 +920,8 @@ fn push_i18n_to_ui() {
         "webview.privacy.update_check.label",
         "webview.privacy.update_check.desc",
         "webview.privacy.restart_notice",
+        "webview.privacy.restart_badge",
+        "webview.privacy.hotswap_badge",
         "webview.badge.on",
         "webview.badge.off",
         "webview.diag.section.app",
@@ -1433,7 +1451,20 @@ async fn check_update_async() {
             None => (body_full.as_ref(), ""),
         };
         match code {
-            "403" => return UpdateCheckOutcome::RateLimited,
+            "403" => {
+                // GitHub 403 yalnız rate-limit değildir: abuse detection,
+                // eksik/yanlış User-Agent veya kurumsal proxy blokları da aynı
+                // kodu döndürür. Body'de "rate limit" ifadesi varsa gerçekten
+                // rate-limit'tir; aksi halde kullanıcıya genel API hatası
+                // gösterip detayı kısaltılmış body ile veriyoruz (debug için).
+                let body_lower = body.to_lowercase();
+                if body_lower.contains("rate limit") || body_lower.contains("api rate limit") {
+                    return UpdateCheckOutcome::RateLimited;
+                }
+                // Body'yi 200 char ile sınırla (char-safe, UTF-8 boundary sağlam).
+                let snippet: String = body.chars().take(200).collect();
+                return UpdateCheckOutcome::ApiError(format!("403: {}", snippet));
+            }
             "200" => {}
             other if !other.is_empty() => {
                 return UpdateCheckOutcome::ApiError(format!("HTTP {}", other));
@@ -1485,30 +1516,35 @@ async fn check_update_async() {
 }
 
 fn render_update_outcome(outcome: UpdateCheckOutcome) {
+    // Hard-coded TR string'ler → i18n key'leri. Mesaj içerikleri src/i18n.rs'te
+    // `update.error.*` / `update.status.*` altında tanımlı; burada yalnızca
+    // key referansı tutuyoruz → TR/EN otomatik çözülür.
     match outcome {
         UpdateCheckOutcome::Disabled => {
-            push_update_status(i18n::t("dialog.update.disabled"), "info");
+            push_update_status(i18n::t("update.error.disabled"), "info");
         }
         UpdateCheckOutcome::Current => {
-            push_update_status("Güncel sürümdesiniz", "info");
+            push_update_status(i18n::t("update.status.up_to_date"), "info");
         }
         UpdateCheckOutcome::Available { tag, url } => {
-            push_update_status(&format!("{} mevcut → {}", tag, url), "success");
+            let msg = i18n::tf("update.status.new_version", &[&tag]);
+            // URL'yi mesaja iliştiriyoruz — i18n string'i sürüm taglına odaklı,
+            // link satır içi bilgi olarak kalıyor.
+            push_update_status(&format!("{} — {}", msg, url), "success");
         }
         UpdateCheckOutcome::NetworkError => {
-            push_update_status(
-                "Ağ hatası — GitHub API'ye ulaşılamadı, bağlantıyı kontrol edin",
-                "error",
-            );
+            push_update_status(i18n::t("update.error.network"), "error");
         }
         UpdateCheckOutcome::RateLimited => {
-            push_update_status(
-                "GitHub API rate-limit — lütfen birkaç dakika sonra tekrar deneyin",
-                "error",
-            );
+            push_update_status(i18n::t("update.error.rate_limit"), "error");
         }
         UpdateCheckOutcome::ApiError(detail) => {
-            push_update_status(&format!("API hatası: {}", detail), "error");
+            // Generic error + detay: detay debug/bug report için değerli, ana
+            // mesaj i18n'den gelir.
+            push_update_status(
+                &format!("{} ({})", i18n::t("update.error.generic"), detail),
+                "error",
+            );
         }
     }
 }

@@ -1158,6 +1158,19 @@
       if (confirm(t('webview.diag.reset_confirm'))) act('stats_reset');
     }
 
+    // Modal focus trap helper: Tab/Shift+Tab liste elemanları arasında döner.
+    // length < 2 veya aktif öğe liste dışında → no-op (preventDefault da atlanır).
+    function trapFocus(e, focusableElements) {
+      if (e.key !== 'Tab' || focusableElements.length < 2) return;
+      const i = focusableElements.indexOf(document.activeElement);
+      if (i === -1) return;
+      e.preventDefault();
+      const nextIndex = e.shiftKey
+        ? (i - 1 + focusableElements.length) % focusableElements.length
+        : (i + 1) % focusableElements.length;
+      focusableElements[nextIndex].focus();
+    }
+
     // ---- Tab bar (WAI-ARIA Authoring Practices pattern) ----
     const TABS = ['home', 'history', 'settings', 'diag'];
 
@@ -1380,14 +1393,7 @@
           return;
         }
         if (e.key === 'Tab') {
-          const focusables = [clearCancel, clearConfirm];
-          const i = focusables.indexOf(document.activeElement);
-          if (i === -1) return;
-          e.preventDefault();
-          const next = e.shiftKey
-            ? focusables[(i - 1 + focusables.length) % focusables.length]
-            : focusables[(i + 1) % focusables.length];
-          next.focus();
+          trapFocus(e, [clearCancel, clearConfirm]);
         }
       });
       // Backdrop click closes (clicks on dialog bubble don't match).
@@ -1462,15 +1468,7 @@
           return;
         }
         if (e.key === 'Tab') {
-          const focusables = [onboardingSettings, onboardingDismiss].filter(Boolean);
-          if (focusables.length < 2) return;
-          const i = focusables.indexOf(document.activeElement);
-          if (i === -1) return;
-          e.preventDefault();
-          const next = e.shiftKey
-            ? focusables[(i - 1 + focusables.length) % focusables.length]
-            : focusables[(i + 1) % focusables.length];
-          next.focus();
+          trapFocus(e, [onboardingSettings, onboardingDismiss].filter(Boolean));
         }
       });
       onboardingModal.addEventListener('click', (e) => {

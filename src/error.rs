@@ -42,6 +42,9 @@ pub enum HekaError {
     /// Rate limiter aynı IP'den pencere aşımı tespit etti (trusted muaf).
     #[error("rate limit: aynı IP'den çok fazla bağlantı denemesi ({0})")]
     RateLimited(String),
+    /// TcpStream::connect üst sınırı aşıldı (erişilemez host / router drop).
+    #[error("bağlantı zaman aşımına uğradı ({secs} sn): {addr}")]
+    ConnectTimeout { secs: u64, addr: String },
 
     // ---- Crypto / secure channel ----
     /// HMAC tag alanı 32 bayt değil — truncation oracle / length-confusion
@@ -126,6 +129,10 @@ pub enum HekaError {
     /// Gönderici boş dosya(lar) (toplam 0 bayt).
     #[error("boş dosya gönderilemez (toplam 0 bayt)")]
     EmptyPayload,
+    /// Gönderici hiç dosya seçmedi (0 dosya). `EmptyPayload`'dan farklı —
+    /// "0 bayt dosya" değil, "hiç dosya yok".
+    #[error("hiç dosya seçilmedi")]
+    NoFilesSelected,
     /// Tek dosya boyutu i64::MAX üstü (saçma büyük).
     #[error("dosya çok büyük (>= {max} bayt, desteklenmiyor): {path}")]
     FileTooLarge { max: i64, path: String },
