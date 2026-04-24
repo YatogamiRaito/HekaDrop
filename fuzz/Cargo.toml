@@ -1,0 +1,56 @@
+[package]
+name = "hekadrop-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Cargo-fuzz tarafından üretilen standart manifest. Ana crate `hekadrop`
+# (v0.7 foundation) henüz `hekadrop-core` olarak ayrılmadı — aynı repo kökünde
+# `path = ".."`. Q2'de core split tamamlanınca buradaki dependency yeniden
+# hedeflenecek.
+#
+# NOT: `cargo +nightly fuzz build` çalıştırılması için nightly toolchain +
+# `cargo install cargo-fuzz` gereklidir. Detaylar: `fuzz/README.md`.
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.hekadrop]
+path = ".."
+
+# Prevent this from interfering with workspaces. cargo-fuzz'ın üretttiği
+# default stanza; workspace discovery'yi izole eder.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_frame_decode"
+path = "fuzz_targets/fuzz_frame_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_payload_header"
+path = "fuzz_targets/fuzz_payload_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ukey2_handshake_init"
+path = "fuzz_targets/fuzz_ukey2_handshake_init.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_secure_decrypt"
+path = "fuzz_targets/fuzz_secure_decrypt.rs"
+test = false
+doc = false
+bench = false

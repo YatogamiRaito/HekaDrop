@@ -1,0 +1,75 @@
+# Fuzz CI — Q1 scaffold.
+#
+# On-demand only: either manually via workflow_dispatch or by applying the
+# `fuzz` label on a pull request. NOT wired into main/push; we do not want to
+# gate unrelated PRs on fuzz runs while the corpus is still empty.
+#
+# continue-on-error is TRUE for the short-time runs — v0.7 baseline is
+# "green build" only. v0.8+ will flip this to required once we have a corpus
+# large enough to reliably detect regressions (tracked in ROADMAP Q2).
+name: fuzz
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+jobs:
+  fuzz:
+    # PR tetikleyicisini yalnız `fuzz` etiketi varsa çalıştır; diğer PR'larda
+    # no-op. workflow_dispatch her zaman geçer.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'fuzz')
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_frame_decode
+          - fuzz_payload_header
+          - fuzz_ukey2_handshake_init
+          - fuzz_secure_decrypt
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry + git
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: fuzz-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.toml') }}
+          restore-keys: |
+            fuzz-cargo-${{ runner.os }}-
+
+      - name: Cache target dirs
+        uses: actions/cache@v4
+        with:
+          path: |
+            target
+            fuzz/target
+          key: fuzz-target-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            fuzz-target-${{ runner.os }}-${{ matrix.target }}-
+            fuzz-target-${{ runner.os }}-
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Build all harnesses
+        run: cargo +nightly fuzz build
+
+      - name: Run ${{ matrix.target }} (300s cap)
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=300
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
