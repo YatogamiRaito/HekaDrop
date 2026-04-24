@@ -16,6 +16,10 @@ fn main() -> Result<()> {
     }
     println!("cargo:rerun-if-changed=build.rs");
 
-    prost_build::compile_protos(&protos, &["proto"])?;
+    // Dalga 2: hot-path Bytes refactor — tüm `bytes` alanları prost tarafından
+    // `bytes::Bytes` olarak generate edilir (zero-copy reference semantics).
+    let mut cfg = prost_build::Config::new();
+    cfg.bytes(["."]);
+    cfg.compile_protos(&protos, &["proto"])?;
     Ok(())
 }

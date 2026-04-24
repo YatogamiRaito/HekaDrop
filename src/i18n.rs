@@ -269,9 +269,43 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "webview.privacy.update_check.label" => "Güncellemeleri otomatik kontrol et",
         "webview.privacy.update_check.desc" => "Kapalıysa GitHub API'ye istek atılmaz. HEKADROP_NO_UPDATE_CHECK env'i de aynı etki.",
         "webview.privacy.restart_notice" => "Değişiklik için uygulamayı yeniden başlat.",
+        "webview.privacy.restart_badge" => "Restart gerekli",
+        "webview.privacy.hotswap_badge" => "Anında uygulanır",
         "webview.badge.on" => "Açık",
         "webview.badge.off" => "Kapalı",
         "dialog.update.disabled" => "Güncelleme kontrolü kapatılmış (Ayarlar → Gizlilik).",
+
+        // Settings — trust clear confirmation dialog
+        "webview.settings.trust_clear_title" => "Tüm güvenilen cihazları temizle",
+        "webview.settings.trust_clear_body" => "Tüm güvenilen cihazlar silinecek. Bu işlem geri alınamaz. Devam edilsin mi?",
+        "webview.settings.trust_clear_cancel" => "İptal",
+        "webview.settings.trust_clear_confirm" => "Temizle",
+        "webview.trusted.expired_tooltip" => "Bu cihazın güven süresi doldu. Bağlanmak isterse yeniden onay gerekir.",
+
+        // Connection errors (receiver/sender ortak)
+        "err.pin_mismatch" => "PIN uyuşmadı. Güvenli bağlantı kurulamadı.",
+        "err.peer_timeout" => "Karşı cihaz yanıt vermedi.",
+        "err.peer_disconnected" => "Karşı cihaz bağlantıyı kapattı.",
+        "err.handshake_insecure" => "Güvensiz protokol isteği reddedildi.",
+        "err.handshake_failed" => "Güvenli bağlantı kurulamadı.",
+
+        // Trust migration (identity rotation)
+        "trust.migration.title" => "Cihaz kimliği güncelleniyor",
+        "trust.migration.body" => "{0} bu cihazda daha önce güvenliydi. Yeni güvenlik kimliğini doğrulamak için PIN kodunu karşılaştırın.\n\nBu kodlar eşleşiyorsa 'Kabul + Güven', eşleşmiyorsa 'Reddet' seçin.",
+
+        // Update check — error categories & status
+        "update.error.network" => "Ağ bağlantısı yok — güncelleme sunucusuna ulaşılamadı.",
+        "update.error.rate_limit" => "GitHub API hız sınırı aşıldı. Bir süre sonra tekrar deneyin.",
+        "update.error.disabled" => "Güncelleme kontrolü ayarlardan kapatılmış.",
+        "update.error.generic" => "Güncelleme kontrolü başarısız.",
+        "update.status.up_to_date" => "Güncel sürümdesiniz.",
+        "update.status.new_version" => "Yeni sürüm mevcut: {0}",
+
+        // Onboarding (Dalga 3 placeholder)
+        "onboarding.title" => "HekaDrop'a hoş geldiniz",
+        "onboarding.body" => "Bu cihaz şu adla görünüyor: {0}\n\nmacOS'ta uygulama menü çubuğunda çalışır — Dock'ta simge yoktur.\n\nDosya almak için Android/diğer HekaDrop cihazları aynı Wi-Fi ağına bağlanmalı.",
+        "onboarding.cta_settings" => "Ayarları aç",
+        "onboarding.cta_dismiss" => "Anladım",
 
         // Webview — diagnostics panel
         "webview.diag.section.app" => "Uygulama",
@@ -435,9 +469,43 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "webview.privacy.update_check.label" => "Check for updates automatically",
         "webview.privacy.update_check.desc" => "When off, no request is sent to GitHub. HEKADROP_NO_UPDATE_CHECK env var has the same effect.",
         "webview.privacy.restart_notice" => "Restart the app for changes to take effect.",
+        "webview.privacy.restart_badge" => "Restart required",
+        "webview.privacy.hotswap_badge" => "Applied instantly",
         "webview.badge.on" => "On",
         "webview.badge.off" => "Off",
         "dialog.update.disabled" => "Update check is disabled (Settings → Privacy).",
+
+        // Settings — trust clear confirmation dialog
+        "webview.settings.trust_clear_title" => "Clear all trusted devices",
+        "webview.settings.trust_clear_body" => "All trusted devices will be deleted. This cannot be undone. Continue?",
+        "webview.settings.trust_clear_cancel" => "Cancel",
+        "webview.settings.trust_clear_confirm" => "Clear",
+        "webview.trusted.expired_tooltip" => "This device's trust has expired. Reconnecting will require re-approval.",
+
+        // Connection errors (receiver/sender shared)
+        "err.pin_mismatch" => "PIN mismatch. Secure connection could not be established.",
+        "err.peer_timeout" => "Peer did not respond.",
+        "err.peer_disconnected" => "Peer closed the connection.",
+        "err.handshake_insecure" => "Insecure protocol request rejected.",
+        "err.handshake_failed" => "Secure connection failed.",
+
+        // Trust migration (identity rotation)
+        "trust.migration.title" => "Device identity update",
+        "trust.migration.body" => "{0} was previously trusted on this device. Verify the new security identity by comparing the PIN.\n\nIf the PINs match, choose 'Accept + Trust'; otherwise choose 'Reject'.",
+
+        // Update check — error categories & status
+        "update.error.network" => "No network — could not reach update server.",
+        "update.error.rate_limit" => "GitHub API rate limit exceeded. Try again later.",
+        "update.error.disabled" => "Update check disabled in settings.",
+        "update.error.generic" => "Update check failed.",
+        "update.status.up_to_date" => "You are up to date.",
+        "update.status.new_version" => "New version available: {0}",
+
+        // Onboarding (Wave 3 placeholder)
+        "onboarding.title" => "Welcome to HekaDrop",
+        "onboarding.body" => "This device appears as: {0}\n\nOn macOS the app lives in the menu bar — no Dock icon.\n\nTo receive files, Android/other HekaDrop devices must be on the same Wi-Fi network.",
+        "onboarding.cta_settings" => "Open settings",
+        "onboarding.cta_dismiss" => "Got it",
 
         // Webview — diagnostics panel
         "webview.diag.section.app" => "Application",
@@ -657,6 +725,35 @@ mod tests {
             "webview.diag.reset_confirm",
             "webview.diag.files_suffix",
             "webview.footer",
+            // Privacy/trust clear additions
+            "webview.privacy.restart_badge",
+            "webview.privacy.hotswap_badge",
+            "webview.settings.trust_clear_title",
+            "webview.settings.trust_clear_body",
+            "webview.settings.trust_clear_cancel",
+            "webview.settings.trust_clear_confirm",
+            "webview.trusted.expired_tooltip",
+            // Connection errors
+            "err.pin_mismatch",
+            "err.peer_timeout",
+            "err.peer_disconnected",
+            "err.handshake_insecure",
+            "err.handshake_failed",
+            // Trust migration
+            "trust.migration.title",
+            "trust.migration.body",
+            // Update check
+            "update.error.network",
+            "update.error.rate_limit",
+            "update.error.disabled",
+            "update.error.generic",
+            "update.status.up_to_date",
+            "update.status.new_version",
+            // Onboarding
+            "onboarding.title",
+            "onboarding.body",
+            "onboarding.cta_settings",
+            "onboarding.cta_dismiss",
         ];
         for k in &sample_keys {
             assert!(lookup_tr(k).is_some(), "Türkçe çeviri eksik: {}", k);

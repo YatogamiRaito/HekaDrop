@@ -10,9 +10,11 @@
 //! Inbound aynı sırayla tersine.
 
 use crate::crypto;
+use crate::error::HekaError;
 use crate::securegcm::{DeviceToDeviceMessage, GcmMetadata, Type as GcmType};
 use crate::securemessage::{EncScheme, Header, HeaderAndBody, SecureMessage, SigScheme};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use prost::Message;
 use rand::RngCore;
 
@@ -45,10 +47,10 @@ impl SecureCtx {
         self.server_seq = self
             .server_seq
             .checked_add(1)
-            .ok_or_else(|| anyhow!("server_seq overflow (i32 sınırı)"))?;
+            .ok_or(HekaError::SeqOverflow { side: "server" })?;
         let d2d = DeviceToDeviceMessage {
             sequence_number: Some(self.server_seq),
-            message: Some(inner_plaintext.to_vec()),
+            message: Some(Bytes::copy_from_slice(inner_plaintext)),
         };
         let d2d_bytes = d2d.encode_to_vec();
 
@@ -63,20 +65,20 @@ impl SecureCtx {
         let header = Header {
             encryption_scheme: EncScheme::Aes256Cbc as i32,
             signature_scheme: SigScheme::HmacSha256 as i32,
-            iv: Some(iv.to_vec()),
-            public_metadata: Some(gcm_meta.encode_to_vec()),
+            iv: Some(Bytes::copy_from_slice(&iv)),
+            public_metadata: Some(gcm_meta.encode_to_vec().into()),
             ..Default::default()
         };
         let hb = HeaderAndBody {
             header,
-            body: ciphertext,
+            body: ciphertext.into(),
         };
         let hb_bytes = hb.encode_to_vec();
 
         let sig = crypto::hmac_sha256(&self.send_hmac_key, &hb_bytes);
         let smsg = SecureMessage {
-            header_and_body: hb_bytes,
-            signature: sig.to_vec(),
+            header_and_body: hb_bytes.into(),
+            signature: Bytes::copy_from_slice(&sig),
         };
         Ok(smsg.encode_to_vec())
     }
@@ -98,26 +100,27 @@ impl SecureCtx {
         }
     }
 
-    pub fn decrypt(&mut self, frame_bytes: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt(&mut self, frame_bytes: &[u8]) -> Result<Bytes> {
         let smsg = SecureMessage::decode(frame_bytes)?;
-        // SECURITY: HMAC-SHA256 tag her zaman 32 bayt. Uzunluk guard'ını
-        // `ct_eq`'dan önce açık reddetmek hatayı loglanabilir ve ayırt
-        // edilebilir yapar; kısa/uzun tag sessizce protokol ihlali olarak
-        // gömülmez. crypto.rs'de de defensive duplicate var (defense-in-depth).
+        // SECURITY: HMAC-SHA256 tag'i tam olarak 32 bayt olmalı. Peer kısa (örn.
+        // 31 bayt) ya da uzun bir tag gönderirse `ct_eq` eşit-olmayan slice'larda
+        // sessiz false döner — ama savunma amacıyla açık reddedip loglanabilir
+        // kılmak daha iyi. Truncation oracle veya uzunluk-confusion saldırılarına
+        // karşı erken bail.
         if smsg.signature.len() != 32 {
-            bail!(
-                "geçersiz HMAC tag uzunluğu: beklenen 32, gelen {}",
-                smsg.signature.len()
-            );
+            return Err(HekaError::HmacTagLength(smsg.signature.len()).into());
         }
         if !crypto::hmac_sha256_verify(&self.recv_hmac_key, &smsg.header_and_body, &smsg.signature)
         {
-            bail!("HMAC eşleşmedi");
+            return Err(HekaError::HmacMismatch.into());
         }
         let hb = HeaderAndBody::decode(&smsg.header_and_body[..])?;
-        let iv_vec = hb.header.iv.ok_or_else(|| anyhow!("IV yok"))?;
+        let iv_vec = hb
+            .header
+            .iv
+            .ok_or_else(|| HekaError::Protocol("IV yok".into()))?;
         if iv_vec.len() != 16 {
-            bail!("IV boyu 16 olmalı, {}", iv_vec.len());
+            return Err(HekaError::Protocol(format!("IV boyu 16 olmalı, {}", iv_vec.len())).into());
         }
         let mut iv = [0u8; 16];
         iv.copy_from_slice(&iv_vec);
@@ -126,25 +129,28 @@ impl SecureCtx {
             .map_err(|e| anyhow!("AES decrypt: {:?}", e))?;
 
         let d2d = DeviceToDeviceMessage::decode(&plaintext[..])?;
-        let seq = d2d.sequence_number.ok_or_else(|| anyhow!("sequence yok"))?;
+        let seq = d2d
+            .sequence_number
+            .ok_or_else(|| HekaError::Protocol("sequence yok".into()))?;
         // SECURITY: Saldırgan crafted peer `sequence_number = i32::MAX`
         // gönderirse `self.client_seq + 1` bir sonraki frame'de taşar —
         // debug build'de panic. `checked_add` ile güvenli bail.
         let expected = self
             .client_seq
             .checked_add(1)
-            .ok_or_else(|| anyhow!("client_seq overflow (i32 sınırı)"))?;
+            .ok_or(HekaError::SeqOverflow { side: "client" })?;
         if seq != expected {
             // State'i bozma — başarısız decrypt sonrası counter artmamalı,
             // aksi halde sıralı bir retry'ı bir daha reddederdik.
-            bail!(
-                "sıra numarası uyuşmadı: beklenen {}, alınan {}",
+            return Err(HekaError::SeqMismatch {
                 expected,
-                seq
-            );
+                actual: seq,
+            }
+            .into());
         }
         self.client_seq = expected;
-        d2d.message.ok_or_else(|| anyhow!("D2D.message yok"))
+        d2d.message
+            .ok_or_else(|| HekaError::Protocol("D2D.message yok".into()).into())
     }
 }
 
@@ -170,7 +176,7 @@ mod tests {
         let plaintext = b"merhaba dunya! gizli mesaj".to_vec();
         let encrypted = a.encrypt(&plaintext).unwrap();
         let decrypted = b.decrypt(&encrypted).expect("decrypt");
-        assert_eq!(decrypted, plaintext);
+        assert_eq!(decrypted.as_ref(), plaintext.as_slice());
     }
 
     #[test]
@@ -180,7 +186,7 @@ mod tests {
             let msg = format!("mesaj {}", i);
             let enc = a.encrypt(msg.as_bytes()).unwrap();
             let dec = b.decrypt(&enc).expect("decrypt");
-            assert_eq!(dec, msg.as_bytes());
+            assert_eq!(dec.as_ref(), msg.as_bytes());
         }
         assert_eq!(a.server_seq, 5);
         assert_eq!(b.client_seq, 5);

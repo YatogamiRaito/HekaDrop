@@ -461,6 +461,70 @@ pub fn notify(title: &str, body: &str) {
     }
 }
 
+/// Fatal (ölümcül) hata diyaloğu — **blocking**. Uygulama başlatılamıyor ve
+/// process yakında `exit(1)` çağıracağında kullanıcıya görsel bir açıklama
+/// vermek için kullanılır; show_info fire-and-forget olduğundan o hata
+/// mesajı okunamadan uygulama kapanırdı. Burada `status()` kullanıyoruz →
+/// osascript/zenity/MessageBox kapanana kadar thread bloke olur.
+///
+/// Dialog aracı yoksa (headless) sadece log'a yazılır — zaten log dosyası
+/// da açılamamış olabilir, ama `tracing` stdout layer'ı çalışmaya devam eder.
+pub fn fatal_error_dialog(title: &str, body: &str) {
+    tracing::error!("fatal: {} — {}", title, body);
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            r#"display dialog "{}" buttons {{"Tamam"}} default button "Tamam" with title "{}" with icon stop"#,
+            escape_applescript(body),
+            escape_applescript(title)
+        );
+        let _ = Command::new("osascript").arg("-e").arg(&script).status();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if have("zenity") {
+            let _ = Command::new("zenity")
+                .args([
+                    "--error",
+                    &format!("--title={}", title),
+                    &format!("--text={}", body),
+                    "--width=420",
+                ])
+                .stderr(Stdio::null())
+                .status();
+        } else if have("kdialog") {
+            let _ = Command::new("kdialog")
+                .args(["--title", title, "--error", body])
+                .status();
+        } else {
+            // Dialog yoksa stderr'e düş — headless ortamda en azından
+            // kullanıcı terminalde görür.
+            eprintln!("[HekaDrop] {}: {}", title, body);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use crate::platform::win::to_wide;
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            MessageBoxW, MB_ICONERROR, MB_OK, MB_SYSTEMMODAL,
+        };
+        let body_w = to_wide(body);
+        let title_w = to_wide(title);
+        // Startup path'te — thread spawn etmeden main thread'de blokla.
+        unsafe {
+            MessageBoxW(
+                Some(HWND::default()),
+                PCWSTR(body_w.as_ptr()),
+                PCWSTR(title_w.as_ptr()),
+                MB_OK | MB_ICONERROR | MB_SYSTEMMODAL,
+            );
+        }
+    }
+}
+
+/// Bilgi diyaloğu (blocking değil, fire-and-forget).
 pub fn show_info(title: &str, body: &str) {
     #[cfg(target_os = "macos")]
     {

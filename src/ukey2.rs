@@ -8,13 +8,14 @@
 //!   5) ECDH → HKDF ile 4 anahtar + 4-haneli PIN
 
 use crate::crypto;
+use crate::error::HekaError;
 use crate::frame;
 use crate::securegcm::{
     ukey2_client_init, Ukey2ClientFinished, Ukey2ClientInit, Ukey2HandshakeCipher, Ukey2Message,
     Ukey2ServerInit,
 };
 use crate::securemessage::{EcP256PublicKey, GenericPublicKey, PublicKeyType};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use p256::{ecdh::diffie_hellman, EncodedPoint, PublicKey, SecretKey};
 use prost::Message;
@@ -54,18 +55,21 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
 
     let generic_pk = GenericPublicKey {
         r#type: PublicKeyType::EcP256 as i32,
-        ec_p256_public_key: Some(EcP256PublicKey { x, y }),
+        ec_p256_public_key: Some(EcP256PublicKey {
+            x: x.into(),
+            y: y.into(),
+        }),
         ..Default::default()
     };
     let generic_pk_bytes = generic_pk.encode_to_vec();
 
     // 2) ClientFinished mesajını önceden hazırla — commitment için SHA512'si alınacak
     let client_finished = Ukey2ClientFinished {
-        public_key: Some(generic_pk_bytes),
+        public_key: Some(generic_pk_bytes.into()),
     };
     let client_finished_msg = Ukey2Message {
         message_type: Some(4), // CLIENT_FINISH
-        message_data: Some(client_finished.encode_to_vec()),
+        message_data: Some(client_finished.encode_to_vec().into()),
     };
     let client_finished_bytes = client_finished_msg.encode_to_vec();
 
@@ -81,16 +85,16 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
 
     let client_init = Ukey2ClientInit {
         version: Some(1),
-        random: Some(random.to_vec()),
+        random: Some(random.to_vec().into()),
         cipher_commitments: vec![ukey2_client_init::CipherCommitment {
             handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-            commitment: Some(commitment),
+            commitment: Some(commitment.into()),
         }],
         next_protocol: Some("AES_256_CBC-HMAC_SHA256".to_string()),
     };
     let client_init_msg = Ukey2Message {
         message_type: Some(2), // CLIENT_INIT
-        message_data: Some(client_init.encode_to_vec()),
+        message_data: Some(client_init.encode_to_vec().into()),
     };
     let client_init_bytes = client_init_msg.encode_to_vec();
 
@@ -100,14 +104,15 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     let server_init_raw = frame::read_frame_timeout(socket, frame::HANDSHAKE_READ_TIMEOUT).await?;
     let server_init_msg = Ukey2Message::decode(server_init_raw.as_ref())?;
     if server_init_msg.message_type != Some(3) {
-        bail!(
+        return Err(HekaError::ProtocolState(format!(
             "beklenen SERVER_INIT, alınan message_type={:?}",
             server_init_msg.message_type
-        );
+        ))
+        .into());
     }
     let server_init_data = server_init_msg
         .message_data
-        .ok_or_else(|| anyhow!("server_init.data yok"))?;
+        .ok_or_else(|| HekaError::Protocol("server_init.data yok".into()))?;
     let server_init = Ukey2ServerInit::decode(&server_init_data[..])?;
 
     // SECURITY (downgrade koruması): Peer'ın seçtiği cipher + version bizim
@@ -126,8 +131,8 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     let peer_ec = peer_generic
         .ec_p256_public_key
         .ok_or_else(|| anyhow!("peer ecP256 yok"))?;
-    let peer_x = normalize_32(peer_ec.x);
-    let peer_y = normalize_32(peer_ec.y);
+    let peer_x = normalize_32(&peer_ec.x);
+    let peer_y = normalize_32(&peer_ec.y);
 
     let mut uncompressed = vec![0x04u8];
     uncompressed.extend_from_slice(&peer_x);
@@ -177,15 +182,15 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     })
 }
 
-fn normalize_32(v: Vec<u8>) -> Vec<u8> {
+fn normalize_32(v: &[u8]) -> Vec<u8> {
     if v.len() > 32 {
         v[v.len() - 32..].to_vec()
     } else if v.len() < 32 {
         let mut p = vec![0u8; 32 - v.len()];
-        p.extend_from_slice(&v);
+        p.extend_from_slice(v);
         p
     } else {
-        v
+        v.to_vec()
     }
 }
 
@@ -216,16 +221,10 @@ fn to_signed_bytes(v: &[u8]) -> Vec<u8> {
 /// kapatılıyor).
 pub fn validate_server_init(s: &Ukey2ServerInit) -> Result<()> {
     if s.handshake_cipher != Some(Ukey2HandshakeCipher::P256Sha512 as i32) {
-        bail!(
-            "ServerInit cipher downgrade reddedildi: {:?} (beklenen P256_SHA512)",
-            s.handshake_cipher
-        );
+        return Err(HekaError::Ukey2CipherDowngrade(format!("{:?}", s.handshake_cipher)).into());
     }
     if s.version != Some(1) {
-        bail!(
-            "ServerInit version={:?} — yalnız V1 destekleniyor",
-            s.version
-        );
+        return Err(HekaError::Ukey2VersionDowngrade(format!("{:?}", s.version)).into());
     }
     Ok(())
 }
@@ -240,26 +239,40 @@ pub struct ServerInitResult {
 /// `Ukey2ClientInit` mesajını doğrular, `Ukey2ServerInit` üretir ve handshake state'i döner.
 pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult> {
     let msg = Ukey2Message::decode(client_init_frame)?;
-    let message_type = msg.message_type.ok_or_else(|| anyhow!("mesaj tipi yok"))?;
+    let message_type = msg
+        .message_type
+        .ok_or_else(|| HekaError::Protocol("mesaj tipi yok".into()))?;
     let message_data = msg
         .message_data
-        .ok_or_else(|| anyhow!("mesaj verisi yok"))?;
+        .ok_or_else(|| HekaError::Protocol("mesaj verisi yok".into()))?;
 
     // 2 = CLIENT_INIT
     if message_type != 2 {
-        bail!("beklenen CLIENT_INIT, alınan {}", message_type);
+        return Err(HekaError::ProtocolState(format!(
+            "beklenen CLIENT_INIT, alınan {}",
+            message_type
+        ))
+        .into());
     }
 
     let ci = Ukey2ClientInit::decode(&message_data[..])?;
     if ci.version() != 1 {
-        bail!("UKEY2 sürümü desteklenmiyor: {}", ci.version());
+        return Err(
+            HekaError::Ukey2(format!("UKEY2 sürümü desteklenmiyor: {}", ci.version())).into(),
+        );
     }
     if ci.random().len() != 32 {
-        bail!("random alanı 32 byte olmalı, {} geldi", ci.random().len());
+        return Err(HekaError::Ukey2(format!(
+            "random alanı 32 byte olmalı, {} geldi",
+            ci.random().len()
+        ))
+        .into());
     }
     let next_protocol = ci.next_protocol();
     if next_protocol != "AES_256_CBC-HMAC_SHA256" {
-        bail!("desteklenmeyen next_protocol: {}", next_protocol);
+        return Err(
+            HekaError::Ukey2(format!("desteklenmeyen next_protocol: {}", next_protocol)).into(),
+        );
     }
 
     // SECURITY: `prost` varsayılan olarak `repeated` alan boyutuna sınır
@@ -267,10 +280,7 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
     // lineer `find()` ile CPU/RAM tüketebilir. Gerçek peer en fazla 2-3
     // cipher önerir; 8 cömert üst sınır.
     if ci.cipher_commitments.len() > 8 {
-        bail!(
-            "cipher_commitment flood: {} eleman (max 8)",
-            ci.cipher_commitments.len()
-        );
+        return Err(HekaError::CipherCommitmentFlood(ci.cipher_commitments.len()).into());
     }
 
     tracing::debug!(
@@ -310,7 +320,10 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
 
     let generic_pk = GenericPublicKey {
         r#type: PublicKeyType::EcP256 as i32,
-        ec_p256_public_key: Some(EcP256PublicKey { x, y }),
+        ec_p256_public_key: Some(EcP256PublicKey {
+            x: x.into(),
+            y: y.into(),
+        }),
         ..Default::default()
     };
     let generic_pk_bytes = generic_pk.encode_to_vec();
@@ -321,21 +334,21 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
 
     let server_init = Ukey2ServerInit {
         version: Some(1),
-        random: Some(random.to_vec()),
+        random: Some(random.to_vec().into()),
         handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-        public_key: Some(generic_pk_bytes),
+        public_key: Some(generic_pk_bytes.into()),
     };
 
     let server_init_msg = Ukey2Message {
         message_type: Some(3), // SERVER_INIT
-        message_data: Some(server_init.encode_to_vec()),
+        message_data: Some(server_init.encode_to_vec().into()),
     };
     let server_init_bytes = server_init_msg.encode_to_vec();
 
     Ok(ServerInitResult {
         server_init_bytes,
         secret_key,
-        cipher_commitment: commitment,
+        cipher_commitment: commitment.to_vec(),
         client_init_bytes: client_init_frame.to_vec(),
     })
 }
@@ -364,16 +377,22 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
             hex::encode(&state.cipher_commitment),
             hex::encode(digest.as_slice())
         );
-        bail!("cipher commitment uyuşmadı");
+        return Err(HekaError::Ukey2CommitmentMismatch.into());
     }
 
     let msg = Ukey2Message::decode(raw_frame)?;
-    let message_type = msg.message_type.ok_or_else(|| anyhow!("mesaj tipi yok"))?;
+    let message_type = msg
+        .message_type
+        .ok_or_else(|| HekaError::Protocol("mesaj tipi yok".into()))?;
     let message_data = msg
         .message_data
-        .ok_or_else(|| anyhow!("mesaj verisi yok"))?;
+        .ok_or_else(|| HekaError::Protocol("mesaj verisi yok".into()))?;
     if message_type != 4 {
-        bail!("beklenen CLIENT_FINISH, alınan {}", message_type);
+        return Err(HekaError::ProtocolState(format!(
+            "beklenen CLIENT_FINISH, alınan {}",
+            message_type
+        ))
+        .into());
     }
 
     let cf = Ukey2ClientFinished::decode(&message_data[..])?;
@@ -383,8 +402,8 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
         .ec_p256_public_key
         .ok_or_else(|| anyhow!("ecP256PublicKey yok"))?;
 
-    let mut peer_x = peer_ec.x;
-    let mut peer_y = peer_ec.y;
+    let mut peer_x: Vec<u8> = peer_ec.x.to_vec();
+    let mut peer_y: Vec<u8> = peer_ec.y.to_vec();
     // Android tarafı bazen 33 bayt (işaret biti 0x00 prefix) gönderir → son 32'yi al.
     if peer_x.len() > 32 {
         peer_x = peer_x[peer_x.len() - 32..].to_vec();
@@ -485,9 +504,9 @@ mod tests {
         use crate::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
         let ok = Ukey2ServerInit {
             version: Some(1),
-            random: Some(vec![0u8; 32]),
+            random: Some(vec![0u8; 32].into()),
             handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-            public_key: Some(vec![0u8; 16]),
+            public_key: Some(vec![0u8; 16].into()),
         };
         assert!(super::validate_server_init(&ok).is_ok());
     }
@@ -501,9 +520,9 @@ mod tests {
         use crate::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
         let bad = Ukey2ServerInit {
             version: Some(1),
-            random: Some(vec![0u8; 32]),
+            random: Some(vec![0u8; 32].into()),
             handshake_cipher: Some(Ukey2HandshakeCipher::Curve25519Sha512 as i32),
-            public_key: Some(vec![0u8; 16]),
+            public_key: Some(vec![0u8; 16].into()),
         };
         let err = super::validate_server_init(&bad).unwrap_err();
         assert!(
@@ -520,9 +539,9 @@ mod tests {
         use crate::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
         let v0 = Ukey2ServerInit {
             version: Some(0),
-            random: Some(vec![0u8; 32]),
+            random: Some(vec![0u8; 32].into()),
             handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-            public_key: Some(vec![0u8; 16]),
+            public_key: Some(vec![0u8; 16].into()),
         };
         let err = super::validate_server_init(&v0).unwrap_err();
         assert!(
@@ -532,9 +551,9 @@ mod tests {
 
         let none_ver = Ukey2ServerInit {
             version: None,
-            random: Some(vec![0u8; 32]),
+            random: Some(vec![0u8; 32].into()),
             handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-            public_key: Some(vec![0u8; 16]),
+            public_key: Some(vec![0u8; 16].into()),
         };
         assert!(super::validate_server_init(&none_ver).is_err());
     }
@@ -553,18 +572,18 @@ mod tests {
         for _ in 0..16 {
             commitments.push(CipherCommitment {
                 handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-                commitment: Some(vec![0u8; 64]),
+                commitment: Some(vec![0u8; 64].into()),
             });
         }
         let ci = Ukey2ClientInit {
             version: Some(1),
-            random: Some(vec![0u8; 32]),
+            random: Some(vec![0u8; 32].into()),
             cipher_commitments: commitments,
             next_protocol: Some("AES_256_CBC-HMAC_SHA256".into()),
         };
         let msg = Ukey2Message {
             message_type: Some(2),
-            message_data: Some(ci.encode_to_vec()),
+            message_data: Some(ci.encode_to_vec().into()),
         };
         let bytes = msg.encode_to_vec();
         let res = super::process_client_init(&bytes);

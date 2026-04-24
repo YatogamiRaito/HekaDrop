@@ -1066,10 +1066,10 @@ pub(crate) fn build_paired_key_encryption() -> SharingFrame {
         v1: Some(ShV1Frame {
             r#type: Some(sh_v1::FrameType::PairedKeyEncryption as i32),
             paired_key_encryption: Some(PairedKeyEncryptionFrame {
-                secret_id_hash: Some(hash.to_vec()),
+                secret_id_hash: Some(hash.to_vec().into()),
                 // TODO(v0.7): signing_key() ile ECDSA imza + peer pubkey
                 // doğrulaması pairing protokolüyle birlikte.
-                signed_data: Some(random_bytes(72)),
+                signed_data: Some(random_bytes(72).into()),
                 ..Default::default()
             }),
             ..Default::default()
@@ -1167,7 +1167,7 @@ fn wrap_payload_transfer(
                 payload_chunk: Some(PayloadChunk {
                     offset: Some(offset),
                     flags: Some(flags),
-                    body: Some(body),
+                    body: Some(body.into()),
                     ..Default::default()
                 }),
                 ..Default::default()

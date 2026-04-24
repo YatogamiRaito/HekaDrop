@@ -12,17 +12,24 @@
 //! süreden uzun sessiz kalmış girişleri düşürür; [`PayloadAssembler::ingest`]
 //! her çağrıda otomatik olarak bu GC'yi çalıştırır ([`ASSEMBLER_GC_TIMEOUT`]).
 
+use crate::error::HekaError;
 use crate::location::nearby::connections::{
     payload_transfer_frame::payload_header::PayloadType, PayloadTransferFrame,
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 use tracing::warn;
+
+/// BufWriter iç tampon boyutu. 128 KiB, Quick Share'in 512 KiB chunk'ları için
+/// ~4 chunk'lık tampon sağlar; syscall sayısını düşürürken RAM maliyeti düşük.
+/// Performans raporu 100 Mbps'de tokio::fs async write per-chunk ~5-10 µs
+/// syscall + wakeup overhead rapor etti; sync std::io + BufWriter bunu eler.
+const FILE_WRITE_BUF_CAPACITY: usize = 128 * 1024;
 
 /// Bir chunk üzerinden geçmişken `last_chunk_at`'in ne kadar eskiyebileceği.
 ///
@@ -54,8 +61,16 @@ struct BytesBuf {
 }
 
 /// FILE payload'ı için açık dosya kulpu + streaming hasher + timestamp.
+///
+/// Disk I/O **senkron** (`std::fs::File` + `std::io::BufWriter`). Async
+/// (`tokio::fs`) sürümü chunk başına ~5-10 µs tokio task-pool + syscall
+/// overhead getiriyordu; 512 KiB chunk'lar zaten kısa süreli blocking I/O'ya
+/// izin verir ve 128 KiB BufWriter tamponu syscall sayısını azaltır.
+/// Dikkat: `ingest_file` hâlâ `async fn` — sync write runtime worker'ını
+/// kısa bir süre blocke eder. Ölçülen yük düşük ama çok daha yavaş diskte
+/// (ör. ağ diski) gerekirse [`tokio::task::spawn_blocking`] sarmalamaya geç.
 struct FileSink {
-    file: File,
+    writer: BufWriter<File>,
     path: PathBuf,
     total_size: i64,
     /// Toplam yazılmış bayt — `total_size`'a karşı overrun doğrulaması için.
@@ -94,10 +109,7 @@ impl PayloadAssembler {
         if self.pending_destinations.contains_key(&payload_id)
             || self.file_sinks.contains_key(&payload_id)
         {
-            bail!(
-                "duplicate payload_id={} — destination overwrite reddedildi",
-                payload_id
-            );
+            return Err(HekaError::DuplicatePayloadId(payload_id).into());
         }
         self.pending_destinations.insert(
             payload_id,
@@ -219,7 +231,11 @@ impl PayloadAssembler {
         match PayloadType::try_from(ptype).unwrap_or(PayloadType::UnknownPayloadType) {
             PayloadType::Bytes => self.ingest_bytes(id, body, last_chunk),
             PayloadType::File => self.ingest_file(id, total_size, body, last_chunk).await,
-            other => Err(anyhow!("desteklenmeyen payload tipi: {:?}", other)),
+            other => Err(HekaError::ProtocolState(format!(
+                "desteklenmeyen payload tipi: {:?}",
+                other
+            ))
+            .into()),
         }
     }
 
@@ -242,11 +258,12 @@ impl PayloadAssembler {
             const MAX_BYTES_BUFFER: usize = 4 * 1024 * 1024;
             if buf.data.len().saturating_add(body.len()) > MAX_BYTES_BUFFER {
                 self.bytes_buffers.remove(&id);
-                return Err(anyhow!(
+                return Err(HekaError::PayloadIo(format!(
                     "BYTES payload limiti aşıldı (id={}, {} MB üstü)",
                     id,
                     MAX_BYTES_BUFFER / (1024 * 1024)
-                ));
+                ))
+                .into());
             }
             buf.data.extend_from_slice(body);
             buf.last_chunk_at = now;
@@ -287,7 +304,7 @@ impl PayloadAssembler {
             // saldırgan terabaytlık disk doldurma isteği UI/progress yoluyla
             // sessizce kabul edilir.
             if total_size < 0 {
-                bail!("total_size negatif: {}", total_size);
+                return Err(HekaError::PayloadSizeNegative(total_size).into());
             }
             // Quick Share pratikte 1 TiB'den büyük tek dosya göndermez —
             // 1 TiB üstü değer neredeyse kesin kötü niyetli / broken peer.
@@ -295,10 +312,7 @@ impl PayloadAssembler {
             // `i64 → u64` cast'lerde sürpriz davranışlara yol açar.
             const MAX_FILE_BYTES: i64 = 1 << 40; // 1 TiB
             if total_size > MAX_FILE_BYTES {
-                bail!(
-                    "total_size absürt büyük: {} bayt (>1 TiB limit)",
-                    total_size
-                );
+                return Err(HekaError::PayloadSizeAbsurd(total_size).into());
             }
             // SECURITY: Hedef yol symlink ise saldırgan (veya TOCTOU race ile
             // üçüncü taraf) placeholder'ı symlink'e çevirip bizi keyfi dosyaya
@@ -311,9 +325,8 @@ impl PayloadAssembler {
             match std::fs::symlink_metadata(&dest.path) {
                 Ok(md) => {
                     if md.file_type().is_symlink() {
-                        bail!(
-                            "hedef symlink — reddedildi (TOCTOU koruması): {}",
-                            dest.path.display()
+                        return Err(
+                            HekaError::SymlinkTarget(dest.path.display().to_string()).into()
                         );
                     }
                 }
@@ -326,15 +339,15 @@ impl PayloadAssembler {
                     });
                 }
             }
-            let file = tokio::fs::OpenOptions::new()
+            let file = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
                 .open(&dest.path)
-                .await
                 .with_context(|| format!("dosya açılamadı: {}", dest.path.display()))?;
+            let writer = BufWriter::with_capacity(FILE_WRITE_BUF_CAPACITY, file);
             slot.insert(FileSink {
-                file,
+                writer,
                 path: dest.path,
                 total_size,
                 written: 0,
@@ -354,23 +367,23 @@ impl PayloadAssembler {
             let new_written = sink
                 .written
                 .checked_add(body_len)
-                .ok_or_else(|| anyhow!("yazım toplamı taştı (id={})", id))?;
+                .ok_or_else(|| HekaError::PayloadIo(format!("yazım toplamı taştı (id={})", id)))?;
             if new_written > sink.total_size {
-                bail!(
-                    "payload overrun: id={} written={} > total_size={}",
+                return Err(HekaError::PayloadOverrun {
                     id,
-                    new_written,
-                    sink.total_size
-                );
+                    written: new_written,
+                    total: sink.total_size,
+                }
+                .into());
             }
-            sink.file.write_all(body).await.context("disk yazma")?;
+            sink.writer.write_all(body).context("disk yazma")?;
             sink.hasher.update(body);
             sink.written = new_written;
             sink.last_chunk_at = Instant::now();
         }
 
         if last_chunk {
-            let sink = self
+            let mut sink = self
                 .file_sinks
                 .remove(&id)
                 .ok_or_else(|| anyhow!("son chunk ama sink yok: id={}", id))?;
@@ -378,18 +391,27 @@ impl PayloadAssembler {
             // gibi onaylatabilir (silent truncation). Toplam byte sayısı
             // bildirilen total_size ile eşleşmezse reddet.
             if sink.written != sink.total_size {
-                bail!(
-                    "truncated payload: id={} written={} total_size={}",
+                return Err(HekaError::PayloadTruncated {
                     id,
-                    sink.written,
-                    sink.total_size
-                );
+                    written: sink.written,
+                    total: sink.total_size,
+                }
+                .into());
             }
+            // BufWriter drop'ta flush'u sessizce yutar — kritik finalize'da
+            // explicit flush + sync_all çağırıp hataları propagate et.
             // Durability: sync_all hatası yutulursa peer'a başarı mesajı
             // gönderebiliriz ama disk'te veri henüz yok → crash durumunda
             // dosya boş/yarım kalır. Hatayı propagate et ki user retry'la
             // anlamlı bir sonuç alabilsin.
-            sink.file.sync_all().await.with_context(|| {
+            sink.writer.flush().with_context(|| {
+                format!(
+                    "BufWriter flush başarısız: id={} path={}",
+                    id,
+                    sink.path.display()
+                )
+            })?;
+            sink.writer.get_ref().sync_all().with_context(|| {
                 format!(
                     "dosya senkronize edilemedi: id={} path={}",
                     id,
@@ -464,7 +486,7 @@ mod tests {
             payload_chunk: Some(PayloadChunk {
                 flags: Some(if last { 1 } else { 0 }),
                 offset: Some(0),
-                body: Some(body.to_vec()),
+                body: Some(body.to_vec().into()),
                 index: None,
             }),
             control_message: None,

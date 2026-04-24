@@ -57,7 +57,7 @@ fn decrypt_rejects_short_hmac_tag() {
     // Signature'ı 31 bayta kısalt — geri kalan frame aynı.
     let mut tampered = SecureMessage {
         header_and_body: smsg.header_and_body.clone(),
-        signature: smsg.signature[..31].to_vec(),
+        signature: smsg.signature.slice(0..31),
     };
     assert_eq!(tampered.signature.len(), 31);
     let short_bytes = tampered.encode_to_vec();
@@ -81,9 +81,9 @@ fn decrypt_rejects_short_hmac_tag() {
 
     // Kontrol: başka uzunluklar da reddedilmeli (33 bayt — fazla bayt ekleme).
     tampered.signature = {
-        let mut v = smsg.signature.clone();
+        let mut v = smsg.signature.to_vec();
         v.push(0x00);
-        v
+        v.into()
     };
     assert_eq!(tampered.signature.len(), 33);
     let long_bytes = tampered.encode_to_vec();
@@ -93,7 +93,7 @@ fn decrypt_rejects_short_hmac_tag() {
     );
 
     // Sıfır-bayt tag — degenerate case.
-    tampered.signature = Vec::new();
+    tampered.signature = bytes::Bytes::new();
     let empty_bytes = tampered.encode_to_vec();
     assert!(b.decrypt(&empty_bytes).is_err(), "0-bayt tag reddedilmeli");
 }

@@ -17,6 +17,7 @@
 use crate::config;
 use crate::connection;
 use crate::discovery::DiscoveredDevice;
+use crate::error::HekaError;
 use crate::frame;
 use crate::location::nearby::connections::{
     connection_request_frame::Medium,
@@ -34,7 +35,8 @@ use crate::sharing::nearby::{
 };
 use crate::state::{self, ProgressState};
 use crate::ukey2;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use prost::Message;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -68,13 +70,13 @@ struct PlannedFile {
 
 pub async fn send(req: SendRequest) -> Result<()> {
     if req.files.is_empty() {
-        bail!("en az bir dosya gerekli");
+        return Err(HekaError::EmptyPayload.into());
     }
 
     let mut plans: Vec<PlannedFile> = Vec::with_capacity(req.files.len());
     for path in &req.files {
         if !path.exists() {
-            bail!("dosya bulunamadı: {}", path.display());
+            return Err(HekaError::FileNotFound(path.display().to_string()).into());
         }
         let meta = std::fs::metadata(path)?;
         let name = path
@@ -87,11 +89,11 @@ pub async fn send(req: SendRequest) -> Result<()> {
         // dosyanın 8 EB'den büyük olması gibi absürt bir senaryoyu elemiş oluruz.
         let raw_size = meta.len();
         if raw_size > i64::MAX as u64 {
-            bail!(
-                "dosya çok büyük (≥ {} bayt, desteklenmiyor): {}",
-                i64::MAX,
-                path.display()
-            );
+            return Err(HekaError::FileTooLarge {
+                max: i64::MAX,
+                path: path.display().to_string(),
+            }
+            .into());
         }
         plans.push(PlannedFile {
             path: path.clone(),
@@ -105,11 +107,11 @@ pub async fn send(req: SendRequest) -> Result<()> {
     let total_bytes: i64 = plans
         .iter()
         .try_fold(0i64, |acc, p| acc.checked_add(p.size))
-        .ok_or_else(|| anyhow!("toplam bayt i64 kapasitesini aştı"))?;
+        .ok_or(HekaError::ByteCountOverflow)?;
     // Bug #30: Boş dosya(lar) → total_bytes == 0 → aşağıda yüzde hesabı 0/0 olur.
     // Boş dosya göndermeyi reddetmek en açık davranış; UI kullanıcıya anlamlı hata gösterir.
     if total_bytes == 0 {
-        bail!("boş dosya gönderilemez (toplam 0 bayt)");
+        return Err(HekaError::EmptyPayload.into());
     }
     info!(
         "[sender] hedef: {} ({}:{}), {} dosya, toplam {} bayt",
@@ -188,7 +190,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                     .await
                     .ok();
                 state::set_progress(ProgressState::Idle);
-                bail!("kullanıcı aktarımı iptal etti");
+                return Err(HekaError::UserCancelled.into());
             }
             res = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT) => res?,
         };
@@ -257,11 +259,11 @@ pub async fn send(req: SendRequest) -> Result<()> {
                                 .ok();
                             // PIN clear-text vermeyelim — auth_key fingerprint
                             // handshake'i ifşa etmeden log ilişkilendirmeye yeter.
-                            bail!(
-                                "Peer aktarımı reddetti (status={}). Session fingerprint: {} — PIN eşleşmedi mi?",
+                            return Err(HekaError::PeerRejected {
                                 status,
-                                crate::crypto::session_fingerprint(&keys.auth_key)
-                            );
+                                fingerprint: crate::crypto::session_fingerprint(&keys.auth_key),
+                            }
+                            .into());
                         }
                         // 11) Tüm dosyaları sırayla gönder
                         let mut bytes_sent: i64 = 0;
@@ -338,7 +340,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                         return Ok(());
                     }
                     Some(sh_v1::FrameType::Cancel) => {
-                        bail!("Peer aktarımı iptal etti");
+                        return Err(HekaError::PeerCancelled.into());
                     }
                     other => {
                         info!("[sender] sharing frame: {:?}", other);
@@ -359,7 +361,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
             }
             Some(v1_frame::FrameType::Disconnection) => {
                 warn!("[sender] peer disconnect");
-                bail!("peer beklenmedik biçimde bağlantıyı kesti");
+                return Err(HekaError::PeerDisconnected.into());
             }
             other => {
                 info!("[sender] beklenmeyen: {:?}", other);
@@ -392,11 +394,11 @@ async fn send_file_chunks(
         // Cancel yolunda yarım okunmuş chunk terk edilir; zaten bail'liyoruz.
         let n = tokio::select! {
             biased;
-            _ = cancel.cancelled() => bail!("chunk gönderim sırasında iptal"),
+            _ = cancel.cancelled() => return Err(HekaError::CancelledDuringChunk.into()),
             res = file.read(&mut buf) => res?,
         };
         if n == 0 {
-            let last = wrap_payload_transfer(payload_id, file_size, offset, 1, Vec::new());
+            let last = wrap_payload_transfer(payload_id, file_size, offset, 1, Bytes::new());
             let enc = ctx.encrypt(&last.encode_to_vec())?;
             frame::write_frame(socket, &enc).await?;
             let digest = hasher.finalize();
@@ -409,7 +411,10 @@ async fn send_file_chunks(
             break;
         }
         hasher.update(&buf[..n]);
-        let body = buf[..n].to_vec();
+        // Hot-path: tek kopya ile sahiplenilmiş `Bytes` üret — protobuf body alanı
+        // `bytes::Bytes` (prost bytes feature) olduğundan buradan sonraki encode
+        // zincirinde ek kopya oluşmaz (zero-copy reference semantics).
+        let body = Bytes::copy_from_slice(&buf[..n]);
         let wrapped = wrap_payload_transfer(payload_id, file_size, offset, 0, body);
         let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
         frame::write_frame(socket, &enc).await?;
@@ -476,7 +481,7 @@ fn wrap_payload_transfer(
     total_size: i64,
     offset: i64,
     flags: i32,
-    body: Vec<u8>,
+    body: Bytes,
 ) -> OfflineFrame {
     OfflineFrame {
         version: Some(1),
@@ -584,7 +589,7 @@ fn build_connection_request(our_name: &str) -> OfflineFrame {
                         .to_string(),
                 ),
                 endpoint_name: Some(our_name.to_string()),
-                endpoint_info: Some(endpoint_info),
+                endpoint_info: Some(endpoint_info.into()),
                 mediums: vec![Medium::WifiLan as i32],
                 ..Default::default()
             }),

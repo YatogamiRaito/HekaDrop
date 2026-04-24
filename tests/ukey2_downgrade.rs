@@ -31,7 +31,7 @@ use prost::Message;
 fn wrap_server_init_to_wire(si: &Ukey2ServerInit) -> Vec<u8> {
     let msg = Ukey2Message {
         message_type: Some(3), // SERVER_INIT
-        message_data: Some(si.encode_to_vec()),
+        message_data: Some(si.encode_to_vec().into()),
     };
     msg.encode_to_vec()
 }
@@ -60,9 +60,9 @@ fn decode_and_validate(wire: &[u8]) -> Result<Ukey2ServerInit> {
 fn happy_path_p256_sha512_v1_kabul_edilir() {
     let si = Ukey2ServerInit {
         version: Some(1),
-        random: Some(vec![0x42u8; 32]),
+        random: Some(vec![0x42u8; 32].into()),
         handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-        public_key: Some(vec![0x04, 0xAA, 0xBB]),
+        public_key: Some(vec![0x04, 0xAA, 0xBB].into()),
     };
     let wire = wrap_server_init_to_wire(&si);
     let parsed = decode_and_validate(&wire).expect("happy path geçmeli");
@@ -80,9 +80,9 @@ fn downgrade_curve25519_sha512_reddedilir() {
     // veya henüz-audit'lenmemiş bir cipher'a kaydırmaya çalışır.
     let si = Ukey2ServerInit {
         version: Some(1),
-        random: Some(vec![0u8; 32]),
+        random: Some(vec![0u8; 32].into()),
         handshake_cipher: Some(Ukey2HandshakeCipher::Curve25519Sha512 as i32),
-        public_key: Some(vec![0u8; 33]),
+        public_key: Some(vec![0u8; 33].into()),
     };
     let wire = wrap_server_init_to_wire(&si);
     let err = decode_and_validate(&wire).expect_err("downgrade reddedilmeli");
@@ -99,9 +99,9 @@ fn downgrade_reserved_cipher_reddedilir() {
     // dönerse ya bug ya downgrade — her iki durumda da kabul edilemez.
     let si = Ukey2ServerInit {
         version: Some(1),
-        random: Some(vec![0u8; 32]),
+        random: Some(vec![0u8; 32].into()),
         handshake_cipher: Some(Ukey2HandshakeCipher::Reserved as i32),
-        public_key: Some(vec![0u8; 16]),
+        public_key: Some(vec![0u8; 16].into()),
     };
     let wire = wrap_server_init_to_wire(&si);
     let err = decode_and_validate(&wire).expect_err("RESERVED reddedilmeli");
@@ -114,9 +114,9 @@ fn downgrade_unknown_numeric_cipher_reddedilir() {
     // decode başarılı olur ama HekaDrop'un whitelist'inde yoktur.
     let si = Ukey2ServerInit {
         version: Some(1),
-        random: Some(vec![0u8; 32]),
+        random: Some(vec![0u8; 32].into()),
         handshake_cipher: Some(9999),
-        public_key: Some(vec![0u8; 16]),
+        public_key: Some(vec![0u8; 16].into()),
     };
     let wire = wrap_server_init_to_wire(&si);
     let err = decode_and_validate(&wire).expect_err("bilinmeyen cipher reddedilmeli");
@@ -129,9 +129,9 @@ fn handshake_cipher_alani_eksikse_reddedilir() {
     // Validator None'ı P256_SHA512 DEĞİL olarak kabul etmeli.
     let si = Ukey2ServerInit {
         version: Some(1),
-        random: Some(vec![0u8; 32]),
+        random: Some(vec![0u8; 32].into()),
         handshake_cipher: None,
-        public_key: Some(vec![0u8; 16]),
+        public_key: Some(vec![0u8; 16].into()),
     };
     let wire = wrap_server_init_to_wire(&si);
     let err = decode_and_validate(&wire).expect_err("eksik cipher reddedilmeli");
@@ -144,9 +144,9 @@ fn version_downgrade_v0_reddedilir() {
     // version downgrade kendi başına handshake'i iptal etmeli.
     let si = Ukey2ServerInit {
         version: Some(0),
-        random: Some(vec![0u8; 32]),
+        random: Some(vec![0u8; 32].into()),
         handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-        public_key: Some(vec![0u8; 16]),
+        public_key: Some(vec![0u8; 16].into()),
     };
     let wire = wrap_server_init_to_wire(&si);
     let err = decode_and_validate(&wire).expect_err("v0 reddedilmeli");
@@ -163,9 +163,9 @@ fn version_downgrade_bilinmeyen_numerik_reddedilir() {
     for bad in [2i32, 3, 42, -1] {
         let si = Ukey2ServerInit {
             version: Some(bad),
-            random: Some(vec![0u8; 32]),
+            random: Some(vec![0u8; 32].into()),
             handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-            public_key: Some(vec![0u8; 16]),
+            public_key: Some(vec![0u8; 16].into()),
         };
         let wire = wrap_server_init_to_wire(&si);
         let err =
@@ -182,9 +182,9 @@ fn version_alani_eksikse_reddedilir() {
     // `version: None` — prost default. Validator None'ı V1 değil olarak almalı.
     let si = Ukey2ServerInit {
         version: None,
-        random: Some(vec![0u8; 32]),
+        random: Some(vec![0u8; 32].into()),
         handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-        public_key: Some(vec![0u8; 16]),
+        public_key: Some(vec![0u8; 16].into()),
     };
     let wire = wrap_server_init_to_wire(&si);
     let err = decode_and_validate(&wire).expect_err("eksik version reddedilmeli");
@@ -197,13 +197,13 @@ fn hatali_message_type_reddedilir() {
     // Validator pipeline'ı bu kadar erken safhada durdurmalı.
     let si = Ukey2ServerInit {
         version: Some(1),
-        random: Some(vec![0u8; 32]),
+        random: Some(vec![0u8; 32].into()),
         handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
-        public_key: Some(vec![0u8; 16]),
+        public_key: Some(vec![0u8; 16].into()),
     };
     let wrong_type = Ukey2Message {
         message_type: Some(1), // ALERT
-        message_data: Some(si.encode_to_vec()),
+        message_data: Some(si.encode_to_vec().into()),
     };
     let wire = wrong_type.encode_to_vec();
     let err = decode_and_validate(&wire).expect_err("ALERT SERVER_INIT değil");

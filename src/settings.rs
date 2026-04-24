@@ -27,9 +27,10 @@
 //!   * Eski diskten gelen `Vec<String>` / boş-id kayıtları da `TrustedDevice`
 //!     alanında `None` hash + boş id ile okunur (bkz. `migrate_trusted_value`).
 
+use crate::error::HekaError;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// v0.6 default — kullanıcı `Settings.trust_ttl_secs` ile override edebilir.
 /// 7 gün = 604800 saniye.
@@ -40,6 +41,12 @@ fn default_trust_ttl_secs() -> u64 {
 }
 
 fn default_advertise() -> bool {
+    true
+}
+
+fn default_disable_update_check() -> bool {
+    // Privacy-first: update kontrolü kapalı başlar. Kullanıcı Settings'ten
+    // açana kadar GitHub API'ye hiçbir istek çıkmaz.
     true
 }
 
@@ -253,12 +260,21 @@ pub struct Settings {
 
     /// GitHub "yeni sürüm var mı" kontrolü opt-out — H#4 privacy control.
     ///
-    /// `false` (default): "Güncelleme kontrol et" butonu GitHub API'ye
-    /// istek atar (User-Agent exposure). `true`: istek hiç çıkmaz, UI
-    /// kullanıcıya opt-out durumunu söyler. `HEKADROP_NO_UPDATE_CHECK`
+    /// `true` (default — privacy-first): update kontrolü varsayılan olarak
+    /// KAPALI; GitHub API'ye istek atılmaz (User-Agent exposure yok).
+    /// Kullanıcı UI'dan açana kadar sessizdir. `false`: "Güncelleme
+    /// kontrol et" butonu GitHub API'ye istek atar. `HEKADROP_NO_UPDATE_CHECK`
     /// env var ile OR'lanır — env set ise setting bağımsız olarak skip.
-    #[serde(default)]
+    #[serde(default = "default_disable_update_check")]
     pub disable_update_check: bool,
+
+    /// İlk açılış onboarding modal'ı gösterildi mi? Privacy-first default
+    /// `false` — yeni kullanıcı için bir kere modal açılır, kullanıcı
+    /// "Anladım" veya "Ayarları aç" dedikten sonra true'ya çekilir ve diske
+    /// yazılır. v0.5/v0.6'dan upgrade eden kullanıcılar da `false` ile gelir
+    /// → onboarding bir kez gösterilir (yeni feature'ları tanıtma fırsatı).
+    #[serde(default)]
+    pub first_launch_completed: bool,
 }
 
 impl Default for Settings {
@@ -272,7 +288,8 @@ impl Default for Settings {
             advertise: true,
             log_level: LogLevel::Info,
             keep_stats: true,
-            disable_update_check: false,
+            disable_update_check: true,
+            first_launch_completed: false,
         }
     }
 }
@@ -489,6 +506,19 @@ impl Settings {
     }
 
     pub fn save(&self) -> Result<()> {
+        // Pre-flight: kullanıcı explicit bir `download_dir` seçmişse dizinin
+        // hâlâ var olduğundan ve yazılabilir olduğundan emin ol. Aksi halde
+        // kullanıcı Settings'te kaydet-yeşil-tik görür ama runtime'da transfer
+        // "nedensiz" iptal olur. Burada erken hata döndürerek handler UI'a
+        // anlamlı bir mesaj gösterebilir.
+        //
+        // `None` (varsayılan `~/Downloads` çözünürlüğü) durumunda atlanır —
+        // resolve edilmiş default dizin platform tarafından garanti ediliyor
+        // ve tipik olarak mevcut; bu validation sadece kullanıcının kendi
+        // seçtiği bir path için anlamlı.
+        if let Some(ref dir) = self.download_dir {
+            validate_download_dir(dir).context("download_dir doğrulaması başarısız")?;
+        }
         let path = config_path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
@@ -496,6 +526,43 @@ impl Settings {
         let json = serde_json::to_string_pretty(self).context("JSON serialize")?;
         atomic_write(&path, json.as_bytes()).context("config.json yazılamadı")?;
         Ok(())
+    }
+
+    /// Debounced variant — aynı sürede rapid değişen ayarları (privacy toggle
+    /// serisi vb.) tek diske-yazımda birleştirir.
+    ///
+    /// Davranış: bu fonksiyon çağrıldığında 100 ms sonra `save()` tetikleyen
+    /// bir tokio task spawn edilir. 100 ms bitmeden ikinci bir çağrı gelirse
+    /// önceki task `abort()` edilir ve saatin başlangıcı sıfırlanır — yalnızca
+    /// **en son** snapshot diske yazılır. Sessiz (rapid toggle yok) bir süreçte
+    /// tek `save_debounced()` çağrısı tek atomik write üretir.
+    ///
+    /// `tokio::Handle::try_current()` çalışmıyorsa (test/no-runtime bağlamı)
+    /// senkron `save()`'e düşer — davranış semantik olarak aynı, sadece coalesce
+    /// yok.
+    pub fn save_debounced(&self) {
+        let snap = self.clone();
+        let handle = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => {
+                // Runtime yoksa coalesce mümkün değil — doğrudan yaz, hata log.
+                if let Err(e) = snap.save() {
+                    tracing::warn!("settings save_debounced fallback: {}", e);
+                }
+                return;
+            }
+        };
+        let mut slot = DEBOUNCE_TASK.lock();
+        // Aynı window içindeki önceki pending task'ı iptal et — son çağrı kazanır.
+        if let Some(prev) = slot.take() {
+            prev.abort();
+        }
+        *slot = Some(handle.spawn(async move {
+            tokio::time::sleep(DEBOUNCE_WINDOW).await;
+            if let Err(e) = snap.save() {
+                tracing::warn!("settings save_debounced write: {}", e);
+            }
+        }));
     }
 
     pub fn resolved_device_name(&self) -> String {
@@ -514,6 +581,60 @@ impl Settings {
 
 pub fn config_path() -> PathBuf {
     crate::platform::config_dir().join("config.json")
+}
+
+/// Debounce penceresi — `save_debounced()` çağrısı 100 ms sonra diske yazar.
+/// Rapid-toggle UX'inde (20+ privacy switch) ard arda değişen ayarlar tek
+/// atomic write'ta birleşir. Window'u büyütmek UI "Kaydedildi" geri bildirimini
+/// geciktirir, küçültmek coalescing faydasını düşürür — 100 ms insan-algısı
+/// eşiğinin altında (tipik 200 ms "anlık") ve I/O amortize için yeterli.
+const DEBOUNCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// En son pending `save_debounced` task'ı. Yeni çağrı geldiğinde `abort()`
+/// edilir ki son snapshot kazansın. Tokio `JoinHandle::abort` idempotent —
+/// zaten tamamlanmış task'ı abort etmek no-op.
+static DEBOUNCE_TASK: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>> =
+    parking_lot::Mutex::new(None);
+
+/// `download_dir` pre-flight — dizin var mı ve yazılabilir mi?
+///
+/// İki aşama:
+///   1) `metadata().is_dir()` — path bir dizine işaret ediyor (file veya yok
+///      değil). Symlink follow edilir (standart `metadata` davranışı).
+///   2) Write probe: `.hekadrop_write_test.<pid>` dosyasını yarat → hemen sil.
+///      Read-only mount, permission denied, full-disk gibi durumları yakalar.
+///      Dosya adında pid var — iki process paralel probe etse çakışmaz.
+///
+/// Başarılı dönüşte probe dosyası diskte kalmaz (rename/crash-time sızıntı
+/// yok; atomic write-test değil, create+delete — crash durumunda tmp dosya
+/// kalabilir ama adı sabit değil, re-probe doğru davranır).
+///
+/// Public API: `main.rs::handle_settings_save` doğrudan da çağırabilir
+/// (Settings::save zaten kullanıyor, ikinci doğrulama idempotent).
+pub fn validate_download_dir(path: &Path) -> Result<()> {
+    let meta = std::fs::metadata(path).map_err(|e| HekaError::DownloadDirInvalid {
+        path: path.display().to_string(),
+        reason: format!("okunamadı: {}", e),
+    })?;
+    if !meta.is_dir() {
+        return Err(HekaError::DownloadDirInvalid {
+            path: path.display().to_string(),
+            reason: "bir dizin değil".into(),
+        }
+        .into());
+    }
+    let probe = path.join(format!(".hekadrop_write_test.{}", std::process::id()));
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(e) => Err(HekaError::DownloadDirInvalid {
+            path: path.display().to_string(),
+            reason: format!("yazılabilir değil: {}", e),
+        }
+        .into()),
+    }
 }
 
 /// Tmp dosya scope-guard'ı — Drop anında `path`'i sessizce siler.
@@ -1364,7 +1485,11 @@ mod tests {
             s.keep_stats,
             "keep_stats default true (eski config'ler migrate olduğunda kayıp olmasın)"
         );
-        assert!(!s.disable_update_check);
+        // Dalga 2: privacy-first — update check default KAPALI.
+        assert!(
+            s.disable_update_check,
+            "disable_update_check default true (privacy-first, GitHub API sessiz)"
+        );
     }
 
     #[test]
@@ -1380,7 +1505,8 @@ mod tests {
         assert!(s.advertise);
         assert_eq!(s.log_level, LogLevel::Info);
         assert!(s.keep_stats);
-        assert!(!s.disable_update_check);
+        // Dalga 2: eski config'ler de privacy-first default'a düşer.
+        assert!(s.disable_update_check);
     }
 
     #[test]
