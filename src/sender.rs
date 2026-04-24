@@ -29,8 +29,8 @@ use crate::payload::{CompletedPayload, PayloadAssembler};
 use crate::secure::SecureCtx;
 use crate::sharing::nearby::{
     connection_response_frame::Status as ConsentStatus, file_metadata::Type as FileKind,
-    frame::Version as ShVersion, v1_frame as sh_v1, FileMetadata, Frame as SharingFrame,
-    IntroductionFrame, V1Frame as ShV1Frame,
+    frame::Version as ShVersion, text_metadata::Type as TextKind, v1_frame as sh_v1, FileMetadata,
+    Frame as SharingFrame, IntroductionFrame, TextMetadata, V1Frame as ShV1Frame,
 };
 use crate::state::{self, ProgressState};
 use crate::ukey2;
@@ -368,6 +368,340 @@ pub async fn send(req: SendRequest) -> Result<()> {
     }
 }
 
+/// Tek bir metin parçasını Quick Share üzerinden gönderir.
+///
+/// Dosya yolundaki akışın birebir aynısı — UKEY2 → PairedKey → Introduction →
+/// Consent → PayloadTransfer. Tek farkı: Introduction'da `text_metadata` olur
+/// (file_metadata yerine), payload chunk'ı `PayloadType::Bytes` tipinde tek
+/// chunk (küçük metin) ya da CHUNK_SIZE sınırıyla parçalanmış çoklu chunk
+/// halinde yollanır. Android Quick Share alıcısı Bytes payload'ı `TextType`
+/// meta'sıyla eşleyip pano/URL açma akışına sokuyor.
+pub struct SendTextRequest {
+    pub device: DiscoveredDevice,
+    pub text: String,
+}
+
+/// TcpStream::connect için üst sınır. Hedef cihaz kapalı/erişilemez iken
+/// OS TCP SYN retry'ını ~75 sn bekletmesin diye 10 sn ile keser.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+pub async fn send_text(req: SendTextRequest) -> Result<()> {
+    let text = req.text;
+    if text.is_empty() {
+        bail!("boş metin gönderilemez");
+    }
+    // `as i64` cast i64::MAX üstü uzunlukta wrap/negatif üretir; protokol
+    // field'ları (`size`, `total_size`) bozulur. Pratikte bir String bu boyuta
+    // ulaşamaz ama savunma amaçlı erken hata.
+    let total_bytes: i64 = i64::try_from(text.len())
+        .map_err(|_| anyhow!("metin payload çok büyük: {} bayt", text.len()))?;
+    let payload_id = (rand::thread_rng().next_u64() >> 1) as i64;
+    // TEXT (1) — URL tipini peer URL schema doğrulayıp otomatik açar; genel
+    // metin için TEXT güvenli default. URL şeklinde ise gene TEXT olarak
+    // gönderilir, Android zaten URL-otomatik-aç tarafı için URL meta şart.
+    let text_kind = TextKind::Text as i32;
+    info!(
+        "[sender] metin gönderimi: {} ({}:{}), {} bayt",
+        req.device.name, req.device.addr, req.device.port, total_bytes
+    );
+
+    // Guard'ı connect'ten ÖNCE oluşturuyoruz — TCP connect takılırsa kullanıcı
+    // tray'den "İptal"le durdurabilsin. Guard drop edildiğinde cancel_token
+    // otomatik düşer.
+    let peer_label = req.device.name.clone();
+    let transfer_id = format!("out-text:{}:{}", req.device.addr, req.device.port);
+    let _guard = state::TransferGuard::new(&transfer_id);
+    let cancel_token: CancellationToken = _guard.token.clone();
+
+    let addr = format!("{}:{}", req.device.addr, req.device.port);
+    // Connect'i hem timeout hem cancel ile sarmala — erişilemez host ~75 sn
+    // SYN retry bekletmesin, iptal anında çıkabilsin.
+    let mut socket = tokio::select! {
+        biased;
+        _ = cancel_token.cancelled() => bail!("kullanıcı aktarımı iptal etti"),
+        res = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr)) => {
+            match res {
+                Ok(r) => r?,
+                Err(_) => bail!("bağlantı zaman aşımına uğradı ({} sn): {}", CONNECT_TIMEOUT.as_secs(), addr),
+            }
+        }
+    };
+    if let Err(e) = socket.set_nodelay(true) {
+        warn!("[sender] set_nodelay başarısız ({}): {}", addr, e);
+    }
+    info!("[sender] TCP bağlantı: {} ✓", addr);
+
+    let our_name = state::get().settings.read().resolved_device_name();
+    let conn_req = build_connection_request(&our_name);
+    frame::write_frame(&mut socket, &conn_req.encode_to_vec()).await?;
+
+    let keys = ukey2::client_handshake(&mut socket).await?;
+    info!(
+        "[sender] ✓ UKEY2 tamam — session fingerprint: {}",
+        crate::crypto::session_fingerprint(&keys.auth_key)
+    );
+
+    let our_resp = connection::build_connection_response_accept();
+    frame::write_frame(&mut socket, &our_resp.encode_to_vec()).await?;
+    let peer_resp_raw =
+        frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT).await?;
+    let _peer_resp = OfflineFrame::decode(peer_resp_raw.as_ref())?;
+
+    let mut ctx = SecureCtx::from_keys(&keys);
+    let mut assembler = PayloadAssembler::new();
+
+    connection::send_sharing_frame(
+        &mut socket,
+        &mut ctx,
+        &connection::build_paired_key_encryption(),
+    )
+    .await?;
+
+    let mut introduction_sent = false;
+    let mut sent_paired_result = false;
+
+    loop {
+        let raw = tokio::select! {
+            biased;
+            _ = cancel_token.cancelled() => {
+                info!("[sender] kullanıcı iptal etti (metin)");
+                let cancel = connection::build_sharing_cancel();
+                connection::send_sharing_frame(&mut socket, &mut ctx, &cancel).await.ok();
+                connection::send_disconnection(&mut socket, &mut ctx).await.ok();
+                state::set_progress(ProgressState::Idle);
+                bail!("kullanıcı aktarımı iptal etti");
+            }
+            res = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT) => res?,
+        };
+        let inner = ctx.decrypt(&raw)?;
+        let offline = OfflineFrame::decode(inner.as_ref())?;
+        let Some(v1) = offline.v1 else { continue };
+        let ftype = v1
+            .r#type
+            .and_then(|t| v1_frame::FrameType::try_from(t).ok());
+
+        match ftype {
+            Some(v1_frame::FrameType::PayloadTransfer) => {
+                let pt = v1
+                    .payload_transfer
+                    .ok_or_else(|| anyhow!("payload_transfer yok"))?;
+                let Some(done) = assembler.ingest(&pt).await? else {
+                    continue;
+                };
+                let CompletedPayload::Bytes { data, .. } = done else {
+                    continue;
+                };
+                let Ok(sharing) = SharingFrame::decode(&data[..]) else {
+                    continue;
+                };
+                let shv1 = sharing
+                    .v1
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("sharing v1 yok"))?;
+                let stype = shv1.r#type.and_then(|t| sh_v1::FrameType::try_from(t).ok());
+                match stype {
+                    Some(sh_v1::FrameType::PairedKeyEncryption) if !sent_paired_result => {
+                        connection::send_sharing_frame(
+                            &mut socket,
+                            &mut ctx,
+                            &connection::build_paired_key_result(),
+                        )
+                        .await?;
+                        sent_paired_result = true;
+                    }
+                    Some(sh_v1::FrameType::PairedKeyResult) if !introduction_sent => {
+                        let intro = build_introduction_text(payload_id, text_kind, total_bytes);
+                        connection::send_sharing_frame(&mut socket, &mut ctx, &intro).await?;
+                        introduction_sent = true;
+                        info!(
+                            "[sender] Introduction gönderildi — metin ({} bayt)",
+                            total_bytes
+                        );
+                    }
+                    Some(sh_v1::FrameType::Response) => {
+                        let status = shv1
+                            .connection_response
+                            .as_ref()
+                            .and_then(|r| r.status)
+                            .unwrap_or(0);
+                        let accepted = status == ConsentStatus::Accept as i32;
+                        if !accepted {
+                            connection::send_disconnection(&mut socket, &mut ctx)
+                                .await
+                                .ok();
+                            bail!(
+                                "Peer metin gönderimini reddetti (status={}). Session fingerprint: {}",
+                                status,
+                                crate::crypto::session_fingerprint(&keys.auth_key)
+                            );
+                        }
+                        send_text_bytes(
+                            &mut socket,
+                            &mut ctx,
+                            payload_id,
+                            text.as_bytes(),
+                            &peer_label,
+                            &cancel_token,
+                        )
+                        .await?;
+                        let _ = tokio::time::timeout(
+                            PEER_DISCONNECT_TIMEOUT,
+                            wait_peer_disconnect(&mut socket, &mut ctx),
+                        )
+                        .await;
+                        connection::send_disconnection(&mut socket, &mut ctx)
+                            .await
+                            .ok();
+                        {
+                            let st = state::get();
+                            let keep = st.settings.read().keep_stats;
+                            let snap_opt = {
+                                let mut s = st.stats.write();
+                                s.record_sent(&peer_label, total_bytes.max(0) as u64);
+                                if keep {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(snap) = snap_opt {
+                                let _ = snap.save();
+                            }
+                        }
+                        state::set_progress_completed_auto_idle(
+                            crate::i18n::t("sender.text_summary").to_string(),
+                            state::DEFAULT_COMPLETED_IDLE_DELAY,
+                        );
+                        info!("[sender] ✓ metin gönderimi tamamlandı");
+                        return Ok(());
+                    }
+                    Some(sh_v1::FrameType::Cancel) => {
+                        bail!("Peer aktarımı iptal etti");
+                    }
+                    _ => {}
+                }
+            }
+            Some(v1_frame::FrameType::KeepAlive) => {
+                let reply = OfflineFrame {
+                    version: Some(1),
+                    v1: Some(V1Frame {
+                        r#type: Some(v1_frame::FrameType::KeepAlive as i32),
+                        keep_alive: Some(Default::default()),
+                        ..Default::default()
+                    }),
+                };
+                let enc = ctx.encrypt(&reply.encode_to_vec())?;
+                frame::write_frame(&mut socket, &enc).await?;
+            }
+            Some(v1_frame::FrameType::Disconnection) => {
+                warn!("[sender] peer disconnect (metin)");
+                bail!("peer beklenmedik biçimde bağlantıyı kesti");
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Metni Bytes payload olarak gönderir. Küçük metin tek chunk + son empty
+/// chunk ile biter; büyük metin CHUNK_SIZE sınırıyla bölünür (Android
+/// tarafı her iki durumu da assembler reassembly ile ele alır).
+async fn send_text_bytes(
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    payload_id: i64,
+    data: &[u8],
+    peer_label: &str,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    // `as i64` cast i64::MAX üstünde wrap üretir; header'ın `total_size`'ı
+    // negatif olup receiver protokol hatası verir. Pratikte erişilemez ama
+    // erken ve anlamlı hata daha iyi.
+    let total = i64::try_from(data.len())
+        .map_err(|_| anyhow!("metin payload çok büyük: {} bayt", data.len()))?;
+    let mut offset: usize = 0;
+    while offset < data.len() {
+        if cancel.is_cancelled() {
+            bail!("metin chunk gönderim sırasında iptal");
+        }
+        let end = (offset + CHUNK_SIZE).min(data.len());
+        let body = data[offset..end].to_vec();
+        let last_flag = 0;
+        let offset_i64 = i64::try_from(offset)
+            .map_err(|_| anyhow!("metin payload offset'i çok büyük: {}", offset))?;
+        let wrapped = wrap_bytes_payload_transfer(payload_id, total, offset_i64, last_flag, body);
+        let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
+        frame::write_frame(socket, &enc).await?;
+        offset = end;
+        let offset_i64 = i64::try_from(offset)
+            .map_err(|_| anyhow!("metin payload offset'i çok büyük: {}", offset))?;
+        if let Some(percent) = compute_percent(0, offset_i64, total) {
+            state::set_progress(ProgressState::Receiving {
+                device: peer_label.to_string(),
+                file: crate::i18n::t("sender.text_summary").to_string(),
+                percent,
+            });
+        }
+    }
+    // Son chunk: boş gövde, flags=1 (last).
+    let last = wrap_bytes_payload_transfer(payload_id, total, total, 1, Vec::new());
+    let enc = ctx.encrypt(&last.encode_to_vec())?;
+    frame::write_frame(socket, &enc).await?;
+    Ok(())
+}
+
+fn wrap_bytes_payload_transfer(
+    id: i64,
+    total_size: i64,
+    offset: i64,
+    flags: i32,
+    body: Vec<u8>,
+) -> OfflineFrame {
+    OfflineFrame {
+        version: Some(1),
+        v1: Some(V1Frame {
+            r#type: Some(v1_frame::FrameType::PayloadTransfer as i32),
+            payload_transfer: Some(PayloadTransferFrame {
+                packet_type: Some(ptf::PacketType::Data as i32),
+                payload_header: Some(PayloadHeader {
+                    id: Some(id),
+                    r#type: Some(PayloadType::Bytes as i32),
+                    total_size: Some(total_size),
+                    is_sensitive: Some(false),
+                    ..Default::default()
+                }),
+                payload_chunk: Some(PayloadChunk {
+                    offset: Some(offset),
+                    flags: Some(flags),
+                    body: Some(body),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+    }
+}
+
+fn build_introduction_text(payload_id: i64, kind: i32, size: i64) -> SharingFrame {
+    SharingFrame {
+        version: Some(ShVersion::V1 as i32),
+        v1: Some(ShV1Frame {
+            r#type: Some(sh_v1::FrameType::Introduction as i32),
+            introduction: Some(IntroductionFrame {
+                text_metadata: vec![TextMetadata {
+                    text_title: Some(crate::i18n::t("sender.text_summary").to_string()),
+                    r#type: Some(kind),
+                    payload_id: Some(payload_id),
+                    size: Some(size),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn send_file_chunks(
     socket: &mut TcpStream,
@@ -653,5 +987,40 @@ mod tests {
         assert_eq!(guess_mime("belge.pdf"), "application/pdf");
         assert_eq!(guess_mime("bilinmiyor.xyz"), "application/octet-stream");
         assert_eq!(guess_mime("uzantisiz"), "application/octet-stream");
+    }
+
+    // Regression: text_metadata alanları payload_id/size/type doğru eşlenmeli,
+    // receiver introduction'ı dolu (planned_texts boş değil) olarak görsün.
+    #[test]
+    fn build_introduction_text_alanlari_dogru_doldurur() {
+        let frame = build_introduction_text(42, TextKind::Text as i32, 128);
+        assert_eq!(frame.version, Some(ShVersion::V1 as i32));
+        let v1 = frame.v1.expect("v1 frame yok");
+        assert_eq!(v1.r#type, Some(sh_v1::FrameType::Introduction as i32));
+        let intro = v1.introduction.expect("introduction yok");
+        assert!(intro.file_metadata.is_empty());
+        assert_eq!(intro.text_metadata.len(), 1);
+        let m = &intro.text_metadata[0];
+        assert_eq!(m.payload_id, Some(42));
+        assert_eq!(m.size, Some(128));
+        assert_eq!(m.r#type, Some(TextKind::Text as i32));
+    }
+
+    // Regression: Bytes payload header type File DEĞİL, Bytes olmalı —
+    // receiver Bytes dışı payload'ı dosya olarak yazmaya çalışır.
+    #[test]
+    fn wrap_bytes_payload_transfer_bytes_header_ve_chunk_uretir() {
+        let frame = wrap_bytes_payload_transfer(7, 10, 3, 0, vec![1, 2, 3]);
+        let v1 = frame.v1.expect("v1 yok");
+        assert_eq!(v1.r#type, Some(v1_frame::FrameType::PayloadTransfer as i32));
+        let pt = v1.payload_transfer.expect("payload_transfer yok");
+        let hdr = pt.payload_header.expect("header yok");
+        assert_eq!(hdr.r#type, Some(PayloadType::Bytes as i32));
+        assert_eq!(hdr.id, Some(7));
+        assert_eq!(hdr.total_size, Some(10));
+        let ch = pt.payload_chunk.expect("chunk yok");
+        assert_eq!(ch.offset, Some(3));
+        assert_eq!(ch.flags, Some(0));
+        assert_eq!(ch.body.as_deref(), Some(&[1u8, 2, 3][..]));
     }
 }

@@ -761,6 +761,15 @@
         <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
       </div>
 
+      <div class="row" id="text-send-row">
+        <button type="button" class="primary" id="text-send-btn" onclick="sendTextFromInput()"
+                aria-label="Metni gönder" data-i18n="webview.text.send">Gönder</button>
+        <input type="text" id="text-send-input" autocomplete="off"
+               aria-label="Göndermek istediğin metin"
+               placeholder="Göndermek istediğin metni yaz ya da yapıştır (Ctrl/Cmd+V)"
+               data-i18n="webview.text.placeholder" data-i18n-attr="placeholder">
+      </div>
+
       <button type="button" onclick="act('downloads')">
         <span class="icon" aria-hidden="true">📁</span><span data-i18n="webview.btn.open_downloads">İndirme klasörünü aç</span>
       </button>
@@ -1021,6 +1030,41 @@
     // ---- Drop zone ----
     const drop = document.getElementById('drop');
     drop.addEventListener('click', () => act('send'));
+
+    // ---- Metin gönder: input + buton + global Ctrl/Cmd+V ----
+    // IPC protokolü basit string — "send_text::" prefix'inden sonra ham metin
+    // gelir. Metin newline / özel karakter içerebilir (`postMessage` string'i
+    // olduğu gibi taşır, Rust tarafında `strip_prefix` sadece ilk occurrence'ı
+    // temizler, gerisi kullanıcı verisidir).
+    const textInput = document.getElementById('text-send-input');
+    function sendTextFromInput() {
+      const v = textInput.value;
+      if (!v || !v.trim()) return;
+      if (window.ipc) window.ipc.postMessage('send_text::' + v);
+      textInput.value = '';
+    }
+    textInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendTextFromInput();
+      }
+    });
+
+    // Global Ctrl/Cmd+V: pencere odaktayken panodaki metni doğrudan gönder.
+    // Input/textarea/contentEditable içindeyken müdahale etmiyoruz — kullanıcı
+    // orada gerçek yapıştırma bekler. Rust tarafı panoyu kendisi okur (hem
+    // native API tutarlılığı hem de `navigator.clipboard` permission prompt'u
+    // atlama için).
+    document.addEventListener('keydown', e => {
+      const combo = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
+      if (!combo) return;
+      if (e.key !== 'v' && e.key !== 'V') return;
+      const a = document.activeElement;
+      const tag = a && a.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (a && a.isContentEditable)) return;
+      e.preventDefault();
+      act('paste_send');
+    });
 
     // ---- Auto-accept toggle (native checkbox with role="switch") ----
     const autoCheckbox = document.getElementById('set-auto');

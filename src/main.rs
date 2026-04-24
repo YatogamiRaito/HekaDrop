@@ -498,6 +498,18 @@ fn run_app() -> ! {
 }
 
 fn handle_ipc(cmd: &str) {
+    // PRIVACY: Metin gönderim komutları kullanıcı verisi içerir; log'a düşmesin.
+    // `send_text::` prefix'i yalnız başlangıç kısmıyla logla, geri kalanı redact.
+    // PERF: IPC handler UI/event-loop thread'inde çalışır; `len()` O(1) bayt
+    // sayısı yeter — `chars().count()` büyük metinlerde O(n) gecikme yaratır.
+    if let Some(rest) = cmd.strip_prefix("send_text::") {
+        info!("[ui] ipc: send_text:: ({} bayt)", rest.len());
+        if let Some(rt) = RUNTIME.get() {
+            let text = rest.to_string();
+            rt.spawn(initiate_text_send_flow(text));
+        }
+        return;
+    }
     info!("[ui] ipc: {}", cmd);
     if let Some(rest) = cmd.strip_prefix("settings_save::") {
         handle_settings_save(rest);
@@ -526,6 +538,29 @@ fn handle_ipc(cmd: &str) {
         "send" => {
             if let Some(rt) = RUNTIME.get() {
                 rt.spawn(initiate_send_flow());
+            }
+        }
+        "paste_send" => {
+            // Ctrl/Cmd+V global handler — pano okuması Linux/macOS'ta external
+            // command spawn içerir (xclip/pbpaste), Windows'ta OpenClipboard
+            // bir komşu uygulamayı bekleyebilir. Her ikisi de IPC thread'ini
+            // bloklar; `spawn_blocking` ile arkaplana al.
+            if let Some(rt) = RUNTIME.get() {
+                let rt_handle = rt.clone();
+                rt.spawn(async move {
+                    let clipboard = tokio::task::spawn_blocking(platform::paste_from_clipboard)
+                        .await
+                        .ok()
+                        .flatten();
+                    match clipboard {
+                        Some(t) if !t.trim().is_empty() => {
+                            rt_handle.spawn(initiate_text_send_flow(t));
+                        }
+                        _ => {
+                            ui::notify(i18n::t("notify.app_name"), i18n::t("notify.text_empty"));
+                        }
+                    }
+                });
             }
         }
         "settings_get" => {
@@ -670,6 +705,8 @@ fn push_i18n_to_ui() {
         "webview.drop.line2",
         "webview.progress.preparing",
         "webview.progress.default",
+        "webview.text.placeholder",
+        "webview.text.send",
         "webview.btn.open_downloads",
         "webview.btn.hide_to_tray",
         "webview.btn.quit",
@@ -1027,6 +1064,68 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
         }
         Err(e) => {
             tracing::warn!("send hatası: {:#}", e);
+            ui::show_info(i18n::t("send.send_error"), &format!("{:#}", e));
+        }
+    }
+}
+
+async fn initiate_text_send_flow(text: String) {
+    let text = text.trim_end_matches(['\r', '\n']).to_string();
+    if text.is_empty() {
+        ui::notify(i18n::t("notify.app_name"), i18n::t("notify.text_empty"));
+        return;
+    }
+    info!(
+        "[send_flow] metin gönderimi ({} karakter)",
+        text.chars().count()
+    );
+
+    ui::notify(i18n::t("notify.app_name"), i18n::t("notify.scanning"));
+
+    let own_port = state::listen_port();
+    let devices = match discovery::scan(Duration::from_secs(3), own_port).await {
+        Ok(v) => v,
+        Err(e) => {
+            ui::show_info(i18n::t("send.discovery_error"), &format!("{:#}", e));
+            return;
+        }
+    };
+
+    if devices.is_empty() {
+        ui::show_info(i18n::t("notify.app_name"), i18n::t("dialog.no_devices"));
+        return;
+    }
+
+    let labels: Vec<String> = devices
+        .iter()
+        .map(|d| format!("{} — {} ({}:{})", d.kind_label(), d.name, d.addr, d.port))
+        .collect();
+    let Some(idx) = ui::choose_device(labels).await else {
+        return;
+    };
+    let device = devices[idx].clone();
+
+    ui::notify(
+        i18n::t("notify.app_name"),
+        &i18n::tf(
+            "notify.sending_to",
+            &[&device.name, i18n::t("sender.text_summary")],
+        ),
+    );
+
+    let req = sender::SendTextRequest {
+        device: device.clone(),
+        text,
+    };
+    match sender::send_text(req).await {
+        Ok(_) => {
+            ui::notify(
+                i18n::t("notify.app_name"),
+                &i18n::tf("notify.text_sent_to", &[&device.name]),
+            );
+        }
+        Err(e) => {
+            tracing::warn!("send_text hatası: {:#}", e);
             ui::show_info(i18n::t("send.send_error"), &format!("{:#}", e));
         }
     }
