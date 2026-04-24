@@ -390,6 +390,25 @@ pub struct SendTextRequest {
 /// OS TCP SYN retry'ını ~75 sn bekletmesin diye 10 sn ile keser.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Metnin URL payload'ı olarak gönderilip gönderilmeyeceğine karar verir.
+///
+/// Kriter: trim'lenmiş string `http://` veya `https://` ile başlıyor
+/// (case-insensitive). Peer tarafında `is_safe_url_scheme` ile aynı
+/// allow-list kullanılır — wire simetrisi kasıtlı: gönderdiğimiz URL'i
+/// alıcı da açacak, göndermediklerimizi (javascript:, file:, data: vb.)
+/// alıcı da reddedecek.
+fn detect_url_kind(text: &str) -> TextKind {
+    let trimmed = text.trim_start();
+    let starts_ci = |prefix: &str| {
+        trimmed.len() >= prefix.len() && trimmed[..prefix.len()].eq_ignore_ascii_case(prefix)
+    };
+    if starts_ci("http://") || starts_ci("https://") {
+        TextKind::Url
+    } else {
+        TextKind::Text
+    }
+}
+
 pub async fn send_text(req: SendTextRequest) -> Result<()> {
     let text = req.text;
     if text.is_empty() {
@@ -401,10 +420,11 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     let total_bytes: i64 = i64::try_from(text.len())
         .map_err(|_| anyhow!("metin payload çok büyük: {} bayt", text.len()))?;
     let payload_id = (rand::thread_rng().next_u64() >> 1) as i64;
-    // TEXT (1) — URL tipini peer URL schema doğrulayıp otomatik açar; genel
-    // metin için TEXT güvenli default. URL şeklinde ise gene TEXT olarak
-    // gönderilir, Android zaten URL-otomatik-aç tarafı için URL meta şart.
-    let text_kind = TextKind::Text as i32;
+    // URL şeklinde ise TextKind::Url ile etiketliyoruz: Android/alıcı share
+    // sheet'te URL'i "Tarayıcıda aç" aksiyonuyla gösterir. Aksi hâlde düz TEXT.
+    // Allow-list sender ve receiver'da aynı — tek taraf bypass'lansa bile
+    // diğeri kapsar (defense in depth).
+    let text_kind = detect_url_kind(&text) as i32;
     info!(
         "[sender] metin gönderimi: {} ({}:{}), {} bayt",
         req.device.name, req.device.addr, req.device.port, total_bytes
@@ -518,7 +538,19 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                         sent_paired_result = true;
                     }
                     Some(sh_v1::FrameType::PairedKeyResult) if !introduction_sent => {
-                        let intro = build_introduction_text(payload_id, text_kind, total_bytes);
+                        // URL ise peer'ın preview'ı için scheme://host kadarını koy
+                        // (token'lı URL privacy): tam URL zaten bytes payload'unda
+                        // gidiyor, title ayrıca PII açmasın. `url_scheme_host`
+                        // fallback'i `<unparsable>` döndüğünde dump generic i18n'e
+                        // düşmeden doğrudan onu title yapıyoruz — alıcı URL kabul
+                        // etmiş ve allow-list zaten schema/host'u doğrulayacak.
+                        let title = if text_kind == TextKind::Url as i32 {
+                            crate::log_redact::url_scheme_host(&text)
+                        } else {
+                            crate::i18n::t("sender.text_summary").to_string()
+                        };
+                        let intro =
+                            build_introduction_text(payload_id, text_kind, total_bytes, title);
                         connection::send_sharing_frame(&mut socket, &mut ctx, &intro).await?;
                         introduction_sent = true;
                         info!(
@@ -690,14 +722,19 @@ fn wrap_bytes_payload_transfer(
     }
 }
 
-fn build_introduction_text(payload_id: i64, kind: i32, size: i64) -> SharingFrame {
+fn build_introduction_text(
+    payload_id: i64,
+    kind: i32,
+    size: i64,
+    text_title: String,
+) -> SharingFrame {
     SharingFrame {
         version: Some(ShVersion::V1 as i32),
         v1: Some(ShV1Frame {
             r#type: Some(sh_v1::FrameType::Introduction as i32),
             introduction: Some(IntroductionFrame {
                 text_metadata: vec![TextMetadata {
-                    text_title: Some(crate::i18n::t("sender.text_summary").to_string()),
+                    text_title: Some(text_title),
                     r#type: Some(kind),
                     payload_id: Some(payload_id),
                     size: Some(size),
@@ -1004,7 +1041,7 @@ mod tests {
     // receiver introduction'ı dolu (planned_texts boş değil) olarak görsün.
     #[test]
     fn build_introduction_text_alanlari_dogru_doldurur() {
-        let frame = build_introduction_text(42, TextKind::Text as i32, 128);
+        let frame = build_introduction_text(42, TextKind::Text as i32, 128, "özet".to_string());
         assert_eq!(frame.version, Some(ShVersion::V1 as i32));
         let v1 = frame.v1.expect("v1 frame yok");
         assert_eq!(v1.r#type, Some(sh_v1::FrameType::Introduction as i32));
@@ -1015,6 +1052,56 @@ mod tests {
         assert_eq!(m.payload_id, Some(42));
         assert_eq!(m.size, Some(128));
         assert_eq!(m.r#type, Some(TextKind::Text as i32));
+        assert_eq!(m.text_title.as_deref(), Some("özet"));
+    }
+
+    // URL auto-detection: http/https başlayan metin `Url` tipine etiketlenmeli,
+    // diğer şemalar ve düz metin `Text` olarak kalmalı. Allow-list wire
+    // simetrisinin sender yarısı bu testle kilitlenir.
+    #[test]
+    fn detect_url_kind_http_https_yakalar() {
+        // Pozitif — http(s) allow-list'e giriyor
+        assert_eq!(detect_url_kind("http://example.com"), TextKind::Url);
+        assert_eq!(detect_url_kind("https://example.com"), TextKind::Url);
+        assert_eq!(detect_url_kind("HTTPS://X.COM/path"), TextKind::Url);
+        assert_eq!(
+            detect_url_kind("  https://leading-ws.example"),
+            TextKind::Url
+        );
+        // Negatif — reddedilen şemalar ve düz metin Text olmalı
+        assert_eq!(detect_url_kind("javascript:alert(1)"), TextKind::Text);
+        assert_eq!(detect_url_kind("file:///etc/passwd"), TextKind::Text);
+        assert_eq!(detect_url_kind("data:text/html,<script/>"), TextKind::Text);
+        assert_eq!(detect_url_kind("zoom-us://join?id=1"), TextKind::Text);
+        assert_eq!(detect_url_kind("merhaba dünya"), TextKind::Text);
+        assert_eq!(detect_url_kind("http"), TextKind::Text);
+        assert_eq!(detect_url_kind(""), TextKind::Text);
+    }
+
+    // RFC 0002 regression: URL için `text_title` tam URL değil scheme://host
+    // preview'ı olmalı (token'lı URL privacy). Tam URL payload bytes'ında
+    // gönderiliyor; title Android paylaşım geçmişinde kalıcı olabileceği için
+    // sadece scheme + host tutuyoruz.
+    #[test]
+    fn build_introduction_text_url_title_scheme_host_preview() {
+        let url = "https://example.com/path?token=abc123";
+        let title = crate::log_redact::url_scheme_host(url);
+        let frame = build_introduction_text(7, TextKind::Url as i32, 42, title.clone());
+        let m = &frame
+            .v1
+            .expect("v1")
+            .introduction
+            .expect("intro")
+            .text_metadata[0];
+        assert_eq!(m.r#type, Some(TextKind::Url as i32));
+        assert_eq!(m.text_title.as_deref(), Some(title.as_str()));
+        // log_redact::url_scheme_host zaten token-strip ediyor — regression için
+        // title'da "token" geçmemeli.
+        assert!(
+            !m.text_title.as_deref().unwrap_or("").contains("token"),
+            "title URL token'ı içermemeli: {:?}",
+            m.text_title
+        );
     }
 
     // Regression: Bytes payload header type File DEĞİL, Bytes olmalı —
