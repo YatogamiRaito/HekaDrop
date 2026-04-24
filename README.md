@@ -56,9 +56,10 @@ doğrudan — bulut yok, hesap yok, tracker yok.
   Ayarlar → Gizlilik sekmesinden tek tıkla kapatılabilir. Receive-only mod desteklenir (`advertise=false`).
 - **Symlink TOCTOU koruması** — disk'e yazım hedefi symlink ise transfer reddedilir.
 - **İstatistik + Tanı sekmesi** — toplam byte, dosya sayısı, cihaz bazında kırılım, canlı servis durumu.
-- **Yeni sürüm bildirimi** — GitHub Releases API'sinden poll edilir; yeni tag varsa uygulama içi banner
-  gösterilir. **Otomatik indirme/kurulum yoktur** — linke tıklayıp manuel yükseltirsiniz.
-  `HEKADROP_NO_UPDATE_CHECK` env veya Ayarlar → Gizlilik toggle'ı ile kapatılabilir.
+- **Yeni sürüm kontrolü** — GitHub Releases API'si kullanıcı arayüzündeki **Güncelleme kontrol et**
+  aksiyonu ile manuel olarak sorgulanır. Yeni sürüm bulunursa kullanıcıya bilgi verilir;
+  **otomatik indirme/kurulum yoktur** — yükseltme işlemi manuel yapılır. `HEKADROP_NO_UPDATE_CHECK`
+  env veya Ayarlar → Gizlilik toggle'ı ile devre dışı bırakılabilir.
 - **macOS native UI** — menü çubuğu ikonu, tab'lı pencere (Ana / Geçmiş / Ayarlar / Tanı), native onay dialog'u.
 - **Universal2 binary** — tek `.app` hem Intel hem Apple Silicon'da çalışır.
 - **i18n** — Türkçe (varsayılan) + İngilizce arayüz.
@@ -239,10 +240,12 @@ src/
   Gizlilik toggle'ları (Ayarlar → Gizlilik) mDNS yayınını, update check'i ve istatistik yazımını
   kapatmanıza izin verir.
 - **Symlink TOCTOU koruması** — disk'e yazım hedefi symlink ise transfer reddedilir.
-- **Malformed peer koruması** — negatif `FileMetadata.size` clamp + 1 TiB üst sınır cancel;
-  `cipher_commitment` flood guard (≥8 element reddi).
+- **Malformed peer koruması** — negatif `FileMetadata.size` değerleri sıfıra sabitlenir ve
+  1 TiB üzerindeki dosyalar için aktarım iptal edilir; `cipher_commitment` flood guard
+  (8 üstü / 9+ element reddedilir).
 - **Config dosyası** — ayarlar JSON olarak `~/Library/Application Support/HekaDrop/config.json`
-  altında saklanır (atomic write + `0o600` izin; keychain entegrasyonu yol haritasında).
+  altında atomic write ile saklanır (tmp file + rename). Gizli dosyalar (örn. `identity.key`)
+  ek olarak `0o600` POSIX izni ile yazılır; keychain entegrasyonu yol haritasında.
 - **Log disiplini** — günlük rotasyon, en fazla 3 gün saklama ve tek dosya 10 MB üst sınırı;
   log dosyaları diskte şişemez.
 
@@ -267,10 +270,11 @@ Lejant: ✅ tamam · 🚧 geliştirme aşamasında · ⏳ planlı
 - **0.5.x** — Trusted device kimlik modeli, atomic config, `FileMetadata.size` guard, metin gönderimi ✅
 - **0.6.0** — Kriptografik hash-first trust ([design 017](docs/design/017-trusted-id-hardening.md)),
   per-transfer CancellationToken, Privacy toggles (advertise / log_level / keep_stats /
-  disable_update_check), release debug symbols (dSYM/PDB/dwp) ✅
+  disable_update_check), Windows PDB sidecar debug symbols ✅
 
 **Planlı:**
 
+- macOS dSYM + Linux dwp release debug symbols (v0.6.1).
 - Partial transfer resume (Quick Share protokolü buna resmi destek vermediği için receiver-side
   best-effort olacak; tasarım araştırması açık).
 - macOS Apple Developer ID signing + notarization.
@@ -330,7 +334,8 @@ per-SecureMessage HMAC-SHA256 + sequence-counter replay defense, per-IP rate lim
 (60 s / 10 conns — trusted devices bypass), 32-connection concurrency semaphore for
 cross-IP flood resistance, cryptographic hash-first trusted-device model
 ([design 017](docs/design/017-trusted-id-hardening.md)), symlink-TOCTOU and
-`FileMetadata.size` guards, atomic `0o600` config writes, and disciplined log rotation
+`FileMetadata.size` guards, atomic config writes with `0o600` mode on secret files
+(e.g. `identity.key`), and disciplined log rotation
 (daily + max 3 files + 10 MB cap). No cloud, no account, no telemetry; privacy toggles
 for mDNS advertisement, update check, log level, and stats writing live in Settings →
 Privacy. A per-file SHA-256 digest is computed locally and surfaced in History (no
