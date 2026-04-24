@@ -429,7 +429,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                 Ok(r) => r?,
                 Err(_) => return Err(HekaError::ConnectTimeout {
                     secs: CONNECT_TIMEOUT.as_secs(),
-                    addr: addr.clone(),
+                    addr,
                 }.into()),
             }
         }

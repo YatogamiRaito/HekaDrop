@@ -1246,6 +1246,9 @@ fn classify_handshake_error(e: &anyhow::Error) -> &'static str {
             _ => "err.peer_disconnected",
         }
     }
+    // HekaError::Io(#[from] std::io::Error) thiserror `source()` zinciri
+    // ürettiği için iç `io::Error` aşağıdaki generic io downcast dalında
+    // yakalanır — HekaError::Io özel bir kolu gereksiz (PR #79 gemini review).
     for cause in e.chain() {
         if let Some(he) = cause.downcast_ref::<HekaError>() {
             match he {
@@ -1253,7 +1256,6 @@ fn classify_handshake_error(e: &anyhow::Error) -> &'static str {
                 HekaError::UnexpectedEof | HekaError::PeerDisconnected => {
                     return "err.peer_disconnected"
                 }
-                HekaError::Io(io) => return map_io_error(io),
                 HekaError::Ukey2CommitmentMismatch => return "err.pin_mismatch",
                 HekaError::Ukey2CipherDowngrade(_)
                 | HekaError::Ukey2VersionDowngrade(_)
