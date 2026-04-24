@@ -37,8 +37,13 @@ doğrudan — bulut yok, hesap yok, tracker yok.
 
 - **Quick Share uyumlu** — UKEY2 handshake (downgrade-safe), AES-256-CBC + HMAC-SHA256, P-256 ECDH.
 - **mDNS/Bonjour keşfi** (`_FC9F5ED42C8A._tcp.local.`) — aynı ağdaki cihazları görür ve görünür olur.
-- **Çift yönlü**: hem alıcı hem gönderici. Dosya ve metin (URL'ler metin olarak gönderilir;
-  alıcı tarafta URL şeması doğrulanırsa otomatik açılır).
+- **Çift yönlü**: hem alıcı hem gönderici. Dosya, düz metin ve URL. URL'ler wire'da
+  `TextMetadata.Type::URL` etiketiyle gönderilir; her iki tarafta da aynı `http(s)://`
+  allow-list'i uygulanır — gönderirken `javascript:`, `file:`, `data:`, özel protocol
+  handler'lar otomatik düz metne dönüşür, alıcı tarafta `is_safe_url_scheme` ile
+  tekrar süzülür (defense in depth). Güvenli URL'ler alıcıda varsayılan tarayıcıda
+  açılır, güvensizleri panoya düşer. Preview `text_title` sadece `scheme://host` —
+  token'lı URL'ler payload geçmişinde kalıcı bırakmaz.
 - **Klasör drag-drop** — pencereye sürüklenen dizinler özyinelemeli olarak dosyalara açılır.
 - **Trusted devices (whitelist)** — güvendiğiniz cihazlar her seferinde PIN sormadan otomatik kabul edilir
   ve **rate limit kurallarının dışında tutulur**. v0.6.0'dan itibaren **kriptografik hash-first**
@@ -320,8 +325,10 @@ Protokolün tersine mühendislik çalışmasına ve referans implementasyonlara 
 **HekaDrop** is a free, open-source Rust client for Google's **Quick Share** (formerly
 Nearby Share) protocol. It speaks UKEY2 + AES-256-CBC + HMAC-SHA256 over P-256 ECDH,
 discovers peers via mDNS on `_FC9F5ED42C8A._tcp.local.`, and works as both receiver
-and sender (files and text; URLs ride on the TEXT type and are auto-opened after
-scheme validation on the receiver).
+and sender (files, plain text, and URLs). URLs are tagged with
+`TextMetadata.Type::URL` on the wire and auto-opened in the default browser on the
+receiver after `http(s)://` allow-list validation; unsafe schemes fall through to
+the clipboard. The same allow-list runs on the sender too (defense in depth).
 
 **Distributions:** macOS Universal2 `.dmg` + Homebrew cask, Linux `.deb` + systemd
 user service + GTK3/WebKit2GTK tray UI, Windows `.exe` + WebView2 + Registry Run
