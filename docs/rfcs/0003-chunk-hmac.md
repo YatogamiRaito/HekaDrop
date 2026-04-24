@@ -5,28 +5,35 @@
 - **Oluşturulma tarihi:** 2026-04-24
 - **Hedef sürüm:** v0.8.0 ("Protokol Sağlamlaştırma", ROADMAP §Q1 v0.8.0)
 - **İlgili issue:** #— (henüz açılmadı); deferred risk tablosu `threat-model.md` §8 D-2.
-- **İlişkili RFC'ler:** 0004 (resume protokolü) ve 0005 (folder streaming) bu RFC'nin tanımlayacağı `CapabilitiesFrame` ve chunk-integrity primitive'ini yeniden kullanacak. Her üç RFC paralel yazılıyor; `CapabilitiesFrame` tasarımının burada "first mover" olarak konumlanması gerek.
+- **İlişkili RFC'ler:** 0004 (resume protokolü) ve 0005 (folder streaming) bu RFC'nin tanımlayacağı `Capabilities` mesajını ve chunk-integrity primitive'ini yeniden kullanacak. Her üç RFC paralel yazılıyor; `Capabilities` tasarımının burada "first mover" olarak konumlanması gerek.
 
 ## 1. Özet
 
-HekaDrop'a **chunk başına** HMAC-SHA256 bütünlük etiketi eklenir. Mevcut durumda `SecureCtx` (bkz. `src/secure.rs:42-84`) UKEY2 türevi `send_hmac_key` ile her **frame**'in tamamını Encrypt-then-MAC sargısı altında korur; ancak bir `PayloadTransferFrame.payload_chunk.body` bu sargıdan geçtikten sonra düz metindir ve ilgili dosya/bytes payload'ı için bütünlük yalnızca son chunk'tan sonra `sink.hasher.finalize()` ile doğrulanır (`src/payload.rs:409`). Bu RFC, her `PayloadChunk`'ın **düz metin gövdesine** — frame-level HMAC'in dışında, ek bir katman olarak — HKDF ile ayrılmış, yeni bir `chunk_hmac_key` altında üretilen 32 bayt HMAC-SHA256 etiketi ekler. Etiket, `PayloadChunk` gönderildikten **hemen sonra** ayrı bir `ChunkIntegrity` shared-frame ile iletilir; alıcı her chunk'ı diske yazmadan önce tag'i doğrular, mismatch'te transfer derhal iptal edilir ve placeholder dosya silinir. Wire-level capabilities negotiation peer her iki taraf da bu özelliği duyurmuşsa aktifleşir; aksi hâlde mevcut "end-of-file SHA-256" davranışı korunur. Upstream Quick Share proto şemasına breaking değişiklik getirilmez.
+HekaDrop'a **chunk başına** HMAC-SHA256 bütünlük etiketi eklenir. Mevcut `SecureCtx` (bkz. `src/secure.rs:78,113`) UKEY2 türevi `send_hmac_key` ile her **frame**'in tamamını zaten Encrypt-then-MAC disiplini altında koruyor — yani **wire transit seviyesinde** tampering hâlihazırda yakalanır ve bu RFC **oraya ek bir savunma katmanı iddia etmez**. Chunk-HMAC'in gerçek gerekçesi farklı bir katmanda yatar:
+
+1. **Resume protokolünün O(1) önkoşulu:** Receiver'ın elindeki partial dosyada hangi byte aralığının "intact" olduğu, sender tarafından full-file SHA-256 yeniden hesaplanmadan doğrulanabilsin (RFC-0004 fast-path bu önkoşula bağlıdır).
+2. **Early abort / storage corruption:** Frame-level MAC doğrulandıktan *sonra* plaintext diske yazılıncaya kadar geçen sürede (receiver-side disk bitflip, memory corruption, receiver-internal tampering) oluşabilecek bozulma, bugün ancak transfer sonundaki SHA-256 karşılaştırmasıyla yakalanır; chunk-HMAC bunu her chunk'ta **erken** yakalar.
+3. **Partial file integrity as a first-class protocol primitive:** "Elimde chunk 0..k-1 doğrulandı" ifadesi protokolde taşınabilir, görünür, kriptografik olarak pin'lenmiş bir olgudur — ne receiver-local bir best-effort hash, ne de sender'a opak bir claim.
+
+Bu RFC her `PayloadChunk`'ın **düz metin gövdesine** HKDF ile ayrılmış, yeni bir `chunk_hmac_key` altında üretilen 32 bayt HMAC-SHA256 etiketi ekler. Etiket, `PayloadChunk` gönderildikten **hemen sonra** ayrı bir `ChunkIntegrity` shared-frame ile iletilir; alıcı her chunk'ı diske yazmadan önce tag'i doğrular, mismatch'te transfer derhal iptal edilir ve placeholder dosya silinir. Wire-level capabilities negotiation peer her iki taraf da bu özelliği duyurmuşsa aktifleşir; aksi hâlde mevcut "end-of-file SHA-256" davranışı korunur. Upstream Quick Share proto şemasına breaking değişiklik getirilmez.
 
 ## 2. Motivasyon
 
-### 2.1 Problem 1 — Geç Tespit
+### 2.1 Problem 1 — Resume fast-path için O(1) önkoşul
 
-Mevcut akış, bir `FileSink` için SHA-256 hasher'ı chunk geldikçe besler (`src/payload.rs:409`) ve yalnız `last_chunk=true` geldiğinde `hasher.finalize()`'i `FileMetadata.payload_hash` ile karşılaştırır; yani **ilk chunk tampered ise bile 10 GiB'lik bir dosya için 10 GiB trafik harcanır ve sonunda reddedilir.** Pratikte bu iki senaryoda ciddi sorundur:
-
-- **Aktif LAN saldırganı (A2)** Encrypt-then-MAC sarmalayıcısının bir bug'ı üzerinden tek bir ciphertext bit'ini flip etse bile bugün mimari onu frame-level HMAC ile yakalar; ancak ileride AES-GCM'e geçiş düşünüldüğünde (ayrı RFC) veya yanlış proto decode'da güvenlik-hot-path dışı bit bozulması olduğunda, payload-level bağımsız bir integrity katmanı derinliği artırır.
-- **Ağ (non-adversarial) bit bozulması / disk path'inde sessiz corruption:** TCP checksum 16-bit'tir ve ≈2^16 mesajda bir false-negative bekleniyor; gigabaytlık dosyalarda bu deneyimlenmiştir (Stone & Partridge, SIGCOMM 2000). AES-CBC + HMAC frame-level tag bunu yakalar, ama yine **frame bazında**; büyük bir chunk içinde gömülü, frame sınırlarına saygılı bir gürültü geç ortaya çıkabilir.
-
-Somut ölçüm: 10 GiB dosya, 100 MiB/s gerçek Wi-Fi throughput → **100 s**. Chunk-HMAC ile ilk bozulan chunk (`CHUNK_SIZE = 512 KiB`) **ilk 0.005 s** içinde tespit edilir (chunk 1). Mevcut tasarımda 100 s kaybedilir.
-
-### 2.2 Problem 2 — Resume Protokolünün Önkoşulu
-
-RFC 0004 transfer resume'i tanımlıyor: alıcı yarım dosyayı `~/.hekadrop/partial/` altında tutacak ve sender'a "ofset X'e kadar sende hangi byte range intact?" önergesi sunacak. Bunun için **sender'ın alıcının intact byte range iddiasına güvenebilmesi** gerekir. Mevcut end-of-file SHA-256 bu iddiayı doğrulamayacak granülariteye sahiptir — tüm dosya tamamlanmadan hash çıkmaz. Chunk-HMAC ile alıcı "chunk 0..k-1 tag'leri benim nezdimde doğrulandı; lütfen chunk k'dan itibaren gönder" diyebilir; sender aynı `chunk_hmac_key`'i yeniden türettiği için (deterministic HKDF) iddianın doğru olup olmadığını tag'leri karşılaştırarak cross-check edebilir.
+RFC 0004 transfer resume'i tanımlıyor: alıcı yarım dosyayı `~/.hekadrop/partial/` altında tutacak ve sender'a "ofset X'e kadar sende hangi byte range intact?" önergesi sunacak. Bugünkü tek kriptografik karşılaştırma `FileMetadata.payload_hash` (end-of-file SHA-256) — yani tüm dosya tamamlanmadan hash çıkmaz; partial için doğrulanabilir bir primitif yok. Fallback olarak sender `[0..offset]` aralığını yeniden hash'leyebilir, ama 10 GiB için SHA-NI'siz ~30 saniye CPU işi. Chunk-HMAC ile alıcı "chunk 0..k-1 tag'leri benim nezdimde doğrulandı; lütfen chunk k'dan itibaren gönder" diyebilir; sender aynı `chunk_hmac_key`'i yeniden türettiği için (deterministic HKDF) iddiayı **sadece son chunk tag'ini karşılaştırarak** O(1) doğrular.
 
 Dolayısıyla chunk-HMAC **resume'den önce merge edilmelidir**. Bu RFC, 0004'ün zeminidir.
+
+### 2.2 Problem 2 — Erken tespit ve storage corruption
+
+`SecureCtx` (`src/secure.rs:78,113`) frame-level Encrypt-then-MAC ile **wire transit'teki** tampering'i zaten yakalar; bu RFC oraya bir savunma katmanı iddia etmez. Ancak frame MAC doğrulandıktan sonra plaintext chunk `FileSink::write_chunk` buffer'ından diske flush'lanıncaya kadar geçen sürede bozulma kaynakları vardır:
+
+- **Receiver-side storage path corruption:** RAM bitflip, disk controller bug, ECC olmayan donanım, kötü kablo. Bugünkü tespit yalnızca `last_chunk` sonrası end-of-file SHA-256 ile olur; yani 10 GiB dosyada bozulma **ilk chunk'ta bile olsa** 10 GiB trafik harcanır.
+- **Defence in depth — frame MAC regresyonu:** Tarihte constant-time karşılaştırma regresyonları, sequence counter wrap bug'ları, padding oracle'lar görüldü. Chunk-level bağımsız tag, frame-level MAC'in sessiz regresyonunu görünür kılar (fail-loud).
+- **Ağ bozulması / sessiz corruption:** TCP checksum 16-bit; Stone & Partridge (SIGCOMM 2000) büyük dosyalarda false-negative'i belgeledi. Frame MAC bunu yakalar; bir bug varsa chunk-HMAC yakalar.
+
+Somut ölçüm: 10 GiB dosya, 100 MiB/s gerçek Wi-Fi throughput → **100 s**. Chunk-HMAC ile ilk bozulan chunk (`CHUNK_SIZE = 512 KiB`) **ilk 0.005 s** içinde tespit edilir (chunk 1). Mevcut tasarımda 100 s kaybedilir ve kullanıcı "SHA-256 mismatch, yeniden dene" mesajı alır.
 
 ## 3. Ayrıntılı Tasarım
 
@@ -36,7 +43,11 @@ Quick Share `PayloadTransferFrame.PayloadChunk` proto'suna (bkz. `proto/offline_
 
 **Seçenek (a): Chunk body'sinin son 32 baytı tag.** `effective_body = body[..body.len()-32]`. Geri uyumsuz: eski HekaDrop sürümleri bu 32 baytı payload'ın parçası olarak disk'e yazar → dosya bozulur, SHA-256 mismatch. Feature flag gerektirir ve yine de kullanıcı başka bir Quick Share peer'i ile (Android, rquickshare) konuşurken bu kip kapatılmalı. Protokol katmanlamasını kirletir: `PayloadChunk.body` anlambilimsel olarak "dosya içeriği"dir; integrity metadata'sı orada yaşamamalı.
 
-**Seçenek (b): Ayrı `ChunkIntegrity` shared-frame.** `PayloadChunk` normalde nasılsa öyle gönderilir. Hemen ardından (aynı `SecureCtx::encrypt` zinciri altında, yani mevcut sequence counter disiplinine uyarak) ayrı bir shared-frame tipi — HekaDrop-özel — iletilir. Bu frame Quick Share peer'i tarafından alındığında parse hatası verir mi? **Hayır**: alıcı peer'ın capabilities'i yok ise sender zaten bu frame'i göndermez (bkz. §4). Peer eşit seviyedeki HekaDrop ise frame tanınır. Shared-frame tipini mevcut `OfflineFrame` değil, `NearbyFrame` (paired-key shared) hattında kullanırız — zira `OfflineFrame.V1Frame.FrameType` Google-tanımlıdır; biz orada yeni enum varyantı ekleyemeyiz. Çözüm: `PAIRED_KEY_ENCRYPTION` yolunu kullanmak yerine kendi `HekaDropFrame` proto'muzu (ayrı proto file) `SecureCtx::encrypt` payload'ı olarak gömüp karşı tarafa yolluyoruz — iç düzeyde bizim parser'ımız bu seri-numarasını `OfflineFrame` mı yoksa `HekaDropFrame` mi olduğunu **magic prefix** (ilk 4 bayt sabit `0xA5 0xDE 0xB2 0x01`) ile ayırt eder. HekaDrop olmayan peer prefix'i tanımaz → `OfflineFrame::decode` hatası → frame drop; ama bu duruma zaten capabilities-gate sayesinde girilmez.
+**Seçenek (b): Ayrı `ChunkIntegrity` shared-frame.** `PayloadChunk` normalde nasılsa öyle gönderilir. Hemen ardından (aynı `SecureCtx::encrypt` zinciri altında, yani mevcut sequence counter disiplinine uyarak) ayrı bir shared-frame tipi — HekaDrop-özel — iletilir. Bu frame Quick Share peer'i tarafından alındığında parse hatası verir mi? **Hayır**: alıcı peer'ın capabilities'i yok ise sender zaten bu frame'i göndermez (bkz. §4). Peer eşit seviyedeki HekaDrop ise frame tanınır.
+
+**Kritik:** Upstream `OfflineFrame.V1Frame.FrameType` enum Google-tanımlıdır ve biz orada **yeni enum varyantı eklemeyiz**. Upstream'deki tanımlı değerler (`proto/offline_wire_formats.proto:47` civarı; 1=ConnectionRequest, 2=ConnectionResponse, 3=PayloadTransfer, 4=KeepAlive, 5=Disconnection, 6=Introduction, 7=`PAIRED_KEY_ENCRYPTION`, 8=`PAIRED_KEY_RESULT`) HekaDrop için dokunulmazdır. Önceki RFC taslaklarında "FrameType = 7" gibi slot iddiaları **yanlıştı**; 7 zaten `PAIRED_KEY_ENCRYPTION` tarafından kullanılıyor.
+
+Çözüm: HekaDrop uzantılarını **hiçbir durumda** upstream `V1Frame.FrameType` enum'una ekleme; bunun yerine kendi `HekaDropFrame` proto wrapper'ımızı `SecureCtx::encrypt` payload'ı olarak gömüp karşı tarafa yolluyoruz. Parser `OfflineFrame` mı yoksa `HekaDropFrame` mı olduğunu **magic prefix** (ilk 4 bayt sabit `0xA5 0xDE 0xB2 0x01`) ile ayırt eder. HekaDrop olmayan peer prefix'i tanımaz → `OfflineFrame::decode` hatası → frame drop; ama bu duruma zaten capabilities-gate sayesinde girilmez.
 
 **Öneri: (b).** Karar gerekçeleri:
 
@@ -45,7 +56,9 @@ Quick Share `PayloadTransferFrame.PayloadChunk` proto'suna (bkz. `proto/offline_
 3. Capabilities-gate üzerinde çalışır → 3rd-party Quick Share peer'leri etkilenmez.
 4. 0004 (resume) ve 0005 (folder) aynı shared-frame mekanizmasını kullanabilir.
 
-### 3.2 `CapabilitiesFrame` (first mover — 0004/0005 ortak)
+### 3.2 `HekaDropFrame` wrapper ve `Capabilities` mesajı (first mover — 0004/0005 ortak)
+
+Kanonik şema (üç RFC'nin tümü bu tanımlara referans verir; çelişki olursa bu bölüm normatiftir):
 
 ```proto
 // proto/hekadrop_extensions.proto (yeni dosya, HekaDrop-özel)
@@ -55,39 +68,40 @@ package hekadrop.ext;
 message HekaDropFrame {
   // Magic: 0xA5DEB201 (big-endian) — HekaDropFrame discriminator.
   // Quick Share uyumsuz peer'lar parse edemez; bu kasıtlı.
-  fixed32 magic = 1;
-  uint32 version = 2;  // sürüm 1 = v0.8.0 bootstrap
+  fixed32 magic   = 1;
+  uint32  version = 2;  // v0.8 = 1; monoton artar
   oneof payload {
-    CapabilitiesFrame capabilities = 3;
-    ChunkIntegrity chunk_integrity = 4;
-    // Reserved 5..15 — 0004 ResumeHint, 0005 FolderManifest vb.
-    // (oneof slot reservation; kritik: yeni field eklerken numarayı
-    // koru — 0004/0005 RFC'leri 5 ve 6'yı alacak.)
+    Capabilities    capabilities  = 10;  // bu RFC
+    ChunkIntegrity  chunk_tag     = 11;  // bu RFC
+    ResumeHint      resume_hint   = 12;  // RFC-0004
+    ResumeReject    resume_reject = 13;  // RFC-0004
+    FolderManifest  folder_mft    = 14;  // RFC-0005
+    // 15..63 — reserved for future v0.x minor additions
   }
-  reserved 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15;
-  reserved "resume_hint", "folder_manifest";
 }
 
-message CapabilitiesFrame {
-  // Bitmask. Gelecekte genişleyebilir; bilinmeyen bit sessiz yok sayılır.
-  // Bit 0 = CHUNK_HMAC_SHA256 (bu RFC)
-  // Bit 1 = RESUME_V1 (RFC 0004)
-  // Bit 2 = FOLDER_STREAM_V1 (RFC 0005)
-  // Bit 3..63 reserved
-  uint64 capability_bits = 1;
-
-  // Peer'ın HekaDrop sürümü (diagnostics; trust kararı için kullanılmaz).
-  string version = 2;
+message Capabilities {
+  uint32 version  = 1;  // monoton artan; v0.8.0 için = 1
+  uint64 features = 2;  // bitfield (aşağıdaki sabitler)
 }
+
+// Feature bitleri — üç RFC de bu sabit numaralara referans verir.
+// (Proto sabit değil; dokümantasyon. Rust tarafı `pub const` olarak tutar.)
+//   CHUNK_HMAC_V1_V1     = 0x0001   // bit 0, bu RFC
+//   RESUME_V1         = 0x0002   // bit 1, RFC-0004
+//   FOLDER_STREAM_V1  = 0x0004   // bit 2, RFC-0005
+//   0x0008..0x8000    — reserved for v0.8–v1.0
 
 message ChunkIntegrity {
-  int64 payload_id = 1;   // PayloadHeader.id ile eşleşir
-  int64 chunk_index = 2;  // 0'dan başlayan monotonik sayaç
-  int64 offset = 3;       // PayloadChunk.offset aynası (redundant integrity)
-  uint32 body_len = 4;    // Ayrı doğrulama: len(body) bu değere eşit olmalı
-  bytes tag = 5;          // HMAC-SHA256 (32 bayt), ayrıntı §3.4
+  int64  payload_id  = 1;   // PayloadHeader.id ile eşleşir
+  int64  chunk_index = 2;   // 0'dan başlayan monotonik sayaç
+  int64  offset      = 3;   // PayloadChunk.offset aynası (redundant integrity)
+  uint32 body_len    = 4;   // Ayrı doğrulama: len(body) bu değere eşit olmalı
+  bytes  tag         = 5;   // HMAC-SHA256 (32 bayt), ayrıntı §3.4
 }
 ```
+
+**Oneof slot stratejisi:** Slot numaraları **10'dan başlar** — 1..9 arası ileriki sürümlerde (v0.9+) temel (non-payload) alanlar için bilinçli olarak açık bırakılır. 10–14 bu RFC paketinde sabitlenmiş beş slot'tur; 15..63 minor eklemeler için rezerve. Önemli: proto3'te `oneof` içinde `reserved` numara aralığı **yasaklama anlamına gelir ve oneof'un ileride genişlemesini engeller**, dolayısıyla burada `reserved` bloğu **kullanılmaz**; bunun yerine kullanılmayan slot numaraları sadece terkedilmiş olarak bırakılır ve yukarıdaki policy tablosu ile dokümante edilir.
 
 **Not:** `HekaDropFrame` magic prefix yaklaşımı, proto3'ün "unknown field silently preserved" davranışından bilinçli ayrılır; karşı taraf HekaDrop değilse frame parse hatası verip drop eder, bu zaten peer capabilities'i yok demek → ekosistemimizde bu frame oraya hiç gönderilmeyecektir (capabilities-gate §4 altında). Magic prefix defansiftir: capabilities-gate bug'ı durumunda sessiz interop hatası yerine sert parse hatası ile erken tanı.
 
@@ -96,15 +110,15 @@ message ChunkIntegrity {
 ```
 ConnectionRequest → UKEY2 handshake → ConnectionResponse(ACCEPT)
     → PairedKeyEncryption (mevcut)
-    → CapabilitiesFrame (YENI — SecureCtx altında, her iki taraf gönderir)
+    → Capabilities (YENI — SecureCtx altında, her iki taraf gönderir)
     → payload akışı
 ```
 
-Ekleme noktası: `connection.rs` Introduction öncesi. PairedKeyEncryption phase'i tamamlanır tamamlanmaz her iki uç kendi `CapabilitiesFrame`'ini yollar (sender → receiver ve receiver → sender). Karşı taraftan 2 sn içinde `CapabilitiesFrame` almazsa: **legacy mode** (peer HekaDrop değil veya <v0.8.0). Legacy mode'da `chunk_hmac_key` asla türetilmez, `ChunkIntegrity` frame'i gönderilmez, alıcı da beklenmez.
+Ekleme noktası: `connection.rs` Introduction öncesi. PairedKeyEncryption phase'i tamamlanır tamamlanmaz her iki uç kendi `Capabilities`'ini yollar (sender → receiver ve receiver → sender). Karşı taraftan 2 sn içinde `Capabilities` almazsa: **legacy mode** (peer HekaDrop değil veya <v0.8.0). Legacy mode'da `chunk_hmac_key` asla türetilmez, `ChunkIntegrity` frame'i gönderilmez, alıcı da beklenmez.
 
-Timeout neden 2 sn? PairedKeyEncryption ile Introduction arası mevcut akışta genellikle <100 ms; 2 sn cömert bir margin, handshake `HANDSHAKE_READ_TIMEOUT = 30 s` limitinin çok altında. `CapabilitiesFrame` zorunlu değil — legacy Quick Share peer'ı asla göndermez; o akışta receiver `CapabilitiesFrame` beklemek yerine Introduction frame'ini ilk gördüğünde "peer capabilities bildirmemiş = 0" varsayar.
+Timeout neden 2 sn? PairedKeyEncryption ile Introduction arası mevcut akışta genellikle <100 ms; 2 sn cömert bir margin, handshake `HANDSHAKE_READ_TIMEOUT = 30 s` limitinin çok altında. `Capabilities` zorunlu değil — legacy Quick Share peer'ı asla göndermez; o akışta receiver `Capabilities` beklemek yerine Introduction frame'ini ilk gördüğünde "peer capabilities bildirmemiş = 0" varsayar.
 
-Negotiated `active_caps = my_caps & peer_caps`. Bit-AND seçimi: bir taraf bir özelliği kapatmışsa (örn. CLI flag `HEKADROP_DISABLE_CHUNK_HMAC=1`) ikili AND ile sessizce devre-dışı.
+Negotiated `active_caps = my_caps & peer_caps`. Bit-AND seçimi: bir taraf bir özelliği kapatmışsa (örn. CLI flag `HEKADROP_DISABLE_CHUNK_HMAC_V1=1`) ikili AND ile sessizce devre-dışı.
 
 ### 3.4 HMAC Anahtar Türetmesi
 
@@ -139,16 +153,17 @@ tag = HMAC-SHA256(chunk_hmac_key, message)
 
 `PayloadAssembler::ingest` (`src/payload.rs:233-264`) şu adımlarla genişler:
 
-1. `PayloadChunk` alınır. Eğer `active_caps & CHUNK_HMAC == 0` → mevcut akış (değişiklik yok).
-2. Eğer `CHUNK_HMAC` aktif: `PayloadChunk` işleme **almadan** aynı `SecureCtx` stream'inde bir sonraki frame'i oku, `HekaDropFrame.ChunkIntegrity` ile eşleşmesi beklenir.
+1. `PayloadChunk` alınır. Eğer `active_caps & CHUNK_HMAC_V1 == 0` → mevcut akış (değişiklik yok).
+2. Eğer `CHUNK_HMAC_V1` aktif: `PayloadChunk` işleme **almadan** aynı `SecureCtx` stream'inde bir sonraki frame'i oku, `HekaDropFrame.ChunkIntegrity` ile eşleşmesi beklenir.
 3. Sıra uyumu kontrolleri:
    - `ChunkIntegrity.payload_id == PayloadHeader.id`
    - `ChunkIntegrity.chunk_index == expected_next_index[payload_id]` (monotonik artan, `expected_next_index` `PayloadAssembler` state'ine eklenir)
    - `ChunkIntegrity.offset == PayloadChunk.offset`
    - `ChunkIntegrity.body_len == body.len()`
-4. `expected_tag = HMAC-SHA256(chunk_hmac_key, message)` hesapla (§3.5 formatı).
-5. `subtle::ConstantTimeEq::ct_eq(&expected_tag, &ChunkIntegrity.tag)` — **constant-time** karşılaştırma (mevcut kullanım `src/crypto.rs:82`). Mismatch → `HekaError::ChunkHmacMismatch { payload_id, chunk_index }`, transfer abort, placeholder dosya silinir (`remove_partial_file` helper — `src/payload.rs:480+` civarındaki mevcut cleanup yolu üzerinden).
-6. `expected_next_index[payload_id] += 1`, chunk body `sink.writer.write_all`'a devam eder.
+4. **Tag uzunluk kontrolü (`ChunkIntegrity.tag.len() == 32`)** — constant-time karşılaştırmadan **önce** yapılır. Yanlış uzunlukta tag ya da eksik alan → `HekaError::ChunkHmacMismatch`, transfer abort. Non-constant length check burada timing yüzeyi açmaz çünkü `tag` attacker-controlled bir payload'dır ve uzunluğu zaten attacker tarafından biliniyor; gizli değildir.
+5. `expected_tag = HMAC-SHA256(chunk_hmac_key, message)` hesapla (§3.5 formatı).
+6. `subtle::ConstantTimeEq::ct_eq(&expected_tag, &ChunkIntegrity.tag)` — **constant-time** karşılaştırma (mevcut kullanım `src/crypto.rs:82`). Mismatch → `HekaError::ChunkHmacMismatch { payload_id, chunk_index }`, transfer abort, placeholder dosya silinir (`remove_partial_file` helper — `src/payload.rs:480+` civarındaki mevcut cleanup yolu üzerinden).
+7. `expected_next_index[payload_id] += 1`, chunk body `sink.writer.write_all`'a devam eder.
 
 Hata yolu kritik: tag mismatch'te **partial_file disk'ten mutlaka silinmelidir**, çünkü resume protokolü (RFC 0004) bozuk chunk içeren partial'i geçerli sayarsa attacker-controlled corruption kalıcı olur. Silme başarısızsa log'a `error!` seviyesinde uyarı + dosya `.corrupt` uzantısıyla rename.
 
@@ -165,7 +180,7 @@ for chunk in file.chunks(CHUNK_SIZE):
     write_frame(socket, enc2)
 ```
 
-İki ayrı `SecureCtx::encrypt` çağrısı → iki ayrı sequence number. Bu sender'ı `client_seq` tarafında 2× hızlı tüketir; mevcut overflow guard `checked_add` 2^31 mesajla yeterli (2^30 chunk = 512 GiB × 512 KiB = 512 PiB, nasıl olsa erişilmez).
+İki ayrı `SecureCtx::encrypt` çağrısı → iki ayrı sequence number. Bu sender'ı `client_seq` tarafında 2× hızlı tüketir; mevcut overflow guard `checked_add` 2^31 mesajla yeterli (2^30 chunk × 512 KiB ≈ **512 TiB**, nasıl olsa erişilmez).
 
 **Alternatif:** Tek frame içinde `HekaDropFrame` ile `PayloadTransferFrame`'i concatenate et. Reddedildi: wire format'ta frame = 4-byte length prefix + protobuf; her seferinde bir mesaj. Composite frame için yeni parser gerekir.
 
@@ -174,7 +189,7 @@ for chunk in file.chunks(CHUNK_SIZE):
 | İş | Saat | 0004 ile Kesişim |
 |---|---|---|
 | `proto/hekadrop_extensions.proto` + build.rs integration | 2 | ✓ (ortak dosya; 0004 reserved slot açar) |
-| `CapabilitiesFrame` negotiation (`src/capabilities.rs` yeni modül) | 4 | ✓ (0004/0005 aynı modülü genişletir) |
+| `Capabilities` negotiation (`src/capabilities.rs` yeni modül) | 4 | ✓ (0004/0005 aynı modülü genişletir) |
 | `HekaDropFrame` magic-prefix dispatcher (`src/frame.rs` ext) | 3 | ✓ |
 | `chunk_hmac_key` HKDF türetme + `DerivedKeys` genişletme | 2 | — |
 | Sender yolunda `ChunkIntegrity` üretimi (`src/sender.rs`) | 3 | — |
@@ -212,8 +227,8 @@ Paralel çalışılırsa 0004 ile ortak primitifler (`proto/hekadrop_extensions.
 ## 5. Geriye Uyumluluk / Migration
 
 - **Wire format:** Quick Share proto'larına değişiklik yok. Yeni proto: `proto/hekadrop_extensions.proto` (bizim yönetimimizde).
-- **Peer interop:** `CapabilitiesFrame` yoksa legacy mode; tam geri uyumlu. Android / rquickshare / NearDrop peer'ları etkilenmez.
-- **Config:** `HEKADROP_DISABLE_CHUNK_HMAC=1` env var ile sender-side opt-out (debug / A/B için). Receiver zaten peer capabilities'i bildirmemişse legacy.
+- **Peer interop:** `Capabilities` yoksa legacy mode; tam geri uyumlu. Android / rquickshare / NearDrop peer'ları etkilenmez.
+- **Config:** `HEKADROP_DISABLE_CHUNK_HMAC_V1=1` env var ile sender-side opt-out (debug / A/B için). Receiver zaten peer capabilities'i bildirmemişse legacy.
 - **Feature flag gerekir mi?** Hayır — capabilities-gate zaten flag görevi görür. Ama release sonrası ilk iki hafta telemetry (diag panel) için `stats.json` içine `chunk_hmac_used: bool` field'ı eklenir.
 
 ## 6. Güvenlik Değerlendirmesi
@@ -222,7 +237,7 @@ Paralel çalışılırsa 0004 ile ortak primitifler (`proto/hekadrop_extensions.
 
 Mevcut `threat-model.md` §5.3 "Transfer" STRIDE tablosunda etkilenen hücreler:
 
-- **T (Tampering) — `A2: Ciphertext bit-flip (CBC malleability)`:** Mevcut mitigation "HMAC-SHA256 tag header_and_body üzerine" — frame-level. Chunk-HMAC bu korumayı payload içeriği seviyesinde **tekrarlar**; defense-in-depth. Frame-level HMAC'in bir bug'ı (örn. `subtle::ConstantTimeEq` mis-invocation, sequence counter wrap) chunk-HMAC ile hâlâ yakalanır.
+- **T (Tampering) — wire transit (A2: ciphertext bit-flip):** Frame-level HMAC bunu **zaten yakalar** (`SecureCtx::decrypt_verify`); chunk-HMAC buraya yeni bir kilit eklemez. Chunk-HMAC'in katkısı **defence-in-depth** perspektifinden: frame-level MAC'in bir regresyonu (örn. `subtle::ConstantTimeEq` mis-invocation, sequence counter wrap bug'ları, padding oracle) durumunda chunk-level bağımsız tag bu regresyonu fail-loud hale getirir. Yani chunk-HMAC "wire transit koruması" iddia etmez ama frame-MAC sessiz bir şekilde devre dışı kalırsa yüzeye çıkarır.
 - **T — Mid-stream silent corruption:** Bugün "end-of-file SHA-256" ile yakalanır ama geç; chunk-HMAC ile her chunk'ta yakalanır. Threat model'e yeni satır eklenecek: "Chunk-level tag (§3.5); mismatch → immediate abort + partial cleanup."
 - **I (Information disclosure):** Tag plaintext gönderilir ama HMAC one-way → IKM (`chunk_hmac_key`) sızdırmaz. Timing oracle: constant-time verify (§3.6/5). Payload hacmi anlamına gelebilecek length-leak zaten `PayloadChunk.body` boyutundan var; `ChunkIntegrity.body_len` yeni bilgi eklemez.
 - **D (Denial of service):** Saldırgan (malicious peer, A3) her chunk'ta tag mismatch üretirse → transfer erken iptal → işini **kolaylaştırır** (eski akışta da kullanıcı-controlled cancel). Yeni DoS vektörü yok. Kapasite tüketimi: her chunk için +32 bayt + proto overhead + 1 ek sequence — ihmal edilebilir.
@@ -316,11 +331,11 @@ Yeni harness: `fuzz/fuzz_targets/fuzz_chunk_hmac_verify.rs`. Girdi: `(key_seed, 
 
 ## 10. Açık Sorular
 
-1. **`CapabilitiesFrame.capability_bits` kaç bit reserve edilmeli?** `uint64` 64 bit; RFC 0003-0005 üçü dolu, kalan 61 bit. Gelecek 2 yıl için bol; ancak geçmiş deneyimle (IPv4 flag field'ları) daha çok bit alanı iyi fikir. **Öneri:** `repeated uint64 capability_bits` (vektör) veya ayrı `extensions map<string, bytes>` eklemek. Ama şimdilik `uint64` yeterli; gerektiğinde `v2` HekaDropFrame açılabilir.
+1. **`Capabilities.features` kaç bit reserve edilmeli?** `uint64` 64 bit; RFC 0003-0005 üçü dolu, kalan 61 bit. Gelecek 2 yıl için bol; ancak geçmiş deneyimle (IPv4 flag field'ları) daha çok bit alanı iyi fikir. **Öneri:** gerekirse `v2` `Capabilities` mesajı `repeated uint64 features` veya ayrı `extensions map<string, bytes>` ile açılır; `Capabilities.version` alanı zaten bu upgrade'i discoverable kılar. Şimdilik `uint64` yeterli.
 2. **Magic prefix `0xA5DEB201` — çakışma riski?** Quick Share `OfflineFrame.version = 1` tipik olarak `0x08 0x01` varint ile başlar. `0xA5` MSB-set varint → prost decode hatası verir. Düşük çakışma riski. Yine de prefix'i `proto/hekadrop_extensions.proto` dokümanında kalıcı olarak sabitlemek gerekli.
-3. **`extra_capabilities` bitmap mi `CapabilitiesFrame` mi?** Quick Share `ConnectionRequestFrame`'de `extra_capabilities` adında bir alan yok (bkz. `proto/offline_wire_formats.proto:71-125` — biz full frame'i kontrol ettik). Dolayısıyla bitmap piggyback seçeneği yok; **ayrı `CapabilitiesFrame` zorunlu**. ROADMAP §Q1 risk tablosunun "Quick Share extra_capabilities çakışma" maddesi bu RFC ile moot oluyor.
+3. **`extra_capabilities` bitmap mi `Capabilities` mi?** Quick Share `ConnectionRequestFrame`'de `extra_capabilities` adında bir alan yok (bkz. `proto/offline_wire_formats.proto:71-125` — biz full frame'i kontrol ettik). Dolayısıyla bitmap piggyback seçeneği yok; **ayrı `Capabilities` zorunlu**. ROADMAP §Q1 risk tablosunun "Quick Share extra_capabilities çakışma" maddesi bu RFC ile moot oluyor.
 4. **Partial file resume interop:** Eğer v0.8.0 alıcısı v0.8.0 göndericisinden 50% aldı, tag mismatch'te partial silindi — sonra aynı peer yeniden bağlandığında chunk 0'dan mı başlar? Evet; RFC 0004 bu yeniden-başlangıcı `partial_hash` ile optimize eder. 0004 merge'ünden önce chunk-HMAC yalnız erken-tespiti sağlar, resume sağlamaz.
-5. **`HEKADROP_DISABLE_CHUNK_HMAC=1` env var gerçekten gerek mi?** A/B metrik ve emergency rollback için faydalı; ama çoğu kullanıcı görmez. `off-by-default via capabilities AND` davranışıyla gereksiz olabilir. Reviewer'a bırakılmış.
+5. **`HEKADROP_DISABLE_CHUNK_HMAC_V1=1` env var gerçekten gerek mi?** A/B metrik ve emergency rollback için faydalı; ama çoğu kullanıcı görmez. `off-by-default via capabilities AND` davranışıyla gereksiz olabilir. Reviewer'a bırakılmış.
 
 ## 11. Referanslar
 
@@ -330,5 +345,5 @@ Yeni harness: `fuzz/fuzz_targets/fuzz_chunk_hmac_verify.rs`. Girdi: `(key_seed, 
 - Stone, J. & Partridge, C. — "When the CRC and TCP Checksum Disagree", SIGCOMM 2000.
 - Google Quick Share protokol proto'ları: `proto/offline_wire_formats.proto`, `proto/wire_format.proto`.
 - HekaDrop internal: `docs/security/threat-model.md` §5.3 (transfer STRIDE), §6.3 (HKDF tablosu), §8 D-2 (deferred risk).
-- İlişkili RFC'ler: 0004 (resume — taslak), 0005 (folder streaming — taslak); her ikisi de bu RFC'deki `CapabilitiesFrame` ve `HekaDropFrame` mekanizmasını yeniden kullanacak.
+- İlişkili RFC'ler: 0004 (resume — taslak), 0005 (folder streaming — taslak); her ikisi de bu RFC'deki `Capabilities` ve `HekaDropFrame` mekanizmasını yeniden kullanacak.
 - Marlinspike, M. — "The Cryptographic Doom Principle" (EtM-before-decrypt disiplinine referans; bu RFC aynı disiplini chunk seviyesinde korur).

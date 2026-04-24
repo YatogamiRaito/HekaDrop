@@ -115,26 +115,48 @@ cevaptan biriyle devam eder:
   akışı, sender chunk'ları byte 0'dan yollar.
 - **Yarım dosya mevcut** → `ResumeHint` frame gönderir.
 
-Protobuf tanımı (proto ağacına `proto/v2/resume.proto` olarak eklenir):
+Protobuf tanımı (RFC-0003'te tanımlanan `proto/hekadrop_extensions.proto` dosyasına
+eklenir; package `hekadrop.ext`):
 
 ```protobuf
-syntax = "proto3";
-package hekadrop.protocol.resume.v1;
-
 message ResumeHint {
-  int64  session_id         = 1;   // UKEY2 auth_key low-8 bytes (bkz. §3.4)
-  int64  payload_id         = 2;   // Introduction frame'deki file id
-  int64  offset             = 3;   // Receiver'ın diske sağlam yazdığı byte sayısı
-  bytes  partial_hash       = 4;   // SHA-256(file[0..offset]) (32 byte)
-  int32  capabilities_version = 5; // RFC-0003 capabilities frame versiyonu
-  bytes  last_chunk_tag     = 6;   // Opsiyonel: son doğrulanmış chunk-HMAC tag'i
-                                    //   (RFC-0003 aktifse; yoksa boş)
+  int64  session_id           = 1;  // UKEY2 auth_key SHA-256 low-8 bytes (bkz. §3.4)
+  int64  payload_id           = 2;  // Introduction frame'deki file id
+  int64  offset               = 3;  // Receiver'ın diske sağlam yazdığı byte sayısı
+  bytes  partial_hash         = 4;  // SHA-256(file[0..offset]) (32 byte)
+  uint32 capabilities_version = 5;  // RFC-0003 Capabilities.version değeri
+  bytes  last_chunk_tag       = 6;  // Opsiyonel: son doğrulanmış chunk-HMAC tag'i
+                                    //   (CHUNK_HMAC_V1 aktifse; yoksa boş)
+}
+
+message ResumeReject {
+  int64 payload_id = 1;  // echo of the rejected hint
+  Reason reason    = 2;
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    HASH_MISMATCH      = 1;
+    INVALID_OFFSET     = 2;
+    VERSION_MISMATCH   = 3;
+    PAYLOAD_UNKNOWN    = 4;
+    SESSION_MISMATCH   = 5;
+    INTERNAL_ERROR     = 6;
+  }
 }
 ```
 
-Frame `V1Frame` içine yeni bir `FrameType::ResumeHint = 7` olarak eklenir
-(mevcut 1-6 değerleri `HandshakeBegin`, `ConnectionRequest`, `Introduction`,
-`PayloadTransfer`, `KeepAlive`, `Disconnection`; `7` serbest).
+**Wire yerleşimi (kritik):** `ResumeHint` ve `ResumeReject` **upstream
+`V1Frame.FrameType` enum'una slot eklemez** — orası Google Quick Share / Nearby
+Connections spec'idir ve slot 7 (`PAIRED_KEY_ENCRYPTION`) dahil mevcut tanımlar
+dokunulmazdır. Bunun yerine her iki mesaj RFC-0003'te tanımlanan `HekaDropFrame`
+wrapper'ının `oneof payload` alanında taşınır; slot atamaları:
+
+- `HekaDropFrame.resume_hint   = 12`
+- `HekaDropFrame.resume_reject = 13`
+
+`HekaDropFrame` ise `SecureCtx::encrypt` payload'ı olarak magic prefix
+(`0xA5DEB201`) ile gönderilir; detaylar RFC-0003 §3.1–§3.2. HekaDrop'a
+uyumsuz peer'lar magic prefix'i parse edemez ve capabilities-gate sayesinde
+bu frame'ler oraya hiç gönderilmez.
 
 ### 3.3 Partial-hash doğrulama
 
@@ -163,10 +185,10 @@ hesaplanıyor; burada sadece ek olarak kalıcı tutuluyor.
 
 `session_id` UKEY2 handshake sonrası türetilen `auth_key`'in
 **SHA-256(auth_key) fingerprint'inin düşük 8 byte'ı** olarak tanımlanır.
-Helper `crypto::session_fingerprint` (bkz. `src/ukey2.rs:134-139`) zaten
+Helper `crypto::session_fingerprint` (bkz. `src/crypto.rs:59`) zaten
 mevcut; 16 hex karakter olarak log'da görülüyor. Bu RFC ilgili helper'ı
 `pub(crate) fn session_id_i64(auth_key: &[u8]) -> i64` şeklinde
-export eder:
+export eder (aynı modülde):
 
 ```rust
 pub(crate) fn session_id_i64(auth_key: &[u8]) -> i64 {
@@ -265,36 +287,20 @@ integrity primer olacak.
 
 ## 4. Capabilities negotiation (RFC-0003 ile koordinasyon)
 
-RFC-0003 capabilities frame'i tanımlıyorsa (henüz draft — **bkz 0003 açık
-sorular**), resume şu bit'i talep eder:
+`Capabilities` mesajı **tek bir kanonik tanıma** sahiptir ve RFC-0003 §3.2'de
+yer alır. Tekrarı kaldırıldı; buradaki özet sadece 0004'ün ilgilendiği bit'i
+isimlendirir:
 
 ```
-capability bit: RESUME_V1 = 0x0002   (RFC-0003: CHUNK_HMAC_V1 = 0x0001)
-capabilities_version (u32): monoton artan; v1 = 1
+CHUNK_HMAC_V1    = 0x0001   (RFC-0003, bit 0)
+RESUME_V1        = 0x0002   (bu RFC,   bit 1)
+FOLDER_STREAM_V1 = 0x0004   (RFC-0005, bit 2)
 ```
 
-**Önerilen capabilities frame iskeleti** (RFC-0003'e giriş olarak):
-
-```protobuf
-message Capabilities {
-  uint32 version  = 1;  // monoton artar
-  uint64 features = 2;  // bitfield: RESUME_V1 | CHUNK_HMAC_V1 | ...
-}
-```
-
-RFC-0003 capabilities tasarımını üstlenmezse, 0004 kendi `resume_capabilities`
-frame'ini minimal tutar:
-
-```protobuf
-message ResumeCapabilities { uint32 version = 1; bool supported = 2; }
-```
-
-Ancak iki ayrı capabilities frame'i yerine **paylaşılmış tek frame tercih
-edilir** — 0003 yazarıyla koordinasyon: "RESUME_V1 bit'ini rezerv edin,
-biz 0004'te tanımlamayacağız". Koordinasyon tamamlanana kadar `0003-chunk-hmac.md`
-açık sorular bölümüne "RESUME_V1 = 0x0002 bit'i 0004 RFC tarafından talep
-edildi; paylaşılmış enum'a ekleyin" notu düşer (bu RFC merge edilirken
-PR açıklamasında hatırlatılır).
+`ResumeHint.capabilities_version` alanı, handshake sırasında değiş-tokuş edilen
+`Capabilities.version` ile **eşit olmalıdır**; uyuşmazlık → `ResumeReject{VERSION_MISMATCH}`.
+Ayrı bir `ResumeCapabilities` frame'i **tanımlanmaz**; tek `Capabilities`
+mesajı üç RFC'nin ortak zeminidir.
 
 ## 5. Alternatifler
 
@@ -331,9 +337,11 @@ semantik overkill; SHA-256 equal check yeterli.
   sabiti; config'te override edilebilir.
 - **Feature flag**: v0.8.0'da default **açık**. Config'te
   `resume.enabled: bool` ile disable edilebilir (paranoya / bug workaround için).
-- **Proto versioning**: `proto/v1/` (mevcut) dokunulmaz; `proto/v2/resume.proto`
-  yeni dosya olarak eklenir. Build zamanı cargo feature flag'lemez; v1+v2
-  aynı binary'de yan yana.
+- **Proto versioning**: Upstream Quick Share proto'ları (`proto/v1/` dizini)
+  dokunulmaz; `ResumeHint`/`ResumeReject` mesajları RFC-0003'te açılan
+  `proto/hekadrop_extensions.proto` dosyasına eklenir (package `hekadrop.ext`).
+  Build zamanı cargo feature flag'lemez; upstream proto'lar ile yan yana
+  derlenir.
 
 ## 7. Güvenlik değerlendirmesi
 
@@ -416,7 +424,7 @@ byte input ile panic-free decode'u).
 
 | # | İş | Süre |
 |---|----|-----:|
-| 1 | `proto/v2/resume.proto` tanım + build.rs entegrasyon | 2 s |
+| 1 | `proto/hekadrop_extensions.proto`'a `ResumeHint`/`ResumeReject`/oneof slot 12-13 ekle + build.rs | 2 s |
 | 2 | `session_id_i64` helper + test | 1 s |
 | 3 | `.meta` JSON struct + serde + read/write + atomic rename | 4 s |
 | 4 | Partial dir creation + perms (Unix chmod, Windows ACL) | 3 s |
@@ -448,8 +456,10 @@ byte input ile panic-free decode'u).
 5. **Resume UI affordance:** Kullanıcı "bu %92 partial var, devam et/sıfırla"
    seçebilsin mi, yoksa otomatik resume tercih edilsin mi? Önerim: otomatik
    (sessiz) + Settings > Diagnostics'te partial list görünür + manual delete.
-6. **Capabilities frame ownership:** RFC-0003'te mi, burada mı tanımlanacak?
-   Koordinasyon gerekir.
+6. ~~**Capabilities frame ownership:** RFC-0003'te mi, burada mı tanımlanacak?~~
+   **Kapandı:** `Capabilities` mesajı tek kanonik tanım olarak RFC-0003 §3.2'de,
+   `HekaDropFrame` wrapper'ı içinde yaşar; bu RFC `RESUME_V1 = 0x0002` bit'ini
+   ve `ResumeHint`/`ResumeReject` oneof slot'larını (12 ve 13) kullanır.
 7. **Klasör payload'ları:** RFC-0005 folder streaming için resume nasıl
    çalışır? Per-file mi (her dosya bağımsız partial), yoksa folder manifest
    seviyesinde mi? Önerim: **per-file**. RFC-0005 paralel yazılırken bu

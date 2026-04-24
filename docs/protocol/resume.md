@@ -32,7 +32,7 @@ sender                                 receiver
   |        partial/ for matching          |
   |        session_id + payload_id)       |
   |                                       |
-  |  V1Frame{type=ResumeHint, ...}        |
+  |  HekaDropFrame{resume_hint=...}       |
   |<--------------------------------------|   (optional; only if partial exists
   |                                       |    AND capabilities.RESUME_V1 set)
   |                                       |
@@ -47,8 +47,8 @@ sender                                 receiver
   |  ... resume from offset ...           |
   |                                       |
   |  -- mismatch --                       |
-  |  V1Frame{type=ResumeReject,           |
-  |          reason=HASH_MISMATCH}        |
+  |  HekaDropFrame{resume_reject=...,     |
+  |               reason=HASH_MISMATCH}   |
   |-------------------------------------->|
   |                                       |   (receiver deletes .part + .meta,
   |                                       |    resets state, expects offset=0)
@@ -64,51 +64,67 @@ sender                                 receiver
   matching Introduction frame, or sender falls back to `offset = 0`.
 - Sender MUST respond within **30 s** of receiving `ResumeHint` for a
   10 GiB file (SHA-256 verification budget). Larger files scale linearly
-  (~3 s/GiB, without SHA-NI). If receiver does not see a PayloadTransfer
-  or ResumeReject within `(30 s + file_size_gib * 3 s)`, it MUST close
-  the connection and purge `.part`/`.meta`.
+  (~5 s/GiB, defansive upper bound for non-SHA-NI CPUs with HDD I/O).
+  If receiver does not see a PayloadTransfer or ResumeReject within
+  `(30 s + file_size_gib * 5 s)`, it MUST close the connection and
+  purge `.part`/`.meta`. (See §11 open-question on adaptive timeout.)
 
-## 2. `V1Frame` type extension
+## 2. Frame routing — HekaDropFrame wrapper, **not** `V1Frame.FrameType`
 
-Existing `V1Frame.FrameType` enum (in `proto/v1/location/nearby/connections/wire_format.proto`):
+**Kritik:** `ResumeHint` and `ResumeReject` are **not** slots in upstream
+`V1Frame.FrameType`. That enum belongs to Google's Quick Share / Nearby
+Connections spec (`proto/offline_wire_formats.proto:47`); its defined
+values are immutable for third-party implementations. Notably **slot 7
+is already `PAIRED_KEY_ENCRYPTION`** upstream, so any "ResumeHint = 7"
+claim in earlier drafts was incorrect.
 
-| Value | Name              |
-|------:|-------------------|
-| 0     | UNKNOWN_FRAME_TYPE|
-| 1     | ConnectionRequest |
-| 2     | ConnectionResponse|
-| 3     | PayloadTransfer   |
-| 4     | KeepAlive         |
-| 5     | Disconnection    |
-| 6     | Introduction     |
+HekaDrop extensions live inside a magic-prefixed `HekaDropFrame` wrapper
+(defined in RFC-0003 §3.2) which is carried as the plaintext of an
+otherwise-normal `SecureCtx::encrypt` payload:
 
-**New values (proto/v2):**
+```
+frame_header (length-prefix) ─▶ SecureCtx ciphertext ─▶ plaintext =
+    0xA5DEB201 (4 B magic) ∥ protobuf(HekaDropFrame)
+```
 
-| Value | Name          | Direction              |
-|------:|---------------|------------------------|
-| 7     | ResumeHint    | receiver → sender      |
-| 8     | ResumeReject  | sender → receiver      |
+Oneof slot assignments inside `HekaDropFrame.payload` (canonical table
+mirrored from RFC-0003):
 
-Values are chosen to be forward-compatible: receivers MUST ignore
-unknown frame types with `frame_type >= 100` (logging warn) to allow
-future extensions (`100..` reserved for experimental).
+| Slot | Field           | Defining RFC |
+|-----:|-----------------|--------------|
+| 10   | `capabilities`  | RFC-0003     |
+| 11   | `chunk_tag`     | RFC-0003     |
+| 12   | `resume_hint`   | RFC-0004 (this spec) |
+| 13   | `resume_reject` | RFC-0004 (this spec) |
+| 14   | `folder_mft`    | RFC-0005     |
+| 15..63 | reserved      | future v0.x minor additions |
+
+A non-HekaDrop peer receiving this plaintext sees the magic prefix
+as an invalid varint tag for `OfflineFrame` and drops the frame. The
+capabilities gate (§7) ensures the frame is never transmitted to such
+peers in the first place; the magic prefix is a defence-in-depth
+fail-loud marker.
 
 ## 3. `ResumeHint` message
 
-```protobuf
-syntax = "proto3";
-package hekadrop.protocol.resume.v1;
+Defined inside the shared `proto/hekadrop_extensions.proto` file
+(package `hekadrop.ext`, same file that hosts `HekaDropFrame` and
+`Capabilities`):
 
+```protobuf
 message ResumeHint {
   int64  session_id           = 1;  // required, non-zero
   int64  payload_id           = 2;  // required, matches Introduction
   int64  offset               = 3;  // required, 0 < offset < file_size
   bytes  partial_hash         = 4;  // required, exactly 32 bytes (SHA-256)
-  int32  capabilities_version = 5;  // required, matches capabilities frame
+  uint32 capabilities_version = 5;  // required, equals Capabilities.version
   bytes  last_chunk_tag       = 6;  // optional; 32 bytes if CHUNK_HMAC_V1 set,
                                      // zero-length otherwise
 }
 ```
+
+Wire carriage: `HekaDropFrame{resume_hint = ResumeHint{...}}` (oneof
+slot 12), then magic-prefixed and passed to `SecureCtx::encrypt`.
 
 ### 3.1 Field semantics
 
@@ -147,11 +163,14 @@ capabilities_version = 1                       -> 1 byte
 last_chunk_tag       = <32 bytes HMAC>         -> 34 bytes
 ```
 
-Total ≈ 89 bytes. Wrapped in `V1Frame{type=7, resume_hint=...}`, then
-encrypted-then-MAC'd per `src/secure.rs` standard 16 MiB frame cap — well
-under limit.
+Total ≈ 89 bytes. Wrapped in `HekaDropFrame{resume_hint=...}` (oneof
+slot 12, magic-prefixed), then encrypted-then-MAC'd per `src/secure.rs`
+standard 16 MiB frame cap — well under limit.
 
 ## 4. `ResumeReject` message
+
+Defined in the same `proto/hekadrop_extensions.proto` file. Wire carriage:
+`HekaDropFrame{resume_reject = ResumeReject{...}}` (oneof slot 13).
 
 ```protobuf
 message ResumeReject {
@@ -240,9 +259,11 @@ negotiated at handshake.
 - Neither peer advertises bit → no resume. Normal byte-0 transfer.
 - Only sender advertises → receiver cannot send hint; sender receives
   no hint; falls through 2 s timeout.
-- Only receiver advertises → receiver sends hint; sender does not
-  recognize frame type 7 → logs warn, drops frame, proceeds with
-  byte-0 transfer. Receiver `.part` is kept and retried on next session.
+- Only receiver advertises → receiver transmits `HekaDropFrame{resume_hint}`;
+  sender does not recognize the `HekaDropFrame` magic prefix (non-HekaDrop
+  peer) or does not advertise `RESUME_V1` (HekaDrop peer with the bit off)
+  → logs warn, drops frame, proceeds with byte-0 transfer. Receiver
+  `.part` is kept and retried on next session.
 
 ## 8. `.meta` JSON schema (receiver-local, **not on wire**)
 
@@ -316,3 +337,11 @@ implementation lands (PR accompanying RFC 0004 merge).
 3. Chunk-HMAC's exact tag size / algorithm (HMAC-SHA256 vs Poly1305)
    is owned by RFC 0003. This document assumes SHA-256 (32 B tag); if
    RFC 0003 chooses differently, update §3.1 `last_chunk_tag` size.
+4. **Adaptive verify-timeout.** §1 specifies a static `30 s + 5 s/GiB`
+   budget — defensive for non-SHA-NI CPUs paired with HDDs. A future
+   iteration could measure the first chunk's hash throughput and scale
+   the budget dynamically (e.g. `30 s + max(3, 10_000 / measured_MiB_s) * file_size_gib`),
+   tightening the window for modern hardware while keeping the slow-path
+   budget. Tradeoff: more state on sender, more surface for a malicious
+   receiver to stall the protocol by triggering a slow first chunk.
+   Deferred to v0.9.

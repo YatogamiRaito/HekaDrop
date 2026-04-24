@@ -197,10 +197,11 @@ Davranış:
 Bundle-level integrity: manifest SHA-256 `attachment_hash` ile introduction'a
 commit edildiğinden, alıcı manifest'i parse etmeden önce bundle_sha256 trailer
 doğrular; trailer geçerse manifest de güvenilir kabul edilir. Per-file SHA-256
-yine de dosya yazımı sırasında streaming olarak hesaplanır; uyuşmazsa **o
-dosya** quarantine'a alınır, bundle'ın gerisi kabul edilir ama UI uyarır —
-partial success düşmez çünkü aile tatil klasörünün 49/50'si doğru geldiyse
-silmek kullanıcıya zarar verir.
+yine de dosya yazımı sırasında streaming olarak hesaplanır; **herhangi bir
+dosyanın SHA-256 mismatch'i → tüm bundle reject** (atomic-reject politikası;
+§3.6 state machine'i buna göre tanımlıdır). "49/50 doğru" gibi kısmi kabul
+senaryosu desteklenmez; kullanıcıya yanlış güven vermemek + receiver state
+machine'i basit tutmak için bu karar verildi.
 
 ### 3.6 Atomic rename ve receive state machine
 
@@ -216,35 +217,46 @@ Receiver flow (`src/connection.rs` dispatch + `src/payload.rs` assembler):
 4. `~/Downloads/.hekadrop-temp-<session_id>/` oluşturulur (`create_new` klasör;
    Unix'te `mkdir` EEXIST race ile idempotent değildir, burada session-id
    unique olduğu için problem yok).
-5. Manifest entries sırayla extract:
+5. Manifest entries sırayla extract (stream; in-place into
+   `.hekadrop-temp-<session_id>/`):
    - `type: "directory"` → `create_dir_all` (sanitize path).
    - `type: "file"` → path açılır (`create_new` flag), parent symlink kontrol
-     sonra bundle'dan `size` byte kopyalanır; streaming SHA-256 hesaplanır;
-     yanlışsa dosya silinir, bundle iptal.
-6. Başarılı ekstraksiyon → `unique_downloads_path(&safe_root)` ile hedef
-   isim seçilir (çakışmada `tatil-2025 (2)`), temp `rename` ile hedefe taşınır.
-   `rename` cross-device EXDEV olursa fallback: recursive copy + delete.
+     sonra bundle'dan `size` byte kopyalanır; streaming SHA-256 hesaplanır.
+     **Herhangi bir dosyada mismatch → atomic reject:** `.hekadrop-temp-<session_id>/`
+     dizini ve `.bundle` dosyası tamamen silinir, receiver UI "bundle reddedildi:
+     dosya `<path>` integrity kontrolünü geçemedi" hatası gösterir, `stats.json`'a
+     abort kaydedilir. **Kısmi kabul yok**; "49/50 doğru" senaryosunda bile tüm
+     bundle atılır.
+6. Tüm entry'ler başarılı extract edildiyse → `unique_downloads_path(&safe_root)`
+   ile hedef isim seçilir (çakışmada `tatil-2025 (2)`), temp dizini `rename`
+   ile hedefe taşınır. `rename` cross-device EXDEV olursa fallback: recursive
+   copy + delete.
 7. Bundle dosyası (`.bundle`) silinir.
 
-Kısmi başarısızlık (bazı dosya SHA mismatch):
-
-- Hatalı dosyalar `<temp>/_failed/` altına ismi korunarak taşınır.
-- Rename yine yapılır; kullanıcı "47/50 dosya doğrulandı, 3 dosya `_failed/`
-  altında" bildirimi görür.
+**Atomic-reject gerekçesi:** (a) receiver state machine basit kalır — tek
+"commit" noktası, partial cleanup yolları yok; (b) kullanıcıya yanlış güven
+verme riski yok (kısmi kabul "klasörün tamamı geldi" illüzyonu yaratır);
+(c) corrupted sender veya MITM senaryosunda "eksik dosya var mı?" sorusunu
+kullanıcıya yıkmaktan kaçınır; (d) resume (§3.9) bundle'ı yeniden denemeye
+olanak tanıyacağından kullanıcı için pratikte maliyet sınırlı.
 
 ### 3.7 Capabilities müzakeresi (RFC-0003 entegrasyonu)
 
-RFC-0003 `PairedKeyEncryption` sonrası eklenecek `CapabilitiesFrame` içinde
-bitfield'a yeni bit:
+Kanonik `Capabilities` mesajı RFC-0003 §3.2'de tanımlı; bu RFC yalnız kendi
+bit'ini talep eder. Feature bitleri (üç RFC ortak sabit tablosu):
 
 ```
-bit 0: chunk_hmac_v1     (RFC-0003)
-bit 1: resume_v1         (RFC-0004)
-bit 2: folder_v1         (bu RFC)
-bit 3+: reserved
+CHUNK_HMAC_V1    = 0x0001   (RFC-0003, bit 0)
+RESUME_V1        = 0x0002   (RFC-0004, bit 1)
+FOLDER_STREAM_V1 = 0x0004   (bu RFC,   bit 2)
+0x0008..0x8000   — reserved for v0.8–v1.0
 ```
 
-Sender `folder_v1` peer'da set değilse:
+Ayrıca `FolderManifest` mesajı (in-bundle manifest JSON'unu wire'da
+reprezente eder; bkz. §3.2) `HekaDropFrame.folder_mft = 14` slot'unu
+kullanır. Quick Share upstream `V1Frame.FrameType` enum'una dokunulmaz.
+
+Sender `FOLDER_STREAM_V1` peer'da set değilse:
 - Fallback path: bundle oluşturma. `build_introduction_multi` ile flat gönderim
   (bugünkü kod). Log: `warn!("[sender] peer folder_v1 desteklemiyor, flat gönderim")`.
 - Kullanıcıya UI'da discrete bir uyarı: "Bu alıcıda klasör yapısı korunmayacak."
@@ -345,7 +357,7 @@ kullanıcı diski dolar. Streaming daha iyi.
 | Resource exhaustion (çok dosya) | 10 000 entry cap, >8 MiB manifest reject |
 | Resource exhaustion (derinlik) | Depth 32 cap |
 | Partial bundle poisoning | Trailer bundle SHA-256; uyuşmazsa temp silinir |
-| Per-file corruption (malicious sender) | Entry SHA-256 mismatch → `_failed/` klasörü, kullanıcıya net uyarı |
+| Per-file corruption (malicious sender) | Entry SHA-256 mismatch → **atomic reject**: `.hekadrop-temp-<session>/` komple silinir, hiçbir dosya `~/Downloads/`'a taşınmaz, UI net hata |
 | Disk doldurma (sender kötü niyetli) | Receiver disk quota check v0.8.1'e ertelendi — açık soru |
 | TOCTOU rename | `rename` atomic aynı FS üzerinde; cross-device fallback copy-delete sırasında hedef `create_dir_all` + `create_new` guard |
 
@@ -453,10 +465,12 @@ trailer'ı doğrula. Net ek: 0.
    size introduction'da belli; `std::fs::available_space` (Linux/macOS `statvfs`,
    Windows `GetDiskFreeSpaceEx`) ile pre-check. MVP dışı, v0.8.1.
 
-6. **Kısmi başarı (bazı dosya SHA mismatch) partial-accept mi, atomic-reject mi?**
-   §3.6 *partial-accept + `_failed/`* öneriyor. Audit'de güvenlik takımı
-   "zehirli dosya receiver'da kalır" itirazı gelebilir. Alternatif: `.hekadrop-quarantine/`
-   altına taşı, kullanıcı eksplicit açmak ister.
+6. ~~**Kısmi başarı (bazı dosya SHA mismatch) partial-accept mi, atomic-reject mi?**~~
+   **Kapandı: atomic-reject seçildi.** §3.6 tek politika olarak atomic-reject
+   tanımlar — bir dosyada SHA mismatch olursa tüm bundle atılır, temp dizini
+   silinir. Gerekçeler §3.6'da; "zehirli dosya receiver'da kalır" riski
+   ortadan kalkar, state machine basitleşir. Resume (§3.9) bundle'ı yeniden
+   denemeye olanak tanıdığı için kullanıcı maliyeti sınırlı.
 
 ## 12. Referanslar
 

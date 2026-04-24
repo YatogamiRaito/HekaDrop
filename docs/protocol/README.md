@@ -14,7 +14,7 @@ Aşağıdakiler Google / LocalSend topluluklarının spec'leri. Biz konuşuyoruz
   Kullandığımız protobuf tanımları `proto/` dizininde (device_to_device_messages, offline_wire_formats,
   securegcm, sharing, ukey, wire_format).
 - **LocalSend v2** — [localsend/protocol](https://github.com/localsend/protocol). v0.15.0'da
-  (2027 Q5) implement ediliyor.
+  (ROADMAP §Q5 çeyreği, 2027-05 → 2027-07) implement ediliyor.
 
 ## HekaDrop-spesifik uzantılar
 
