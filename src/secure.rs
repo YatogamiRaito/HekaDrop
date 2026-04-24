@@ -100,6 +100,16 @@ impl SecureCtx {
 
     pub fn decrypt(&mut self, frame_bytes: &[u8]) -> Result<Vec<u8>> {
         let smsg = SecureMessage::decode(frame_bytes)?;
+        // SECURITY: HMAC-SHA256 tag her zaman 32 bayt. Uzunluk guard'ını
+        // `ct_eq`'dan önce açık reddetmek hatayı loglanabilir ve ayırt
+        // edilebilir yapar; kısa/uzun tag sessizce protokol ihlali olarak
+        // gömülmez. crypto.rs'de de defensive duplicate var (defense-in-depth).
+        if smsg.signature.len() != 32 {
+            bail!(
+                "geçersiz HMAC tag uzunluğu: beklenen 32, gelen {}",
+                smsg.signature.len()
+            );
+        }
         if !crypto::hmac_sha256_verify(&self.recv_hmac_key, &smsg.header_and_body, &smsg.signature)
         {
             bail!("HMAC eşleşmedi");

@@ -71,6 +71,13 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
 }
 
 pub fn hmac_sha256_verify(key: &[u8], data: &[u8], tag: &[u8]) -> bool {
+    // SECURITY: `ct_eq` eşit-olmayan slice'larda sessiz false döner. Erken ve
+    // açık reddedip caller'ın bu durumu ayırt edebilmesini (ve log/metric'e
+    // yansıtılmasını) sağlamak için uzunluk guard'ı en başta. HMAC-SHA256 tag
+    // her zaman 32 bayt — başka bir değer protokol ihlali.
+    if tag.len() != 32 {
+        return false;
+    }
     let computed = hmac_sha256(key, data);
     computed.ct_eq(tag).into()
 }

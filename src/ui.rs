@@ -40,13 +40,40 @@ pub async fn prompt_accept(
     files: &[FileSummary],
     text_count: usize,
 ) -> Result<AcceptResult> {
-    let device = device_name.to_string();
-    let pin = pin_code.to_string();
-    let files: Vec<(String, i64)> = files.iter().map(|f| (f.name.clone(), f.size)).collect();
+    // Peer-kontrollü alanları dialog gövdesine yerleştirmeden önce
+    // control karakterleri (özellikle `\n`, `\r`) strip et — kötü niyetli
+    // peer'ın dialog metnini manipüle etmesini ve dosya listesi / PIN
+    // satırlarını sahte şekilde bozmasını engelle.
+    let device = sanitize_field(device_name);
+    let pin = sanitize_field(pin_code);
+    let files: Vec<(String, i64)> = files
+        .iter()
+        .map(|f| (sanitize_field(&f.name), f.size))
+        .collect();
 
     task::spawn_blocking(move || prompt_accept_blocking(&device, &pin, &files, text_count))
         .await
         .map_err(|e| anyhow::anyhow!("UI task join: {}", e))
+}
+
+/// Tek bir peer-kontrollü alan (cihaz adı, dosya adı, PIN) için sıkı
+/// sanitize: tüm control karakterler + DEL + C1 strip edilir — `\n`
+/// dahil. Alanları dialog mesajına yerleştirmeden önce çalışmalı ki
+/// attacker body'yi manipüle edemesin (ör. "evil\nAccepted").
+///
+/// NOT: `Command::arg()` execve tabanlıdır (shell yok); bu sanitize
+/// var olan injection guard'ına ek bir UX-safety katmanıdır.
+fn sanitize_field(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// Tüm mesaj gövdesi için yumuşak sanitize: `\n` ve `\t` korunur
+/// (dosya listesi newline ile ayrılıyor). Geri kalan C0 kontrolleri,
+/// DEL (U+007F) ve C1 kontrolleri (U+0080..U+009F) strip edilir.
+fn sanitize_display_text(s: &str) -> String {
+    s.chars()
+        .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
+        .collect()
 }
 
 fn format_payload_lines(files: &[(String, i64)], text_count: usize) -> String {
@@ -79,9 +106,12 @@ fn prompt_accept_blocking(
     let btn_trust = crate::i18n::t("accept.accept_trust");
     let title = crate::i18n::t("accept.title");
 
+    // Kullanıcıdan (peer'dan) gelen `device` ve dosya adları AppleScript
+    // stringine escape_applescript ile giriyor; ek olarak control char
+    // (newline / \r / NUL / DEL) strip için sanitize ediliyor.
     let script = format!(
         r#"display dialog "{}" buttons {{"{}", "{}", "{}"}} default button "{}" cancel button "{}" with title "{}" with icon note"#,
-        escape_applescript(&message),
+        escape_applescript(&sanitize_display_text(&message)),
         escape_applescript(btn_reject),
         escape_applescript(btn_accept),
         escape_applescript(btn_trust),
@@ -93,12 +123,21 @@ fn prompt_accept_blocking(
     match out {
         Ok(o) => {
             let s = String::from_utf8_lossy(&o.stdout);
-            // osascript çıktısı: "button returned:<LABEL>, ..." formatında.
-            // "button returned:" prefix'ini arayarak substring collision
-            // riskini kaldırıyoruz ("Kabul" ile "Kabul + güven" gibi).
-            if s.contains(&format!("button returned:{}", btn_trust)) {
+            // osascript çıktısı: "button returned:<LABEL>, gave up:false"
+            // formatındadır. Önce "button returned:" prefix'li satırı tam
+            // olarak ayıklayıp, label'ı virgülün soluna kadar al; sonra
+            // `==` ile karşılaştır. Böylece "Kabul" ⊂ "Kabul + güven"
+            // gibi substring çakışmaları elimine edilir.
+            let result_line = s
+                .lines()
+                .find_map(|l| l.strip_prefix("button returned:"))
+                .unwrap_or("");
+            // osascript bazen tek satırda "button returned:X, gave up:false"
+            // verir; virgülün solu gerçek label'dır.
+            let label = result_line.split(',').next().unwrap_or("").trim();
+            if label == btn_trust {
                 AcceptResult::AcceptAndTrust
-            } else if s.contains(&format!("button returned:{}", btn_accept)) {
+            } else if label == btn_accept {
                 AcceptResult::Accept
             } else {
                 AcceptResult::Reject
@@ -138,13 +177,18 @@ fn prompt_accept_blocking(
     // Windows sistem Yes/No/Cancel butonları dile göre lokalize olarak geliyor;
     // kullanıcıya sadece hangi butonun hangi aksiyona karşılık geldiğini
     // yazıyoruz. "Kabul + güven" zaten accept+trust semantik bütününü taşıyor.
+    //
+    // Alternatif: inline C# (Add-Type + WinForms) ile custom 3-label
+    // button form. Kod hacmi ve PowerShell boot latency'si nedeniyle
+    // mevcut simple-mapping tercih edildi — body'de açık Yes/No/Cancel
+    // ↔ anlam eşleştirmesi var.
     let hint = format!(
         "\n\nYes/Evet  = {}\nNo/Hayır = {}\nCancel/İptal = {}",
         crate::i18n::t("accept.accept_trust"),
         crate::i18n::t("accept.accept"),
         crate::i18n::t("accept.reject"),
     );
-    let message = format!("{}{}", body_main, hint);
+    let message = sanitize_display_text(&format!("{}{}", body_main, hint));
     let title = crate::i18n::t("accept.title");
     let msg_w = to_wide(&message);
     let title_w = to_wide(title);
@@ -173,44 +217,93 @@ fn prompt_accept_blocking(
     text_count: usize,
 ) -> AcceptResult {
     let files_str = format_payload_lines(files, text_count);
-    let message = crate::i18n::tf("accept.body", &[device, pin, &files_str]);
+    let message =
+        sanitize_display_text(&crate::i18n::tf("accept.body", &[device, pin, &files_str]));
     let title = crate::i18n::t("accept.title");
+    let lbl_accept = crate::i18n::t("accept.accept");
+    let lbl_reject = crate::i18n::t("accept.reject");
+    let lbl_trust = crate::i18n::t("accept.accept_trust");
 
-    // zenity yalnız "Tamam/İptal" 2 butonu destekler. "Kabul + güven"
-    // seçeneğini ikinci adımda soruyoruz: önce kabul/ret, sonra güven.
+    // GÜVENLİK NOTU: tüm dış komutlar `Command::new(bin).args([...])`
+    // yani execve ile çalışır — araya shell girmez, peer'dan gelen
+    // string'ler argüman olarak direkt parametre alanına gider, command
+    // injection yüzeyi yok. Yine de peer-kontrollü alanlar üstte
+    // `sanitize_field` ile control char'dan arındırılıyor.
     if have("zenity") {
-        let accept = Command::new("zenity")
-            .args([
-                "--question",
-                &format!("--title={}", title),
-                &format!("--text={}", message),
-                &format!("--ok-label={}", crate::i18n::t("accept.accept")),
-                &format!("--cancel-label={}", crate::i18n::t("accept.reject")),
-                "--width=420",
-            ])
-            .stderr(Stdio::null())
-            .status();
-        let accepted = matches!(accept, Ok(s) if s.success());
-        if !accepted {
-            return AcceptResult::Reject;
-        }
-        let trust = Command::new("zenity")
-            .args([
-                "--question",
-                &format!("--title={}", title),
-                &format!(
-                    "--text={}",
-                    crate::i18n::tf("accept.trust_prompt", &[device])
-                ),
-                &format!("--ok-label={}", crate::i18n::t("accept.trust_yes")),
-                &format!("--cancel-label={}", crate::i18n::t("accept.trust_later")),
-            ])
-            .stderr(Stdio::null())
-            .status();
-        if matches!(trust, Ok(s) if s.success()) {
-            AcceptResult::AcceptAndTrust
+        // 3-button tek-adım: OK = Accept, Cancel/X = Reject,
+        // `--extra-button` = AcceptAndTrust.
+        //
+        // `--extra-button` zenity ≥3.0'da var (Debian 10+/Ubuntu 18.04+
+        // ve tüm güncel dağıtımlar). Basılınca exit code 1 ile çıkar ve
+        // label'ı stdout'a yazar — cancel/X'te stdout boş gelir, böylece
+        // ikisini ayırt edebiliyoruz.
+        //
+        // Graceful fallback: extra-button desteği yoksa (zenity 2.x),
+        // `zenity_supports_extra_button()` bunu `--version` ile tespit
+        // edip iki-adımlı klasik akışa (accept → trust?) düşer.
+        if zenity_supports_extra_button() {
+            let out = Command::new("zenity")
+                .args([
+                    "--question",
+                    &format!("--title={}", title),
+                    &format!("--text={}", message),
+                    &format!("--ok-label={}", lbl_accept),
+                    &format!("--cancel-label={}", lbl_reject),
+                    &format!("--extra-button={}", lbl_trust),
+                    "--width=420",
+                ])
+                .stderr(Stdio::null())
+                .output();
+            match out {
+                Ok(o) if o.status.success() => AcceptResult::Accept,
+                Ok(o) => {
+                    let stdout = String::from_utf8_lossy(&o.stdout);
+                    let line = stdout.trim();
+                    if line == lbl_trust {
+                        AcceptResult::AcceptAndTrust
+                    } else {
+                        // Cancel / X / pencere kapatma.
+                        AcceptResult::Reject
+                    }
+                }
+                Err(_) => AcceptResult::Reject,
+            }
         } else {
-            AcceptResult::Accept
+            // Eski zenity (< 3.0): iki-adım. Önce accept/reject, kabul
+            // edilirse trust sor. UX biraz daha diyalog ağırlıklı ama
+            // fonksiyonel paritesi korunuyor.
+            let accept = Command::new("zenity")
+                .args([
+                    "--question",
+                    &format!("--title={}", title),
+                    &format!("--text={}", message),
+                    &format!("--ok-label={}", lbl_accept),
+                    &format!("--cancel-label={}", lbl_reject),
+                    "--width=420",
+                ])
+                .stderr(Stdio::null())
+                .status();
+            if !matches!(accept, Ok(s) if s.success()) {
+                return AcceptResult::Reject;
+            }
+            let trust = Command::new("zenity")
+                .args([
+                    "--question",
+                    &format!("--title={}", title),
+                    &format!(
+                        "--text={}",
+                        sanitize_display_text(&crate::i18n::tf("accept.trust_prompt", &[device]))
+                    ),
+                    &format!("--ok-label={}", crate::i18n::t("accept.trust_yes")),
+                    &format!("--cancel-label={}", crate::i18n::t("accept.trust_later")),
+                ])
+                .stderr(Stdio::null())
+                .status();
+            if matches!(trust, Ok(s) if s.success()) {
+                AcceptResult::AcceptAndTrust
+            } else {
+                AcceptResult::Accept
+            }
         }
     } else if have("kdialog") {
         // kdialog 3-button: --yesnocancel → Evet (Accept+Trust) / Hayır (Accept) / İptal (Reject)
@@ -368,7 +461,6 @@ pub fn notify(title: &str, body: &str) {
     }
 }
 
-/// Bilgi diyaloğu (blocking değil, fire-and-forget).
 pub fn show_info(title: &str, body: &str) {
     #[cfg(target_os = "macos")]
     {
@@ -874,10 +966,46 @@ fn escape_applescript(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// zenity `--extra-button` flag'ini destekliyor mu? Versiyon 3.0+'da var.
+/// `zenity --version` çıktısı "3.44.0" gibi tek satır; major sayı ≥3 ise
+/// true. Hata durumunda (zenity açılmıyor vb.) false — iki-adım fallback.
+#[cfg(target_os = "linux")]
+fn zenity_supports_extra_button() -> bool {
+    let out = match Command::new("zenity")
+        .arg("--version")
+        .stderr(Stdio::null())
+        .output()
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => return false,
+    };
+    let text = String::from_utf8_lossy(&out);
+    let major = text
+        .trim()
+        .split('.')
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    major >= 3
+}
+
 /// Bir ikili (binary) PATH'te mevcut mu? Linux-only helper (zenity/kdialog
 /// varlık kontrolü). Windows'ta kullanılmaz — MessageBoxW her zaman var.
+///
+/// GÜVENLİK: `sh -c` kullanımı şu an sadece bu dosya içinden sabit
+/// binary isimleri ile çağrılıyor ("zenity", "kdialog") — peer-kontrollü
+/// veri buraya ulaşmıyor, komut injection riski yok. Yine de defansif
+/// olsun diye `bin` içinde shell-special char görürsek direkt `false`
+/// dönüyoruz; helper ileride yanlışlıkla dış input ile çağrılırsa da
+/// güvenli kalıyor.
 #[cfg(target_os = "linux")]
 fn have(bin: &str) -> bool {
+    if bin
+        .chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
+    {
+        return false;
+    }
     Command::new("sh")
         .arg("-c")
         .arg(format!("command -v {} >/dev/null 2>&1", bin))

@@ -40,10 +40,11 @@ pub mod securegcm {
     rustdoc::invalid_html_tags,
     rustdoc::broken_intra_doc_links
 )]
-mod securemessage {
+pub mod securemessage {
     include!(concat!(env!("OUT_DIR"), "/securemessage.rs"));
 }
 
+pub mod secure;
 mod ukey2;
 
-pub use ukey2::validate_server_init;
+pub use ukey2::{validate_server_init, DerivedKeys};
