@@ -41,7 +41,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: fuzz-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.toml') }}
+          key: fuzz-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'crates/hekadrop-app/fuzz/Cargo.toml') }}
           restore-keys: |
             fuzz-cargo-${{ runner.os }}-
 
@@ -50,7 +50,7 @@ jobs:
         with:
           path: |
             target
-            fuzz/target
+            crates/hekadrop-app/fuzz/target
           key: fuzz-target-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             fuzz-target-${{ runner.os }}-${{ matrix.target }}-
@@ -60,9 +60,11 @@ jobs:
         run: cargo install cargo-fuzz --locked
 
       - name: Build all harnesses
+        working-directory: crates/hekadrop-app
         run: cargo +nightly fuzz build
 
       - name: Run ${{ matrix.target }} (300s cap)
+        working-directory: crates/hekadrop-app
         run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=300
 
       - name: Upload artifacts on failure
@@ -70,6 +72,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-artifacts-${{ matrix.target }}
-          path: fuzz/artifacts/
+          path: crates/hekadrop-app/fuzz/artifacts/
           if-no-files-found: ignore
           retention-days: 14

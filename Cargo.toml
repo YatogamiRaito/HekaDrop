@@ -1,95 +1,15 @@
-[package]
-name = "hekadrop"
-version = "0.6.0"
+[workspace]
+resolver = "2"
+members = ["crates/hekadrop-app"]
+
+[workspace.package]
+version = "0.7.0"
 edition = "2021"
-description = "Google Quick Share (Nearby Share) protokolünün Rust implementasyonu — cross-platform alıcı/gönderici"
+rust-version = "1.90"
 authors = ["destek@sourvice.com"]
 license = "MIT"
 repository = "https://github.com/YatogamiRaito/HekaDrop"
 homepage = "https://github.com/YatogamiRaito/HekaDrop"
-readme = "README.md"
-keywords = ["quick-share", "nearby-share", "p2p", "file-transfer", "macos"]
-categories = ["network-programming", "command-line-utilities"]
-rust-version = "1.90"
-
-[dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time", "fs"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-bytes = "1"
-prost = { version = "0.14", features = ["std"] }
-mdns-sd = "0.19"
-sha2 = "0.10"
-hex = "0.4"
-anyhow = "1"
-thiserror = "2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2"
-rand = "0.8"
-if-addrs = "0.15"
-base64 = "0.22"
-tray-icon = "0.22"
-tao = "0.35"
-wry = "0.55"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-parking_lot = "0.12"
-p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
-hkdf = "0.12"
-hmac = "0.12"
-aes = "0.8"
-cbc = { version = "0.1", features = ["std"] }
-cipher = { version = "0.4", features = ["block-padding"] }
-subtle = "2"
-elliptic-curve = { version = "0.13", features = ["sec1"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-# Aksiyon butonlu (Aç / Klasörde göster) D-Bus bildirimleri için.
-notify-rust = "4"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-# Windows Toast bildirimleri (aksiyon destekli — WinRT backend).
-notify-rust = "4"
-
-# Microsoft'un resmi Win32/WinRT binding'i. Feature-gated compile — sadece
-# kullandığımız API'ler binary'e girer. Clipboard (UTF-16 doğruluğu, `clip.exe`
-# Türkçe karakterleri bozuyor), Registry autostart, ShellExecute, MessageBox,
-# SHGetKnownFolderPath, GetComputerNameExW gibi native operasyonlar için
-# external process spawn etmekten daha hızlı ve doğru.
-# Versiyon wry/webview2-com ile uyumlu olsun (iki farklı windows-core sürümü
-# trait implementasyonlarında çakışıyor); wry 0.55 şu anda 0.61 kullanıyor.
-windows = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Com",
-    "Win32_System_DataExchange",
-    "Win32_System_Memory",
-    "Win32_System_Registry",
-    "Win32_System_SystemInformation",
-    "Win32_UI_Shell",
-    "Win32_UI_Shell_Common",
-    "Win32_UI_WindowsAndMessaging",
-] }
-
-[build-dependencies]
-prost-build = "0.14"
-
-[dev-dependencies]
-# Bütün kripto/proto crate'leri ([dependencies] altında olan p256, aes, cbc, hmac, sha2,
-# hkdf, prost, hex, rand, tokio, base64, serde, serde_json, thiserror, parking_lot,
-# elliptic-curve) zaten build grafine dahil — integration test'ler o sürümleri doğrudan
-# kullanabilir, dev-dependency olarak tekrar eklemeye gerek yok.
-#
-# Aşağıdaki test-özgü crate'ler mevcut test'ler tarafından doğrudan import edilmiyor, ama
-# ileride eklenecek senaryolar için önceden bildirilmiş dependency olarak tutuluyor. Bağlı
-# build ağırlığı önemsiz (<1 MB) ve `cargo test` cache'ine yaslanıyor.
-pretty_assertions = "1.4"
-tokio-test = "0.4"
-criterion = { version = "0.8", features = ["html_reports"] }
-
-[[bench]]
-name = "crypto"
-harness = false
 
 [profile.release]
 opt-level = "z"
@@ -102,21 +22,3 @@ strip = true
 # kalitesini yükseltir. Binary boyut maliyeti ~200 KB.
 debug = 1
 split-debuginfo = "packed"
-
-# cargo-deb (Linux .deb paketleme) için metadata.
-# Kullanım: `./scripts/make-deb.sh`  veya  `cargo deb`
-[package.metadata.deb]
-maintainer = "destek@sourvice.com"
-copyright = "2026 sourvice.com"
-license-file = ["LICENSE", "0"]
-extended-description = "HekaDrop — Google Quick Share protokolünü Rust ile konuşan açık kaynak, ücretsiz dosya paylaşım aracı. Android cihazlarla doğrudan dosya paylaşımı (bulut yok, hesap yok)."
-depends = "$auto, zenity"
-recommends = "wl-clipboard | xclip, notify-osd | libnotify-bin"
-section = "net"
-priority = "optional"
-assets = [
-    ["target/release/hekadrop", "usr/bin/", "755"],
-    ["resources/hekadrop.desktop", "usr/share/applications/", "644"],
-    ["resources/icon.png", "usr/share/icons/hicolor/512x512/apps/hekadrop.png", "644"],
-    ["README.md", "usr/share/doc/hekadrop/", "644"],
-]

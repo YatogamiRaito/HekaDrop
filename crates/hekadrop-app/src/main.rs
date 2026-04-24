@@ -100,7 +100,9 @@ pub mod sharing {
     }
 }
 
-const WINDOW_HTML: &str = include_str!("../resources/window.html");
+// Workspace refactor (v0.7 Step 1): resources/ workspace root'ta kaldı; app
+// crate'i crates/hekadrop-app/ altına taşındı → relative path iki seviye yukarı.
+const WINDOW_HTML: &str = include_str!("../../../resources/window.html");
 
 async fn async_main() -> Result<()> {
     let device_name = state::get().settings.read().resolved_device_name();
