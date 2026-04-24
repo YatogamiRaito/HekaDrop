@@ -90,6 +90,14 @@ mod ukey2;
 
 pub use ukey2::{validate_server_init, DerivedKeys};
 
+// TODO(fuzz/Q1): `process_client_init` ham bir `&[u8]` alıp `Ukey2Message` +
+// `Ukey2ClientInit` decode + validation pipeline'ını çalıştırır — `fuzz/`
+// harness'i (`fuzz_ukey2_handshake_init`) tam bu parser'ı hedefler. Lib
+// surface'i minimum tutmak için yalnızca fuzz için re-export ediyoruz; üretim
+// çağrıları hâlâ crate-içi. Q2'de UKEY2 modülü `hekadrop-core` crate'ine
+// ayrıldığında bu export natural olarak `pub` API hâline gelecek.
+pub use ukey2::process_client_init;
+
 // `PayloadAssembler` için gerekli. Entegrasyon testleri (örn.
 // `tests/payload_corrupt.rs`) ingest API üzerinden chunk senaryolarını
 // (overrun / truncation / duplicate id / out-of-order) doğrular.

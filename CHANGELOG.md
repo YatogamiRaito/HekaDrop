@@ -5,6 +5,41 @@ All notable changes to HekaDrop will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **24 aylık yol haritası**: `docs/ROADMAP.md`, `docs/MILESTONES.md` — v1.0.0 hedef
+  2028-04-24. Paket yöneticisi (Homebrew Cask, Winget, Scoop, Flathub, Snap, AUR,
+  Nixpkgs) yayınları v1.0.0'a ertelendi; süre boyunca GitHub Releases beta kanal.
+- **RFC süreci**: `docs/rfcs/README.md` + `docs/rfcs/0000-template.md`. İlk iki RFC
+  eklendi — `0001-workspace-refactor.md` (Cargo workspace'e 8 adımlık migration
+  planı) ve `0002-url-payload.md` (URL payload için Karar A).
+- **Feature audit dokümanı**: `docs/features-audit.md` — her README iddiası için
+  `file_path:line_number` referansı; 19 özellik denetlendi, 0 🔴 critical gap.
+- **Threat model**: `docs/security/threat-model.md` — STRIDE analizi, 5 bileşen,
+  44 entry, Q2 harici audit scope'u için hazır.
+- **Fuzz altyapısı**: `fuzz/` dizini + 4 harness (frame decode, payload header,
+  UKEY2 handshake init, secure decrypt) + `.github/workflows/fuzz.yml` on-demand
+  runner + `docs/security/fuzzing.md` policy.
+- **Bağımlılık güncellik politikası**: `docs/dependency-policy.md` — 2026-04
+  snapshot; GTK3 → wry → windows-core blokaj zinciri dokümante, crypto deps
+  RFC zorunluluğu.
+
+### Changed
+- **URL payload gönderimi first-class** (RFC 0002 Karar A uygulandı). `send_text()`
+  artık `detect_url_kind()` ile `http(s)://` prefix'li metinleri `TextKind::Url`
+  olarak etiketliyor; Android/alıcı share sheet'te URL'i "Tarayıcıda aç"
+  aksiyonuyla görüyor. Allow-list iki taraflı (defense in depth) — `javascript:`,
+  `file:`, `data:`, özel protocol handler'lar düz metne düşer. `text_title`
+  preview `scheme://host` ile sınırlı (token'lı URL privacy).
+- **README URL davranışı açıklaması** güncellendi — artık "metin olarak gönderilir"
+  yerine wire-level `TextMetadata.Type::URL` tagging ve çift yönlü allow-list
+  açıkça belgeli.
+- **CONTRIBUTING.md**: yol haritası referansı, RFC süreci linki, bağımlılık
+  politikası özeti, label taksonomisi, DCO (opsiyonel v0.x — v1.0.0'da zorunlu).
+- **`build_introduction_text` imzası**: `text_title: String` parametresi aldı;
+  URL payload'ları için çağıran taraf preview oluşturup geçiyor.
+
 ## [0.6.0] - 2026-04-20
 
 **"Prime time" release — Homebrew tap public yayın sürümü.**
