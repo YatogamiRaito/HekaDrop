@@ -392,17 +392,26 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Metnin URL payload'ı olarak gönderilip gönderilmeyeceğine karar verir.
 ///
-/// Kriter: trim'lenmiş string `http://` veya `https://` ile başlıyor
-/// (case-insensitive). Peer tarafında `is_safe_url_scheme` ile aynı
-/// allow-list kullanılır — wire simetrisi kasıtlı: gönderdiğimiz URL'i
-/// alıcı da açacak, göndermediklerimizi (javascript:, file:, data: vb.)
-/// alıcı da reddedecek.
+/// Kriter: string `http://` veya `https://` ile başlıyor (case-insensitive).
+/// Peer tarafında `is_safe_url_scheme` ile aynı allow-list kullanılır — wire
+/// simetrisi kasıtlı: gönderdiğimiz URL'i alıcı da açacak, göndermediklerimizi
+/// (javascript:, file:, data: vb.) alıcı da reddedecek.
+///
+/// NOT: `send_text` çağıranı `text.trim()` ile normalize ediyor; helper yine
+/// de `trim_start` yapıyor (defensive — bağımsız test'ler ve future-caller'lar
+/// ham string geçebilir). UTF-8 güvenli slicing için `as_bytes` + `get`
+/// kullanılır; `trimmed[..N]` direct slice çok baytlı karakter başlangıcında
+/// panic yapabilir (ör. `"📎📎http://..."` — her 📎 4 byte → prefix.len()=7
+/// 2. emoji'nin ortasına denk gelir).
 fn detect_url_kind(text: &str) -> TextKind {
     let trimmed = text.trim_start();
-    let starts_ci = |prefix: &str| {
-        trimmed.len() >= prefix.len() && trimmed[..prefix.len()].eq_ignore_ascii_case(prefix)
+    let starts_ci = |prefix: &[u8]| -> bool {
+        trimmed
+            .as_bytes()
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
     };
-    if starts_ci("http://") || starts_ci("https://") {
+    if starts_ci(b"http://") || starts_ci(b"https://") {
         TextKind::Url
     } else {
         TextKind::Text
@@ -410,7 +419,14 @@ fn detect_url_kind(text: &str) -> TextKind {
 }
 
 pub async fn send_text(req: SendTextRequest) -> Result<()> {
-    let text = req.text;
+    // Baş/son whitespace'i baştan at: detect, title ve wire payload'ın
+    // tutarlı görmesi için tek noktada normalize ediyoruz. Kullanıcı paste
+    // yaparken clipboard trailing `\n` ya da `\r\n` taşıyabilir — trimsiz
+    // gönderilen URL tarayıcıda malformed açılır, `url_scheme_host` title
+    // ayrıştırmasını da bozar. Boş + sadece whitespace senaryoları
+    // is_empty() kontrolüyle `EmptyPayload` hatasına düşer (davranış değişti:
+    // eskiden "   " gönderilecekti, artık hata — niyet zaten boş göndermemek).
+    let text = req.text.trim().to_string();
     if text.is_empty() {
         return Err(HekaError::EmptyPayload.into());
     }
@@ -1076,6 +1092,25 @@ mod tests {
         assert_eq!(detect_url_kind("merhaba dünya"), TextKind::Text);
         assert_eq!(detect_url_kind("http"), TextKind::Text);
         assert_eq!(detect_url_kind(""), TextKind::Text);
+    }
+
+    // Regression (gemini-code-assist PR-82 HIGH): multi-byte karakter başında
+    // direct slice `trimmed[..prefix.len()]` UTF-8 boundary'ye denk gelmezse
+    // panic eder. `"📎📎http://..."` — her 📎 4 byte, prefix.len() `http://`
+    // için 7 → 2. emoji'nin ortasında kesim → RUNTIME PANIC. Panik-güvenli
+    // `as_bytes().get(..)` + `eq_ignore_ascii_case` ile çözüldü; bu test
+    // sabitleyici. Fuzz harness'ı da aynı yüzeyi kontrol ediyor.
+    #[test]
+    fn detect_url_kind_multibyte_prefix_panik_etmez() {
+        // Emoji başlangıç + URL — ham string dev boundary ihlali üretir, panic olmamalı
+        assert_eq!(detect_url_kind("📎📎http://example.com"), TextKind::Text);
+        assert_eq!(detect_url_kind("🔗 https://x.com"), TextKind::Text);
+        // Kiril prefix — П = 2 byte, `https://` 8 byte, slice head [..8] 2. П'nin sonrasını içerir
+        assert_eq!(detect_url_kind("Пhttps://x.com"), TextKind::Text);
+        // Çok kısa string — prefix.len() text boyunu aşar, `get` None döner
+        assert_eq!(detect_url_kind("é"), TextKind::Text); // 2 byte
+        assert_eq!(detect_url_kind("ééé"), TextKind::Text); // 6 byte
+        assert_eq!(detect_url_kind("éééé"), TextKind::Text); // 8 byte
     }
 
     // RFC 0002 regression: URL için `text_title` tam URL değil scheme://host
