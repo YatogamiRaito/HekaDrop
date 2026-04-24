@@ -125,6 +125,16 @@ impl RateLimiter {
         q.push_back(now);
         false
     }
+
+    /// Bu IP için kaydedilmiş son timestamp'i siler. Trusted hash doğrulandıktan
+    /// sonra geriye-dönük muafiyet uygulamak için kullanılır (gate'de hash yoktu,
+    /// PairedKey sonrası kanıt geldi → sayacı düzelt). Issue #17.
+    pub fn forget_most_recent(&self, ip: IpAddr) {
+        let mut windows = self.windows.write();
+        if let Some(q) = windows.get_mut(&ip) {
+            q.pop_back();
+        }
+    }
 }
 
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();

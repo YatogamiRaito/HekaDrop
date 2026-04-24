@@ -147,6 +147,14 @@ fn main() {
 
     state::init(settings);
 
+    // Issue #17: startup'ta süresi dolmuş trust kayıtlarını temizle. Legacy
+    // kayıtlar (epoch>0) 90 gün soft-sunset; hash kayıtları `trust_ttl_secs`
+    // (default 7 gün). `trusted_at_epoch == 0` v0.5 upgrade'leri korunur.
+    let pruned = state::get().settings.write().prune_expired();
+    if pruned > 0 {
+        tracing::info!("süresi dolmuş trust kaydı temizlendi: {}", pruned);
+    }
+
     // Tokio runtime ve async thread: kritik init. Runtime build başarısız
     // olursa protokol işleyemez — fatal dialog + exit. Thread spawn hatası
     // aynı sınıfta (çekirdek işçi thread yok → HekaDrop boş pencereden ibaret

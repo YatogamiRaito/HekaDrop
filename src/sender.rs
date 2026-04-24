@@ -35,7 +35,7 @@ use crate::sharing::nearby::{
 };
 use crate::state::{self, ProgressState};
 use crate::ukey2;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use bytes::Bytes;
 use prost::Message;
 use rand::RngCore;
@@ -674,7 +674,7 @@ fn wrap_bytes_payload_transfer(
                 payload_chunk: Some(PayloadChunk {
                     offset: Some(offset),
                     flags: Some(flags),
-                    body: Some(body),
+                    body: Some(body.into()),
                     ..Default::default()
                 }),
                 ..Default::default()

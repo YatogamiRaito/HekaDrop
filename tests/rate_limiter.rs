@@ -1,9 +1,11 @@
 //! Rate limiter — sliding window IP-bazlı bağlantı limit'i.
 //!
 //! Bu test `src/state.rs::RateLimiter` davranışını bağımsız bir mock üzerinden
-//! doğrular. Kritik memory kuralı: **trusted cihazlar rate limit dışıdır** —
-//! üst seviye çağrı `Settings::is_trusted()` kontrol ederse `check_and_record`
-//! hiç çağrılmaz. Testler bu kontratı explicit olarak korur.
+//! doğrular. Issue #17 öncesi kontrat: "trusted cihazlar gate'de
+//! `check_and_record`'ı hiç çağırmaz". Issue #17 sonrası: gate'de herkes
+//! `check_and_record`'a gider; hash-doğrulanmış trusted peer'lar için
+//! `forget_most_recent` ile post-hoc muafiyet verilir. Testler yeni
+//! kontratı explicit olarak korur.
 
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
@@ -149,66 +151,68 @@ fn sliding_window_kaydirimi_yari_window() {
     assert!(rl.check_and_record_at(p, t61));
 }
 
-/// Kritik memory kuralı: trusted cihazlar rate limit'ten MUAF. Üst seviye
-/// policy `Settings::is_trusted()` kontrol eder; trusted ise `check_and_record`
-/// hiç çağrılmaz. Bu test, doğru akışın mock üzerinde gözlemlenebilir olduğunu
-/// doğrular: trusted yol rate_limiter'ı hiç touch etmez.
+/// Issue #17 kontratı: gate'de HERKES `check_and_record` çağırır; trusted
+/// peer muafiyeti yalnız hash doğrulandıktan sonra `forget_most_recent` ile
+/// geriye-dönük verilir. Bu test güncel kontratı pin'liyor.
+///
+/// Eski test ("gate'de trusted bypass, check_and_record hiç çağrılmaz")
+/// Issue #17 öncesi davranıştı — peer-controlled (name, id) spoof'a izin
+/// verdiği için kaldırıldı.
 #[test]
-fn trusted_cihaz_rate_limiter_hic_cagrilmamali() {
-    // Mock: counter ile kaç kez rate_limiter çağrıldığını say.
+fn hash_verified_peer_gate_sonrasi_forget_ile_muafiyet() {
+    // Mock akış:
+    //   1. Gate: check_and_record — herkes çağırır (bypass yok).
+    //   2. PairedKeyEncryption sonrası: hash doğrulandıysa
+    //      forget_most_recent çağrılır.
     struct PolicyCtx {
-        trusted: Vec<String>,
-        rate_limiter_calls: std::cell::Cell<usize>,
+        trusted_hashes: std::collections::HashSet<[u8; 6]>,
+        check_calls: std::cell::Cell<usize>,
+        forget_calls: std::cell::Cell<usize>,
     }
     impl PolicyCtx {
-        fn is_trusted(&self, name: &str) -> bool {
-            self.trusted.iter().any(|n| n == name)
-        }
-        /// `incoming_device_name` → trusted ise rate limiter'a hiç dokunma.
-        /// Return: bağlantı kabul edilmeli mi?
-        fn should_accept(&self, device_name: &str, _ip: IpAddr) -> bool {
-            if self.is_trusted(device_name) {
-                // Trusted: rate limiter'a erişim YOK. Direkt kabul.
-                return true;
+        fn flow(&self, peer_hash: Option<[u8; 6]>) {
+            // Gate
+            self.check_calls.set(self.check_calls.get() + 1);
+            // Post-hoc
+            if let Some(h) = peer_hash {
+                if self.trusted_hashes.contains(&h) {
+                    self.forget_calls.set(self.forget_calls.get() + 1);
+                }
             }
-            // Untrusted: normal akış (bu testte rate_limit'i "hep geç" sayacağız
-            // ama asıl aranan çağrı sayısının değişmesi).
-            self.rate_limiter_calls
-                .set(self.rate_limiter_calls.get() + 1);
-            true
         }
     }
 
+    let hash = [0x42u8; 6];
     let ctx = PolicyCtx {
-        trusted: vec!["Ebubekir-iPhone".to_string()],
-        rate_limiter_calls: std::cell::Cell::new(0),
+        trusted_hashes: [hash].into_iter().collect(),
+        check_calls: std::cell::Cell::new(0),
+        forget_calls: std::cell::Cell::new(0),
     };
-    let p = ip(10, 0, 0, 9);
 
-    // 50 trusted istek — rate limiter sayacı 0 kalmalı
+    // 50 trusted (hash-verified) istek — her biri check, her biri forget.
     for _ in 0..50 {
-        assert!(ctx.should_accept("Ebubekir-iPhone", p));
+        ctx.flow(Some(hash));
     }
     assert_eq!(
-        ctx.rate_limiter_calls.get(),
-        0,
-        "trusted cihaz için rate limiter çağrılmamalı (MEMORY kuralı)"
+        ctx.check_calls.get(),
+        50,
+        "Issue #17: gate'de trusted da olsa check_and_record çağrılır"
     );
+    assert_eq!(ctx.forget_calls.get(), 50, "her trusted handshake forget");
 
-    // Karışık: 3 trusted + 2 untrusted → sayaç 2 olmalı
+    // Hash yok (legacy spoof ya da spec dışı peer) — forget çağrılmaz.
     for _ in 0..3 {
-        ctx.should_accept("Ebubekir-iPhone", p);
+        ctx.flow(None);
     }
-    for _ in 0..2 {
-        ctx.should_accept("YabanciCihaz", p);
-    }
-    assert_eq!(ctx.rate_limiter_calls.get(), 2);
+    assert_eq!(ctx.check_calls.get(), 53);
+    assert_eq!(ctx.forget_calls.get(), 50, "hash yok → forget yok");
 }
 
 #[test]
-fn trusted_cihaz_sonsuz_baglanti_yapabilir() {
-    // Trusted akış rate_limiter kullanmasa bile, untrusted akışın kendi limit'i
-    // bağımsız kalmalı. İki akışın izole olduğunu doğrula.
+fn hash_verified_peer_sonsuz_baglanti_yapabilir() {
+    // Hash-verified peer her handshake'de check + forget çekildiği için
+    // queue sürekli 0'a dönüyor → sürekli bağlantı yapabilir. Untrusted
+    // akış bağımsız kalmalı.
     let rl = RateLimiter::default_prod();
     let untrusted_ip = ip(10, 0, 0, 100);
     let trusted_ip = ip(10, 0, 0, 99);
@@ -220,10 +224,17 @@ fn trusted_cihaz_sonsuz_baglanti_yapabilir() {
     }
     assert!(rl.check_and_record_at(untrusted_ip, t), "untrusted dolu");
 
-    // Trusted flow hiç rate_limiter'a dokunmasa bile, trusted IP'nin kendi
-    // queue'su bomboş kalır. İleride fallback gerekirse de kabul edilmeli.
-    let before = rl.windows.read().get(&trusted_ip).cloned();
-    assert!(before.is_none(), "trusted IP hiç kayıt almamalı");
+    // Trusted IP: gate kaydeder (1 kayıt) → post-hoc forget simülasyonu.
+    // Burada sadece gate davranışını gösteriyoruz — forget prod-level
+    // `src/state.rs::RateLimiter::forget_most_recent` tarafından test
+    // ediliyor (tests/trust_hijack.rs::issue_17_rate_limit modülü).
+    assert!(!rl.check_and_record_at(trusted_ip, t));
+    let len = rl.windows.read().get(&trusted_ip).map(|q| q.len());
+    assert_eq!(
+        len,
+        Some(1),
+        "gate kayıt bıraktı (post-hoc forget ile silinecek)"
+    );
 }
 
 #[test]
