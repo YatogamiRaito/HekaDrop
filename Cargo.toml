@@ -15,7 +15,7 @@ categories = ["network-programming", "command-line-utilities"]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 bytes = "1"
-prost = "0.14"
+prost = { version = "0.14", features = ["std"] }
 mdns-sd = "0.19"
 sha2 = "0.10"
 hex = "0.4"
@@ -91,10 +91,11 @@ name = "crypto"
 harness = false
 
 [profile.release]
-lto = "thin"
+opt-level = "z"
+lto = true
 codegen-units = 1
 strip = true
-debug = "full"
+debug = false
 split-debuginfo = "packed"
 
 # cargo-deb (Linux .deb paketleme) için metadata.
