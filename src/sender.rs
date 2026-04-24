@@ -70,7 +70,10 @@ struct PlannedFile {
 
 pub async fn send(req: SendRequest) -> Result<()> {
     if req.files.is_empty() {
-        return Err(HekaError::EmptyPayload.into());
+        // Not: "hiç dosya yok" ile "toplam 0 bayt dosya var" semantik olarak
+        // farklı — `EmptyPayload` ikincisini anlatır, UI mesajı yanıltıcı
+        // olur. Ayrı variant ile doğru i18n/log eşlemesi (Copilot review).
+        return Err(HekaError::NoFilesSelected.into());
     }
 
     let mut plans: Vec<PlannedFile> = Vec::with_capacity(req.files.len());
@@ -390,7 +393,7 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 pub async fn send_text(req: SendTextRequest) -> Result<()> {
     let text = req.text;
     if text.is_empty() {
-        bail!("boş metin gönderilemez");
+        return Err(HekaError::EmptyPayload.into());
     }
     // `as i64` cast i64::MAX üstü uzunlukta wrap/negatif üretir; protokol
     // field'ları (`size`, `total_size`) bozulur. Pratikte bir String bu boyuta
@@ -420,11 +423,14 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     // SYN retry bekletmesin, iptal anında çıkabilsin.
     let mut socket = tokio::select! {
         biased;
-        _ = cancel_token.cancelled() => bail!("kullanıcı aktarımı iptal etti"),
+        _ = cancel_token.cancelled() => return Err(HekaError::UserCancelled.into()),
         res = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr)) => {
             match res {
                 Ok(r) => r?,
-                Err(_) => bail!("bağlantı zaman aşımına uğradı ({} sn): {}", CONNECT_TIMEOUT.as_secs(), addr),
+                Err(_) => return Err(HekaError::ConnectTimeout {
+                    secs: CONNECT_TIMEOUT.as_secs(),
+                    addr,
+                }.into()),
             }
         }
     };
@@ -471,7 +477,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                 connection::send_sharing_frame(&mut socket, &mut ctx, &cancel).await.ok();
                 connection::send_disconnection(&mut socket, &mut ctx).await.ok();
                 state::set_progress(ProgressState::Idle);
-                bail!("kullanıcı aktarımı iptal etti");
+                return Err(HekaError::UserCancelled.into());
             }
             res = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT) => res?,
         };
@@ -531,11 +537,11 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                             connection::send_disconnection(&mut socket, &mut ctx)
                                 .await
                                 .ok();
-                            bail!(
-                                "Peer metin gönderimini reddetti (status={}). Session fingerprint: {}",
+                            return Err(HekaError::PeerRejected {
                                 status,
-                                crate::crypto::session_fingerprint(&keys.auth_key)
-                            );
+                                fingerprint: crate::crypto::session_fingerprint(&keys.auth_key),
+                            }
+                            .into());
                         }
                         send_text_bytes(
                             &mut socket,
@@ -578,7 +584,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                         return Ok(());
                     }
                     Some(sh_v1::FrameType::Cancel) => {
-                        bail!("Peer aktarımı iptal etti");
+                        return Err(HekaError::PeerCancelled.into());
                     }
                     _ => {}
                 }
@@ -597,7 +603,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
             }
             Some(v1_frame::FrameType::Disconnection) => {
                 warn!("[sender] peer disconnect (metin)");
-                bail!("peer beklenmedik biçimde bağlantıyı kesti");
+                return Err(HekaError::PeerDisconnected.into());
             }
             _ => {}
         }
@@ -623,7 +629,7 @@ async fn send_text_bytes(
     let mut offset: usize = 0;
     while offset < data.len() {
         if cancel.is_cancelled() {
-            bail!("metin chunk gönderim sırasında iptal");
+            return Err(HekaError::CancelledDuringChunk.into());
         }
         let end = (offset + CHUNK_SIZE).min(data.len());
         let body = data[offset..end].to_vec();

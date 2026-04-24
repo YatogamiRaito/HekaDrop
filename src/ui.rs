@@ -125,16 +125,16 @@ fn prompt_accept_blocking(
             let s = String::from_utf8_lossy(&o.stdout);
             // osascript çıktısı: "button returned:<LABEL>, gave up:false"
             // formatındadır. Önce "button returned:" prefix'li satırı tam
-            // olarak ayıklayıp, label'ı virgülün soluna kadar al; sonra
-            // `==` ile karşılaştır. Böylece "Kabul" ⊂ "Kabul + güven"
-            // gibi substring çakışmaları elimine edilir.
+            // olarak ayıklayıp, sonra standart ", gave up:false" suffix'ini
+            // `trim_end_matches` ile temizle. Label içinde virgül olabilir
+            // (lokalize "Kabul, ve Devam Et" gibi) — `split(',')` kullansak
+            // bozulurdu. `==` ile karşılaştırma substring çakışmalarını
+            // ("Kabul" ⊂ "Kabul + güven") elimine eder.
             let result_line = s
                 .lines()
                 .find_map(|l| l.strip_prefix("button returned:"))
                 .unwrap_or("");
-            // osascript bazen tek satırda "button returned:X, gave up:false"
-            // verir; virgülün solu gerçek label'dır.
-            let label = result_line.split(',').next().unwrap_or("").trim();
+            let label = result_line.trim_end_matches(", gave up:false").trim();
             if label == btn_trust {
                 AcceptResult::AcceptAndTrust
             } else if label == btn_accept {
@@ -1027,7 +1027,14 @@ pub fn send_progress_notify(device: &str, file: &str) {
 
 #[cfg(target_os = "macos")]
 fn escape_applescript(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    // AppleScript string literal'ında raw newline (`\n`) syntax error verir
+    // ve `display dialog` penceresi açılmaz. `sanitize_display_text` mesaj
+    // gövdesinde `\n`'leri koruduğu için burada `\r` (AppleScript'in
+    // satır sonu karakteri) ile değiştiriyoruz — dialog içinde çok satırlı
+    // metin böylece doğru render olur.
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\r")
 }
 
 /// zenity `--extra-button` flag'ini destekliyor mu? Versiyon 3.0+'da var.

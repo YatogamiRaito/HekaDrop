@@ -547,21 +547,15 @@ impl Settings {
     /// **en son** snapshot diske yazılır. Sessiz (rapid toggle yok) bir süreçte
     /// tek `save_debounced()` çağrısı tek atomik write üretir.
     ///
-    /// `tokio::Handle::try_current()` çalışmıyorsa (test/no-runtime bağlamı)
-    /// senkron `save()`'e düşer — davranış semantik olarak aynı, sadece coalesce
-    /// yok.
-    pub fn save_debounced(&self) {
+    /// Debounce task'ı her zaman çağıran tarafından sağlanan Tokio runtime
+    /// handle'ı üzerinde spawn edilir; UI/event-loop thread'i runtime dışında
+    /// olsa bile coalesce davranışı korunur. Önceden `Handle::try_current()`
+    /// kullanılıyordu — fakat tao event-loop thread'i tokio runtime'a bağlı
+    /// olmadığından her çağrı `Err(_)` dalına düşüp sync `save()`'e iniyordu
+    /// ve debounce fiilen devre dışı kalıyordu.
+    pub fn save_debounced(&self, handle: &tokio::runtime::Handle) {
         let snap = self.clone();
-        let handle = match tokio::runtime::Handle::try_current() {
-            Ok(h) => h,
-            Err(_) => {
-                // Runtime yoksa coalesce mümkün değil — doğrudan yaz, hata log.
-                if let Err(e) = snap.save() {
-                    tracing::warn!("settings save_debounced fallback: {}", e);
-                }
-                return;
-            }
-        };
+        let handle = handle.clone();
         let mut slot = DEBOUNCE_TASK.lock();
         // Aynı window içindeki önceki pending task'ı iptal et — son çağrı kazanır.
         if let Some(prev) = slot.take() {

@@ -31,6 +31,28 @@ use tracing::warn;
 /// syscall + wakeup overhead rapor etti; sync std::io + BufWriter bunu eler.
 const FILE_WRITE_BUF_CAPACITY: usize = 128 * 1024;
 
+/// Sync bir closure'ı runtime flavor'una göre çalıştırır:
+/// - **MultiThread runtime** (prod, `#[tokio::test(flavor = "multi_thread")]`):
+///   [`tokio::task::block_in_place`] sinyaliyle sar — tokio bu worker'ı
+///   "blocking" olarak işaretler, park halindeki async task'ları başka
+///   worker'a taşır. Böylece yavaş disk (iCloud Drive, SMB/NFS mount,
+///   yavaş USB) syscall'ları network read / UI task'ları geciktirmez.
+/// - **CurrentThread runtime** (default `#[tokio::test]`): `block_in_place`
+///   çağrısı panik atar; closure'ı direkt çağırırız. Tek worker'ı zaten
+///   tutuyoruz, kaybedecek diğer worker yok.
+/// - **Runtime yok** (senkron çağrı path'i): direkt çağır.
+#[inline]
+fn block_in_place_if_multi<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    match Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == RuntimeFlavor::MultiThread => tokio::task::block_in_place(f),
+        _ => f(),
+    }
+}
+
 /// Bir chunk üzerinden geçmişken `last_chunk_at`'in ne kadar eskiyebileceği.
 ///
 /// 120 saniye = Quick Share protokolünün makul en yavaş transfer hızı bile
@@ -66,9 +88,11 @@ struct BytesBuf {
 /// (`tokio::fs`) sürümü chunk başına ~5-10 µs tokio task-pool + syscall
 /// overhead getiriyordu; 512 KiB chunk'lar zaten kısa süreli blocking I/O'ya
 /// izin verir ve 128 KiB BufWriter tamponu syscall sayısını azaltır.
-/// Dikkat: `ingest_file` hâlâ `async fn` — sync write runtime worker'ını
-/// kısa bir süre blocke eder. Ölçülen yük düşük ama çok daha yavaş diskte
-/// (ör. ağ diski) gerekirse [`tokio::task::spawn_blocking`] sarmalamaya geç.
+/// Sync I/O çağrıları `ingest_file` içinde [`block_in_place_if_multi`] ile
+/// sarılır — multi-thread runtime'da tokio'ya "blocking" sinyali verilir ki
+/// yavaş disk (iCloud Drive, SMB/NFS, yavaş USB) runtime worker'ını tutmasın;
+/// current_thread runtime'da (unit test) `block_in_place` panik edeceği için
+/// sync çağrı direkt yapılır.
 struct FileSink {
     writer: BufWriter<File>,
     path: PathBuf,
@@ -376,7 +400,12 @@ impl PayloadAssembler {
                 }
                 .into());
             }
-            sink.writer.write_all(body).context("disk yazma")?;
+            // Sync I/O'yu multi-thread runtime'da tokio'ya "blocking" olarak
+            // işaretle — iCloud Drive / SMB / yavaş USB'de write_all 10-100 ms
+            // bloklayabilir; bu sırada diğer async task'lar başka worker'a
+            // taşınsın. Current-thread runtime'da (unit test) fallback: direkt
+            // çağrı — block_in_place current_thread'de panik eder.
+            block_in_place_if_multi(|| sink.writer.write_all(body)).context("disk yazma")?;
             sink.hasher.update(body);
             sink.written = new_written;
             sink.last_chunk_at = Instant::now();
@@ -404,16 +433,18 @@ impl PayloadAssembler {
             // gönderebiliriz ama disk'te veri henüz yok → crash durumunda
             // dosya boş/yarım kalır. Hatayı propagate et ki user retry'la
             // anlamlı bir sonuç alabilsin.
-            sink.writer.flush().with_context(|| {
+            //
+            // flush + sync_all tek blokta: ikisi de blocking syscall
+            // (fsync özellikle yavaş disklerde 100+ ms olabilir) — iki ayrı
+            // block_in_place yerine tek sinyalle tokio'ya yük bildir.
+            let flush_sync_res: std::io::Result<()> = block_in_place_if_multi(|| {
+                sink.writer.flush()?;
+                sink.writer.get_ref().sync_all()?;
+                Ok(())
+            });
+            flush_sync_res.with_context(|| {
                 format!(
-                    "BufWriter flush başarısız: id={} path={}",
-                    id,
-                    sink.path.display()
-                )
-            })?;
-            sink.writer.get_ref().sync_all().with_context(|| {
-                format!(
-                    "dosya senkronize edilemedi: id={} path={}",
+                    "dosya finalize edilemedi (flush/fsync): id={} path={}",
                     id,
                     sink.path.display()
                 )

@@ -10,6 +10,7 @@ homepage = "https://github.com/YatogamiRaito/HekaDrop"
 readme = "README.md"
 keywords = ["quick-share", "nearby-share", "p2p", "file-transfer", "macos"]
 categories = ["network-programming", "command-line-utilities"]
+rust-version = "1.90"
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time", "fs"] }
@@ -95,7 +96,11 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-debug = false
+# debug = 1 → line tables only (minimal debuginfo). Windows release build'inin
+# .pdb üretmesi için gerekli; `strip = true` ile symbol table'dan arındırılsa da
+# `split-debuginfo = "packed"` dbg info'yu ayrı pack'e alır ve crash/stack trace
+# kalitesini yükseltir. Binary boyut maliyeti ~200 KB.
+debug = 1
 split-debuginfo = "packed"
 
 # cargo-deb (Linux .deb paketleme) için metadata.
