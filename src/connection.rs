@@ -9,6 +9,7 @@
 //!   6) Plain ConnectionResponse (Accept)             (us   → peer)
 //!   7) Şifreli loop — tüm sonraki frame'ler SecureMessage katmanından geçer.
 
+use crate::error::HekaError;
 use crate::frame;
 use crate::location::nearby::connections::{
     os_info::OsType,
@@ -28,7 +29,7 @@ use crate::sharing::nearby::{
 use crate::state::{self, HistoryItem, ProgressState};
 use crate::ui;
 use crate::ukey2;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use prost::Message;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -96,30 +97,42 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                 "[{}] rate limit aşıldı (60 sn pencerede >10 bağlantı), reddediliyor",
                 peer
             );
-            return Err(anyhow!(
-                "rate limit: aynı IP'den çok fazla bağlantı denemesi"
-            ));
+            return Err(HekaError::RateLimited(peer.to_string()).into());
         }
     } else {
         info!("[{}] trusted cihaz — rate limit uygulanmadı", peer);
     }
 
-    // 2) UKEY2 ClientInit
-    let ci = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
-        .await
-        .context("Ukey2ClientInit okunamadı")?;
-    let state = ukey2::process_client_init(&ci).context("ClientInit")?;
-
-    // 3) UKEY2 ServerInit
-    frame::write_frame(&mut socket, &state.server_init_bytes)
-        .await
-        .context("ServerInit yazılamadı")?;
-
-    // 4) UKEY2 ClientFinished
-    let cf = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
-        .await
-        .context("Ukey2ClientFinished okunamadı")?;
-    let keys = ukey2::process_client_finish(&cf, &state).context("ClientFinish")?;
+    // 2-4) UKEY2 handshake. Bir async bloğa sarıp `?`'lerin tüm adımları
+    // kapsamasını garantiliyoruz; hata durumunda downcast zinciriyle
+    // kullanıcıya uygun i18n key (PIN / timeout / disconnect / insecure)
+    // tek noktadan gösterilir (Dalga 2 UX: "sessiz sonlandırma" yerine
+    // anlaşılır bildirim).
+    let handshake: Result<(ukey2::ServerInitResult, ukey2::DerivedKeys)> = async {
+        let ci = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
+            .await
+            .context("Ukey2ClientInit okunamadı")?;
+        let st = ukey2::process_client_init(&ci).context("ClientInit")?;
+        frame::write_frame(&mut socket, &st.server_init_bytes)
+            .await
+            .context("ServerInit yazılamadı")?;
+        let cf = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
+            .await
+            .context("Ukey2ClientFinished okunamadı")?;
+        let k = ukey2::process_client_finish(&cf, &st).context("ClientFinish")?;
+        Ok((st, k))
+    }
+    .await;
+    let (_state, keys) = match handshake {
+        Ok(v) => v,
+        Err(e) => {
+            let key = classify_handshake_error(&e);
+            warn!("[{}] UKEY2 handshake başarısız: {:#}", peer, e);
+            ui::notify(crate::i18n::t("notify.app_name"), crate::i18n::t(key));
+            state::set_progress(ProgressState::Idle);
+            return Err(e);
+        }
+    };
     // SECURITY: PIN clear-text log'a yazılmaz. 4-basamaklı PIN'in hash'i
     // brute-force olur; onun yerine 256-bit auth_key fingerprint'i
     // kullanıyoruz (bkz. `session_fingerprint`).
@@ -520,11 +533,11 @@ async fn handle_sharing_frame(
             // maliyeti yaratabilir. Quick Share pratikte tek aktarımda
             // yüzlerce dosya yeterli — 1000 cömert üst sınır.
             if file_count > 1000 || text_count > 64 {
-                bail!(
-                    "Introduction cardinality flood: {} dosya, {} metin (limit 1000/64)",
-                    file_count,
-                    text_count
-                );
+                return Err(HekaError::IntroductionFlood {
+                    files: file_count,
+                    texts: text_count,
+                }
+                .into());
             }
 
             info!(
@@ -567,10 +580,7 @@ async fn handle_sharing_frame(
                             }
                         }
                         send_sharing_frame(socket, ctx, &build_sharing_cancel()).await?;
-                        bail!(
-                            "FileMetadata.size absürt büyük: {} bayt (>1 TiB limit)",
-                            raw_size
-                        );
+                        return Err(HekaError::PayloadSizeAbsurd(raw_size).into());
                     }
                 };
                 summaries.push(ui::FileSummary {
@@ -634,6 +644,17 @@ async fn handle_sharing_frame(
 
             let auto_accept = state::get().settings.read().auto_accept;
 
+            // Dalga 3 UX: Peer hash göndermiş olduğu halde hash kayıtta yoksa,
+            // `(name, id)` legacy kaydı varsa — bu "v0.5 → v0.6 migration"
+            // senaryosudur. Dialog açılmadan önce kullanıcıya nedenini
+            // açıklayan bir bildirim gönder; aksi halde tanıdık cihaz için
+            // birden dialog görünce "güveni zedelenmiş mi?" tereddüdü doğar.
+            let migration_hint = peer_secret_id_hash.is_some() && !trusted && {
+                let st = state::get();
+                let s = st.settings.read();
+                s.is_trusted_legacy(remote_name, remote_id)
+            };
+
             let decision = if trusted {
                 info!("[{}] trusted cihaz → otomatik kabul", peer);
                 // Sliding-window TTL: aktif kullanım varsa timestamp'i yenile.
@@ -651,6 +672,16 @@ async fn handle_sharing_frame(
                 info!("[{}] settings.auto_accept=true → otomatik kabul", peer);
                 ui::AcceptResult::Accept
             } else {
+                if migration_hint {
+                    info!(
+                        "[{}] legacy → hash migration dialog'u gösteriliyor: {}",
+                        peer, remote_name
+                    );
+                    ui::notify(
+                        crate::i18n::t("trust.migration.title"),
+                        &crate::i18n::tf("trust.migration.body", &[remote_name, pin_code]),
+                    );
+                }
                 ui::prompt_accept(remote_name, pin_code, &summaries, text_count)
                     .await
                     .unwrap_or(ui::AcceptResult::Reject)
@@ -932,7 +963,7 @@ fn unique_downloads_path(name: &str) -> Result<PathBuf> {
         }
         n += 1;
         if n > 10_000 {
-            bail!("uygun dosya adı bulunamadı (10k deneme)");
+            return Err(HekaError::FileNameExhausted.into());
         }
     }
 }
@@ -1132,8 +1163,10 @@ pub(crate) async fn send_sharing_frame(
     let payload_id: i64 = (rand::thread_rng().next_u64() >> 1) as i64;
     let total = body.len() as i64;
 
-    // İlk chunk: tam gövde, offset=0, flags=0
-    let first = wrap_payload_transfer(payload_id, total, 0, 0, body.clone());
+    // İlk chunk: tam gövde, offset=0, flags=0.
+    // `body` bu satırdan sonra kullanılmıyor → clone yerine move (alokasyon
+    // yarıya iner; küçük frame'lerde önemli değil ama hot path hijyeni).
+    let first = wrap_payload_transfer(payload_id, total, 0, 0, body);
     let enc1 = ctx.encrypt(&first.encode_to_vec())?;
     frame::write_frame(socket, &enc1).await?;
 
@@ -1192,6 +1225,51 @@ pub(crate) fn build_connection_response_accept() -> OfflineFrame {
             ..Default::default()
         }),
     }
+}
+
+/// UKEY2 handshake sırasında oluşan hatayı kullanıcıya gösterilecek
+/// i18n key'ine sınıflandırır. Downcast önceliği: önce
+/// [`crate::error::HekaError`] variant'ları (tip-safe ayrım), sonra
+/// `std::io::Error` (generic I/O). String-match son çare değil — düşmüyoruz,
+/// fallback kasıtlı olarak `err.pin_mismatch`: UKEY2 handshake spec'inde
+/// handshake tamamlansa ama ClientFinished commitment reddedilse bu noktada
+/// `Ukey2CommitmentMismatch` downcast yakalar; bilinmeyen generic hata
+/// kullanıcı için de pratikte "PIN eşleşmedi" olarak yorumlanır (en sık neden).
+fn classify_handshake_error(e: &anyhow::Error) -> &'static str {
+    fn map_io_error(io: &std::io::Error) -> &'static str {
+        use std::io::ErrorKind::*;
+        match io.kind() {
+            TimedOut => "err.peer_timeout",
+            ConnectionReset | ConnectionAborted | BrokenPipe | UnexpectedEof | NotConnected => {
+                "err.peer_disconnected"
+            }
+            _ => "err.peer_disconnected",
+        }
+    }
+    // HekaError::Io(#[from] std::io::Error) thiserror `source()` zinciri
+    // ürettiği için iç `io::Error` aşağıdaki generic io downcast dalında
+    // yakalanır — HekaError::Io özel bir kolu gereksiz (PR #79 gemini review).
+    for cause in e.chain() {
+        if let Some(he) = cause.downcast_ref::<HekaError>() {
+            match he {
+                HekaError::ReadTimeout(_) => return "err.peer_timeout",
+                HekaError::UnexpectedEof | HekaError::PeerDisconnected => {
+                    return "err.peer_disconnected"
+                }
+                HekaError::Ukey2CommitmentMismatch => return "err.pin_mismatch",
+                HekaError::Ukey2CipherDowngrade(_)
+                | HekaError::Ukey2VersionDowngrade(_)
+                | HekaError::Ukey2(_)
+                | HekaError::CipherCommitmentFlood(_)
+                | HekaError::ProtocolState(_) => return "err.handshake_insecure",
+                _ => {}
+            }
+        }
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            return map_io_error(io);
+        }
+    }
+    "err.pin_mismatch"
 }
 
 fn parse_remote_name(endpoint_info: &[u8]) -> Option<String> {
@@ -1311,12 +1389,20 @@ mod tests {
         assert_eq!(cleaned, 2, "iki yarım dosya temizlenmeliydi");
         assert!(names.is_empty(), "pending_names sıfırlanmalı");
         assert!(texts.is_empty(), "pending_texts sıfırlanmalı");
-        // NOT: `register_file_destination` çağrılmış ama hiç chunk gelmemiş dosyalar
-        // için `assembler.cancel(id)` yalnızca haritadan kaldırır — diskte
-        // file yoktur (çünkü biz elle oluşturduk). Burada test dosyalarını
-        // temizlemek test hijyeni için:
-        std::fs::remove_file(&p1).ok();
-        std::fs::remove_file(&p2).ok();
+        // Regresyon (Copilot review): `drain_pending` yalnız haritaları
+        // boşaltmakla yetinmemeli — `assembler.cancel(id)` üzerinden kayıtlı
+        // hedef dosyayı diskten de silmeli. Aksi halde reject / cancel
+        // yolunda indirme klasöründe 0-bayt placeholder'lar birikir.
+        assert!(
+            !p1.exists(),
+            "drain_pending dosyayı silmemiş: {}",
+            p1.display()
+        );
+        assert!(
+            !p2.exists(),
+            "drain_pending dosyayı silmemiş: {}",
+            p2.display()
+        );
     }
 
     #[tokio::test]

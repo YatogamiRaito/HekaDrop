@@ -74,6 +74,18 @@ impl DeviceIdentity {
             }
             let mut key = [0u8; 32];
             key.copy_from_slice(&buf);
+
+            // SECURITY (PR #76 review — gemini): v0.6 öncesi install'lar
+            // hardening'den geçmemiş olabilir. Mevcut identity.key dosyalarını
+            // da her açılışta ACL sertleştirmeden geçiriyoruz ki eski kurulumlar
+            // da güvenli hale gelsin. Hata fatal değil — warn log + devam.
+            // (Windows dışı target'larda no-op, ucuz.)
+            if let Err(e) = harden_identity_file_acl(path) {
+                tracing::warn!(
+                    "identity.key mevcut ACL sertleştirme başarısız: {e} (devam ediliyor)"
+                );
+            }
+
             return Ok(Self { long_term_key: key });
         }
 
@@ -167,21 +179,32 @@ pub(crate) fn identity_path() -> PathBuf {
 /// username/SID hard-code etmekten kaçınırız, user profilinde dosya zaten
 /// current user'a ait oluyor.
 ///
+/// **PATH hijack koruması (PR #76 review):** `icacls.exe` PATH'ten değil,
+/// `%SystemRoot%\System32\icacls.exe` mutlak yolundan çağrılır.
+///
 /// **Test:** Windows CI yok; manuel doğrulama `icacls <path>` çıktısının
 /// yalnız `OWNER RIGHTS:(F)` ACE'si içerdiğini göstermeli.
 #[cfg(target_os = "windows")]
 fn harden_identity_file_acl(path: &std::path::Path) -> Result<()> {
     use std::process::Command;
 
-    // `icacls` PATH'te olmalı (System32 varsayılan olarak PATH'te) — sistem
-    // PATH'i sabotaj edilmişse fallback absolute path. Absolute path tercihen
-    // %SystemRoot%\System32\icacls.exe; %SystemRoot% tipik olarak C:\Windows.
-    let output = Command::new("icacls")
+    // SECURITY (PR #76 review — Copilot + gemini): PATH araması yapmayız.
+    // `Command::new("icacls")` cwd/PATH'te sahte `icacls.exe` varsa onu
+    // çağırabilirdi (PATH hijack). `icacls` Windows built-in aracıdır —
+    // doğrudan `%SystemRoot%\System32\icacls.exe` mutlak yolundan çağırırız.
+    // `%SystemRoot%` env yoksa tipik varsayılan `C:\Windows` fallback.
+    let icacls_path = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join("icacls.exe");
+
+    let output = Command::new(&icacls_path)
         .arg(path)
         .arg("/inheritance:r")
         .args(["/grant:r", "*S-1-3-4:(F)"])
         .output()
-        .context("icacls.exe çalıştırılamadı")?;
+        .with_context(|| format!("{} çalıştırılamadı", icacls_path.display()))?;
 
     if !output.status.success() {
         bail!(
