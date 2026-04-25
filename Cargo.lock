@@ -1486,6 +1486,7 @@ dependencies = [
  "cipher",
  "criterion",
  "elliptic-curve",
+ "hekadrop-proto",
  "hex",
  "hkdf",
  "hmac",
@@ -1496,7 +1497,6 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "prost",
- "prost-build",
  "rand",
  "serde",
  "serde_json",
@@ -1513,6 +1513,15 @@ dependencies = [
  "tray-icon",
  "windows",
  "wry",
+]
+
+[[package]]
+name = "hekadrop-proto"
+version = "0.7.0"
+dependencies = [
+ "bytes",
+ "prost",
+ "prost-build",
 ]
 
 [[package]]

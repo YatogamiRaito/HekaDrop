@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/hekadrop-app"]
+members = ["crates/hekadrop-app", "crates/hekadrop-proto"]
 
 [workspace.package]
 version = "0.7.0"

@@ -38,67 +38,12 @@ mod ukey2;
 
 static RUNTIME: OnceLock<Handle> = OnceLock::new();
 
-#[allow(
-    clippy::all,
-    non_snake_case,
-    non_camel_case_types,
-    dead_code,
-    rustdoc::invalid_html_tags,
-    rustdoc::broken_intra_doc_links
-)]
-pub mod securegcm {
-    include!(concat!(env!("OUT_DIR"), "/securegcm.rs"));
-}
-
-#[allow(
-    clippy::all,
-    non_snake_case,
-    non_camel_case_types,
-    dead_code,
-    rustdoc::invalid_html_tags,
-    rustdoc::broken_intra_doc_links
-)]
-pub mod securemessage {
-    include!(concat!(env!("OUT_DIR"), "/securemessage.rs"));
-}
-
-#[allow(
-    clippy::all,
-    non_snake_case,
-    non_camel_case_types,
-    dead_code,
-    rustdoc::invalid_html_tags,
-    rustdoc::broken_intra_doc_links
-)]
-pub mod location {
-    pub mod nearby {
-        pub mod connections {
-            include!(concat!(env!("OUT_DIR"), "/location.nearby.connections.rs"));
-        }
-        pub mod proto {
-            pub mod sharing {
-                include!(concat!(
-                    env!("OUT_DIR"),
-                    "/location.nearby.proto.sharing.rs"
-                ));
-            }
-        }
-    }
-}
-
-#[allow(
-    clippy::all,
-    non_snake_case,
-    non_camel_case_types,
-    dead_code,
-    rustdoc::invalid_html_tags,
-    rustdoc::broken_intra_doc_links
-)]
-pub mod sharing {
-    pub mod nearby {
-        include!(concat!(env!("OUT_DIR"), "/sharing.nearby.rs"));
-    }
-}
+// RFC-0001 §5 Adım 2: protobuf bindings `hekadrop-proto` crate'inden
+// re-export ediliyor. `crate::securegcm::...`, `crate::location::...`,
+// `crate::sharing::...`, `crate::securemessage::...` çağrıları kod tabanı
+// boyunca korunur (yüzlerce import noktası dokunulmaz). Dual-include
+// borcu (lib.rs + main.rs aynı bloku yineliyordu) bu adımla kapandı.
+pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
 
 // Workspace refactor (v0.7 Step 1): resources/ workspace root'ta kaldı; app
 // crate'i crates/hekadrop-app/ altına taşındı → relative path iki seviye yukarı.

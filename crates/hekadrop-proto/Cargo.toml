@@ -1,0 +1,22 @@
+[package]
+name = "hekadrop-proto"
+description = "Quick Share / Nearby Connections protobuf bindings — internal proto crate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+# Bu crate yalnızca prost-üretilmiş wire format tipleridir; runtime mantığı yok.
+# RFC-0001 §5 Adım 2: dual-include teknik borcu (lib.rs + main.rs aynı bloku
+# yineliyordu) bu crate ile tekilleşti.
+
+[dependencies]
+prost = { version = "0.14", features = ["std"] }
+bytes = "1"
+
+[build-dependencies]
+prost-build = "0.14"
