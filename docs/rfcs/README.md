@@ -132,7 +132,10 @@ Bu dizin otomatik güncellenmez. Yeni RFC eklendiğinde aşağıya ekleyin.
 | # | Başlık | Durum | Sürüm |
 |---|---|---|---|
 | 0001 | Workspace refactor | Draft | v0.7.0 |
-| 0002 | URL payload decision | Draft | v0.7.0 |
+| 0002 | URL payload decision | Accepted (implemented in bb2cedf + 393c74c) | v0.7.0 |
+| 0003 | Chunk-level HMAC-SHA256 | Draft | v0.8.0 |
+| 0004 | Transfer resume | Draft | v0.8.0 |
+| 0005 | Folder payload (HEKABUND) | Draft | v0.8.0 |
 
 ---
 
