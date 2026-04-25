@@ -60,16 +60,62 @@ Quick Share `PayloadTransferFrame.PayloadChunk` proto'suna (bkz. `proto/offline_
 
 Kanonik şema (üç RFC'nin tümü bu tanımlara referans verir; çelişki olursa bu bölüm normatiftir):
 
+#### Wire layout — magic prefix protobuf'un dışındadır
+
+`HekaDropFrame` discriminator'ı (4-byte sabit `0xA5DEB201`) **protobuf message
+içinde değil**, payload'ın ham byte prefix'i olarak akar. Aksi halde protobuf
+`fixed32 field=1` wire encoding'i tag-byte (`0x0d`) + little-endian değer
+üretirdi; ilk 4 byte'ı sabit bir prefix olarak okuma garantisi olmaz (Gemini
+PR-85 review). Magic'i protobuf'tan dışlamak hem dispatcher mantığını
+basitleştirir hem de byte sırası belirsizliğini ortadan kaldırır.
+
+Quick Share frame katmanı zaten `[4-byte big-endian length][frame body]`
+formatındadır. HekaDrop frame body'sinin yapısı:
+
+```
++------------------+----------------------------+
+|  magic (4 byte)  |  HekaDropFrame protobuf    |
+|  0xA5 DE B2 01   |  (varint-delimited fields) |
++------------------+----------------------------+
+        ▲
+        └─── big-endian sabit; protobuf dışı; capabilities-gate
+             aktive olmadığında bu prefix asla iletilmez
+```
+
+Dispatcher (alıcı tarafta) mantığı:
+
+```rust
+// pseudocode — gerçek implementation src/frame.rs içinde
+fn dispatch(frame_body: &[u8]) -> Result<Frame, Error> {
+    if frame_body.len() >= 4 && &frame_body[..4] == HEKADROP_MAGIC_BE {
+        let inner = &frame_body[4..];
+        Ok(Frame::HekaDrop(HekaDropFrame::decode(inner)?))
+    } else {
+        Ok(Frame::Offline(OfflineFrame::decode(frame_body)?))
+    }
+}
+
+const HEKADROP_MAGIC_BE: &[u8; 4] = &[0xA5, 0xDE, 0xB2, 0x01];
+```
+
+Eski Quick Share peer'ı `0xA5DEB201` ile başlayan body'yi varint length veya
+field tag olarak parse etmeye çalışır → erken `OfflineFrame::decode` hatası →
+drop. Bu zaten capabilities-gate aktif değilken HekaDrop tarafının böyle bir
+frame **göndermemesi gerekir**; magic + dispatcher kombinasyonu defensive
+backstop'tur.
+
+#### Protobuf şema (magic'siz)
+
 ```proto
 // proto/hekadrop_extensions.proto (yeni dosya, HekaDrop-özel)
 syntax = "proto3";
 package hekadrop.ext;
 
 message HekaDropFrame {
-  // Magic: 0xA5DEB201 (big-endian) — HekaDropFrame discriminator.
-  // Quick Share uyumsuz peer'lar parse edemez; bu kasıtlı.
-  fixed32 magic   = 1;
-  uint32  version = 2;  // v0.8 = 1; monoton artar
+  // NOT: Magic discriminator (0xA5DEB201) bu mesaj tipinin ham byte
+  // prefix'idir, protobuf field değildir. Wire layout açıklaması §3.2'nin
+  // başında. Dispatcher 4 byte'lık prefix'i strip eder ve buradan başlar.
+  uint32 version = 1;  // v0.8 = 1; monoton artar
   oneof payload {
     Capabilities    capabilities  = 10;  // bu RFC
     ChunkIntegrity  chunk_tag     = 11;  // bu RFC
@@ -87,7 +133,7 @@ message Capabilities {
 
 // Feature bitleri — üç RFC de bu sabit numaralara referans verir.
 // (Proto sabit değil; dokümantasyon. Rust tarafı `pub const` olarak tutar.)
-//   CHUNK_HMAC_V1_V1     = 0x0001   // bit 0, bu RFC
+//   CHUNK_HMAC_V1     = 0x0001   // bit 0, bu RFC
 //   RESUME_V1         = 0x0002   // bit 1, RFC-0004
 //   FOLDER_STREAM_V1  = 0x0004   // bit 2, RFC-0005
 //   0x0008..0x8000    — reserved for v0.8–v1.0
@@ -102,8 +148,6 @@ message ChunkIntegrity {
 ```
 
 **Oneof slot stratejisi:** Slot numaraları **10'dan başlar** — 1..9 arası ileriki sürümlerde (v0.9+) temel (non-payload) alanlar için bilinçli olarak açık bırakılır. 10–14 bu RFC paketinde sabitlenmiş beş slot'tur; 15..63 minor eklemeler için rezerve. Önemli: proto3'te `oneof` içinde `reserved` numara aralığı **yasaklama anlamına gelir ve oneof'un ileride genişlemesini engeller**, dolayısıyla burada `reserved` bloğu **kullanılmaz**; bunun yerine kullanılmayan slot numaraları sadece terkedilmiş olarak bırakılır ve yukarıdaki policy tablosu ile dokümante edilir.
-
-**Not:** `HekaDropFrame` magic prefix yaklaşımı, proto3'ün "unknown field silently preserved" davranışından bilinçli ayrılır; karşı taraf HekaDrop değilse frame parse hatası verip drop eder, bu zaten peer capabilities'i yok demek → ekosistemimizde bu frame oraya hiç gönderilmeyecektir (capabilities-gate §4 altında). Magic prefix defansiftir: capabilities-gate bug'ı durumunda sessiz interop hatası yerine sert parse hatası ile erken tanı.
 
 ### 3.3 Capabilities Negotiation Akışı
 
