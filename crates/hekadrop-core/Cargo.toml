@@ -25,8 +25,9 @@ publish = false
 # Workspace path-deps (proto bindings)
 hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
 
-# Async runtime — frame.rs (TcpStream, AsyncRead/Write) + ukey2.rs (TcpStream)
-tokio = { version = "1", features = ["net", "io-util"] }
+# Async runtime — frame.rs (TcpStream, AsyncRead/Write, tokio::time::timeout)
+# + ukey2.rs (TcpStream).
+tokio = { version = "1", features = ["net", "io-util", "time"] }
 
 # Wire format
 bytes = "1"
