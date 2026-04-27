@@ -7,10 +7,20 @@
 //! Proto kaynakları upstream Google/Nearby Connections SDK reverse-engineering
 //! ürünüdür; bkz. `proto/` dizini ve `docs/protocol/README.md`.
 
-// Generated kod prost'tan; clippy lint'leri bizim kontrolümüzde değil.
+// Generated kod prost'tan; clippy + rustdoc + style lint'leri bizim
+// kontrolümüzde değil. Eski `hekadrop-app/src/lib.rs`'in proto modüllerine
+// uyguladığı tam #![allow] seti burada da uygulanır (Gemini PR-86 yorumu):
+// proto field/enum identifier'ları upstream Google convention'ı (camelCase
+// ve PascalCase karışımı) ile geliyor; rustdoc'taki HTML benzeri etiketler
+// proto comment'larından kaynaklanıyor.
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
 #![allow(unused_qualifications)]
+#![allow(non_snake_case)]
+#![allow(non_camel_case_types)]
+#![allow(dead_code)]
+#![allow(rustdoc::invalid_html_tags)]
+#![allow(rustdoc::broken_intra_doc_links)]
 
 /// Google Nearby Connections SecureGCM frame'leri ve UKEY2 handshake mesajları.
 pub mod securegcm {
