@@ -1,0 +1,81 @@
+# typos.toml — codebase-wide typo CI configuration
+#
+# `typos` (https://github.com/crate-ci/typos) is a fast, low-noise spell-checker
+# for source trees. Çalıştırma: `typos` (root'tan); CI'de `lints-extra` job'u.
+#
+# Bu codebase Türkçe yorum/dokümantasyon içerir; aşağıdaki whitelist Türkçe
+# kelimeler veya marka isimlerinin İngilizce typo olarak işaretlenmesini
+# engeller. Yeni terim eklerken: `typos --diff` ile önce neden işaretlendiğini
+# görüntüle, gerçek typo değilse buraya insert et.
+
+[default.extend-words]
+# Marka / proje isimleri
+HekaDrop = "HekaDrop"
+hekadrop = "hekadrop"
+heka = "heka"
+NearDrop = "NearDrop"
+
+# Protokol / kripto kısaltmaları
+ukey = "ukey"
+Ukey = "Ukey"
+
+# Türkçe kelimeler (typos İngilizce sözlük üzerinden kontrol eder; aşağıdakiler
+# Türkçe yorum/doc içeriklerinde geçer ve İngilizce typo değildir)
+abd = "abd"
+ABD = "ABD"
+adres = "adres"
+aktive = "aktive"
+anormal = "anormal"
+ba = "ba"
+blok = "blok"
+buton = "buton"
+Eit = "Eit"
+foto = "foto"
+FOTO = "FOTO"
+grup = "grup"
+imge = "imge"
+implemente = "implemente"
+ine = "ine"
+Konstant = "Konstant"
+lik = "lik"
+lokal = "lokal"
+mis = "mis"
+nin = "nin"
+ofset = "ofset"
+paket = "paket"
+Paket = "Paket"
+paralel = "paralel"
+Paralel = "Paralel"
+parametre = "parametre"
+Parametre = "Parametre"
+paranoya = "paranoya"
+performans = "performans"
+Performans = "Performans"
+platforma = "platforma"
+programatic = "programatic"
+regresse = "regresse"
+Regresse = "Regresse"
+sade = "sade"
+sistem = "sistem"
+Sistem = "Sistem"
+siz = "siz"
+sizin = "sizin"
+soket = "soket"
+standart = "standart"
+Standart = "Standart"
+stil = "stil"
+sur = "sur"
+tak = "tak"
+tema = "tema"
+Tema = "Tema"
+testin = "testin"
+
+[files]
+extend-exclude = [
+    "CHANGELOG.md",
+    "Cargo.lock",
+    "*.lock",
+    "target/**",
+    "crates/hekadrop-proto/proto/**",  # upstream Google proto kaynakları
+    "docs/protocol/**",                # upstream reverse-engineering notları
+]

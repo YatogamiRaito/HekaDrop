@@ -8,6 +8,31 @@
 //! + H#4 privacy controls için settings) açmaktır.
 
 #![allow(dead_code)]
+// Test profili (lib unit tests + inline `#[cfg(test)] mod tests`): production
+// için ship-blocker olan lint'ler test idiomatik kullanımı engellemesin.
+// Integration test'ler (`tests/*.rs`) ayrı crate olduğu için bu attribute
+// onlara işlemez — orada her dosya kendi `#![allow]`'unu deklare ediyor.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::expect_fun_call,
+        clippy::panic,
+        clippy::print_stdout,
+        clippy::print_stderr,
+        clippy::redundant_clone,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::cast_precision_loss,
+        clippy::ignored_unit_patterns,
+        clippy::use_self,
+        clippy::trivially_copy_pass_by_ref,
+        clippy::single_match_else,
+        clippy::map_err_ignore,
+    )
+)]
 
 pub mod crypto;
 pub mod file_size_guard;

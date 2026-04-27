@@ -42,8 +42,14 @@ pub async fn read_frame_timeout(
 }
 
 pub async fn write_frame(stream: &mut TcpStream, data: &[u8]) -> Result<(), HekaError> {
+    if data.len() > MAX_FRAME_SIZE {
+        return Err(HekaError::FrameTooLarge(data.len()));
+    }
     let mut out = BytesMut::with_capacity(4 + data.len());
-    out.put_u32(data.len() as u32);
+    // PROTO: wire 4-byte big-endian length prefix; üstte MAX_FRAME_SIZE (16 MiB) ≪ u32::MAX, truncation imkansız.
+    #[allow(clippy::cast_possible_truncation)]
+    let len_u32 = data.len() as u32;
+    out.put_u32(len_u32);
     out.put_slice(data);
     stream.write_all(&out).await?;
     Ok(())

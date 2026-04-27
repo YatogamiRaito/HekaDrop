@@ -20,3 +20,13 @@ bytes = "1"
 
 [build-dependencies]
 prost-build = "0.14"
+
+[lints]
+workspace = true
+
+# `cargo machete` generated code'u (build.rs `include!()`) görmez; aşağıdaki
+# crate'ler proto-üretilmiş `OUT_DIR/*.rs` tarafından kullanıldığı için
+# false-positive bildirilirler. `prost-build` ise yalnız `build.rs`'den
+# çağrılıyor — machete build script'leri taramıyor.
+[package.metadata.cargo-machete]
+ignored = ["bytes", "prost", "prost-build"]

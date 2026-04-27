@@ -172,9 +172,9 @@ impl PayloadAssembler {
     /// Sıfırdan büyükse `warn!` ile loglanır — GC'nin iş yapması nadir olmalı.
     pub fn gc(&mut self, timeout: Duration) -> usize {
         let now = Instant::now();
-        let cutoff = match now.checked_sub(timeout) {
-            Some(c) => c,
-            None => return 0, // timeout > uptime → hiçbir şey eski olamaz.
+        // timeout > uptime → hiçbir şey eski olamaz, GC iptal.
+        let Some(cutoff) = now.checked_sub(timeout) else {
+            return 0;
         };
 
         let mut dropped_bytes = 0usize;

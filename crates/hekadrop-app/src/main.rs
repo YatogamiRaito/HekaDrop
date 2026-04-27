@@ -1,3 +1,27 @@
+// Bin'in inline `#[cfg(test)] mod tests` blokları için test-mode allow seti.
+// Detay için bkz. `lib.rs` aynı attribute.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::expect_fun_call,
+        clippy::panic,
+        clippy::print_stdout,
+        clippy::print_stderr,
+        clippy::redundant_clone,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::cast_precision_loss,
+        clippy::ignored_unit_patterns,
+        clippy::use_self,
+        clippy::trivially_copy_pass_by_ref,
+        clippy::single_match_else,
+        clippy::map_err_ignore,
+    )
+)]
+
 use anyhow::Result;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -181,10 +205,14 @@ fn setup_logging(log_level: settings::LogLevel) {
             Some(fmt::layer().with_writer(file_writer).with_ansi(false))
         }
         Err(e) => {
-            eprintln!(
-                "[HekaDrop] log appender kurulamadı ({}); stdout-only devam",
-                e
-            );
+            // Tracing subscriber henüz kurulmadı — eprintln! tek başvuru.
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!(
+                    "[HekaDrop] log appender kurulamadı ({}); stdout-only devam",
+                    e
+                );
+            }
             None
         }
     };
@@ -312,6 +340,9 @@ fn run_app() -> ! {
                 "HekaDrop başlatılamıyor",
                 &format!("pencere oluşturulamadı: {}", e),
             );
+            // Fatal startup; ?-propagation main()'e tanrı-Result zorlar — exit
+            // burada anlamlı: kullanıcı hata gördü, RAII temizliğe gerek yok.
+            #[allow(clippy::exit)]
             std::process::exit(1);
         }
     };
@@ -378,6 +409,8 @@ fn run_app() -> ! {
                 "HekaDrop başlatılamıyor",
                 &format!("webview oluşturulamadı: {}", e),
             );
+            // Fatal startup; bkz. yukarı.
+            #[allow(clippy::exit)]
             std::process::exit(1);
         }
     };
@@ -726,6 +759,9 @@ fn graceful_quit() -> ! {
             .args(["--user", "stop", "hekadrop.service"])
             .status();
     }
+    // Quit handler — daemon'ları durdurduktan sonra event loop'u beklemeden
+    // çık. Wry'de event-loop kontrol akışı dışına temiz çıkış yolu yok.
+    #[allow(clippy::exit)]
     std::process::exit(0);
 }
 
@@ -1222,7 +1258,7 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
         files,
     };
     match sender::send(req).await {
-        Ok(_) => {
+        Ok(()) => {
             ui::notify(
                 i18n::t("notify.app_name"),
                 &i18n::tf("notify.sent_to", &[&device.name]),
@@ -1284,7 +1320,7 @@ async fn initiate_text_send_flow(text: String) {
         text,
     };
     match sender::send_text(req).await {
-        Ok(_) => {
+        Ok(()) => {
             ui::notify(
                 i18n::t("notify.app_name"),
                 &i18n::tf("notify.text_sent_to", &[&device.name]),
@@ -1378,7 +1414,7 @@ async fn check_update_async() {
     // yakalıyoruz; network hatası vs rate-limit vs parse hatası farkını
     // burada ayırt edip dışarı structured sonuç veriyoruz.
     let outcome = tokio::task::spawn_blocking(|| -> UpdateCheckOutcome {
-        let out = match std::process::Command::new("curl")
+        let Ok(out) = std::process::Command::new("curl")
             .args([
                 "-sL",
                 "-w",
@@ -1392,9 +1428,8 @@ async fn check_update_async() {
                 "https://api.github.com/repos/YatogamiRaito/HekaDrop/releases/latest",
             ])
             .output()
-        {
-            Ok(o) => o,
-            Err(_) => return UpdateCheckOutcome::NetworkError,
+        else {
+            return UpdateCheckOutcome::NetworkError;
         };
         if !out.status.success() {
             return UpdateCheckOutcome::NetworkError;
@@ -1581,6 +1616,8 @@ fn relative_time(secs: u64) -> String {
 
 fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    // HUMAN: byte sayısını okunur birime çevirmek için precision loss kabul.
+    #[allow(clippy::cast_precision_loss)]
     let mut n = bytes as f64;
     let mut i = 0;
     while n >= 1024.0 && i < UNITS.len() - 1 {
@@ -1596,12 +1633,9 @@ fn human_size(bytes: i64) -> String {
 
 #[cfg(target_os = "macos")]
 fn toggle_login_item() {
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => {
-            ui::notify("HekaDrop", "HOME bulunamadı");
-            return;
-        }
+    let Ok(home) = std::env::var("HOME") else {
+        ui::notify("HekaDrop", "HOME bulunamadı");
+        return;
     };
     let plist_path = format!("{}/Library/LaunchAgents/com.sourvice.hekadrop.plist", home);
     let plist_exists = std::path::Path::new(&plist_path).exists();
@@ -1708,6 +1742,12 @@ fn toggle_login_item() {
 
     // Mevcut durumu yokla (varsa sil → toggle off).
     let mut hkey = HKEY::default();
+    // SAFETY: `subkey_w` ve `value_w` `to_wide` ile üretilmiş NUL-terminated
+    // local `Vec<u16>`'lar; blok süresince canlı. `&mut hkey` lokal HKEY'in
+    // exclusive borrow'u — `RegOpenKeyExW` başarılı olursa açılan handle'ı
+    // yazar; `RegCloseKey` ile her iki dalda da kapatıyoruz. `RegQueryValueExW`
+    // pData/pcbData için `None`/`Some(&mut size)` veriyor, bu yalnızca
+    // değerin varlığını/uzunluğunu sorgular, buffer over-write riski yok.
     let exists = unsafe {
         let rc = RegOpenKeyExW(
             HKEY_CURRENT_USER,
@@ -1735,6 +1775,11 @@ fn toggle_login_item() {
 
     if exists {
         let mut hkey = HKEY::default();
+        // SAFETY: `subkey_w` ve `value_w` `to_wide`'dan gelen NUL-terminated
+        // local buffer'lar; blok süresince canlı. `&mut hkey` lokal HKEY'e
+        // exclusive borrow. Açılan handle başarı durumunda `RegCloseKey` ile
+        // kapatılıyor; başarısız `RegOpenKeyExW`'da handle yazılmaz, kapatma
+        // gerekmez. `RegDeleteValueW` yalnızca PCWSTR'i NUL'a kadar okur.
         unsafe {
             let rc = RegOpenKeyExW(
                 HKEY_CURRENT_USER,
@@ -1788,6 +1833,14 @@ fn toggle_login_item() {
     // REG_SZ: byte uzunluğu (null dahil).
     let byte_len = cmdline_w.len() * std::mem::size_of::<u16>();
 
+    // SAFETY: `subkey_w`/`value_w`/`cmdline_w` NUL-terminated local
+    // `Vec<u16>`'lar, blok süresince canlı. `byte_len = cmdline_w.len() *
+    // size_of::<u16>()` yani `from_raw_parts`'a verdiğimiz `u8` slice tam
+    // olarak `cmdline_w`'in bellek bölgesini kapsıyor (alignment u16 ⊇ u8,
+    // overflow yok — `with_capacity` zaten allocate etti). REG_SZ için
+    // byte uzunluğu null-terminator dahil verilir; bu doğru. `&mut hkey`
+    // lokal değişkene exclusive borrow; handle başarılı openda `RegCloseKey`
+    // ile, başarısız openda hiç yazılmadığı için kapatılmaz.
     unsafe {
         let mut hkey = HKEY::default();
         let rc = RegOpenKeyExW(

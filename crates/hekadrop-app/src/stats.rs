@@ -53,7 +53,7 @@ impl Stats {
         let path = stats_path();
         std::fs::read_to_string(&path)
             .ok()
-            .and_then(|s| serde_json::from_str::<Stats>(&s).ok())
+            .and_then(|s| serde_json::from_str::<Self>(&s).ok())
             .unwrap_or_default()
     }
 

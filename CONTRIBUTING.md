@@ -95,8 +95,17 @@ Commit atmadan önce bu üçü sırayla geçmelidir:
 
 ```bash
 cargo fmt
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+```
+
+PR açmadan önce ek olarak (CI bunları koşar — lokalde geçirmek bedava):
+
+```bash
+cargo machete --with-metadata             # unused dep
+cargo hack check --feature-powerset --no-dev-deps --workspace  # feature combos
+typos                                     # yazım
+cargo deny check                          # license + advisory
 ```
 
 CI aynı komutları koşar; lokalde yeşile çektiğinizde PR genelde tek seferde geçer.
@@ -122,6 +131,45 @@ Kod kapsamı Codecov'a raporlanır; yeni eklenen kodun ortalama kapsamı düşü
   Production yollarda `?` + `anyhow`/`thiserror`.
 - Protokol davranışını değiştiren PR'larda CHANGELOG'da `### Security` ya da
   `### Changed` altına not düşün.
+
+## Lint disiplini
+
+HekaDrop **enforceable strict lint** politikası uygular. Workspace-wide lint set
+root `Cargo.toml` `[workspace.lints]` bölümünde tanımlı; her yeni lint eklenirken
+mevcut codebase'de **0 violation** üretmesi şarttır (CI `-D warnings` ile koşar).
+
+**Allow attribute disiplini:**
+- `#![allow(...)]` **crate-level kabul edilmez**. Tek istisna: `hekadrop-proto`
+  gibi tamamen generated code barındıran crate'lerde, her generated module
+  üstünde `#[allow(...)]` outer attribute olarak.
+- `#[allow(...)]` **mümkün olan en dar scope'a** konulur — tek statement / tek
+  fonksiyon / tek module. Hiçbir allow yorumsuz commit'lenemez; `// SAFETY:`
+  veya `// INVARIANT:` ya da `// TODO(#NNN):` etiketiyle gerekçesi belgelenir.
+- Generated code (`prost`, `cbindgen`, vb.) için allow'lar minimal set'le
+  yazılır: yalnızca o lint kategorisinin gerektirdiği kadar.
+
+**Test profili relaxation:**
+- Inline `#[cfg(test)] mod tests { ... }` blokları için `lib.rs`/`main.rs`
+  `#![cfg_attr(test, allow(...))]` tek noktadan yönetilir.
+- Integration test'ler (`tests/*.rs`) ayrı crate'lerdir; her dosya kendi başında
+  `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, ...)]`
+  bloğunu deklare eder. Bu allow seti minimal — production lint'leri test
+  idiomatik kullanımı (`assert!`, `unwrap()` setup, `panic!` match-arm) için
+  gevşetir, **kalite lint'leri (cast safety, vb.) gevşemez**.
+
+**Yeni lint eklemek istiyorsan:**
+1. Mevcut codebase'de hit sayısını ölç: `cargo clippy --workspace --all-targets`.
+2. 0 hit ise: doğrudan ekle, PR aç.
+3. ≤20 hit ise: hepsini fix'le, allow ekleme; PR'da hem lint config hem fix.
+4. >20 hit ise: ayrı tracking issue aç, mevcut kodu temizle, sonra lint'i ekle.
+
+Ek tooling (CI'da koşan):
+- **`cargo-deny`** — bağımlılık license / advisory / wildcard kontrolü
+  (`deny.toml`).
+- **`cargo-machete`** — `Cargo.toml`'da listeli ama kullanılmayan dep tespiti.
+- **`cargo-hack --feature-powerset`** — feature kombinasyonlarının bitlenmemesi.
+- **`typos`** — codebase yazım denetimi (`typos.toml` whitelist'li).
+- **`rustsec/audit-check`** — RUSTSEC advisory taraması.
 
 ## Claude / AI ajanı katkıları
 

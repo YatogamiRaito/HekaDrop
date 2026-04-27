@@ -1,3 +1,26 @@
+// Test/bench dosyası — production lint'leri test idiomatik kullanımı bozmasın.
+// Cast/clone family de gevşek: test verisi hardcoded, numerik safety burada
+// odak değil; behavior validation odaklıyız.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::expect_fun_call,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::missing_panics_doc,
+    clippy::redundant_clone,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::cast_precision_loss,
+    clippy::ignored_unit_patterns,
+    clippy::use_self,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::single_match_else,
+    clippy::map_err_ignore
+)]
+
 //! Trust hijacking regression — Issue #17 (T2 senaryosu).
 //!
 //! v0.5.x trust kararı `(device_name, endpoint_id)` çiftine bağlıydı —

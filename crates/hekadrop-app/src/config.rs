@@ -27,10 +27,10 @@ pub fn random_endpoint_id() -> [u8; 4] {
 
 /// mDNS instance name (10 bayt, URL-safe base64, paddingsiz).
 /// Yerleşim: [0x23, id×4, 0xFC, 0x9F, 0x5E, 0x00, 0x00]
-pub fn instance_name(endpoint_id: &[u8; 4]) -> String {
+pub fn instance_name(endpoint_id: [u8; 4]) -> String {
     let mut bytes = [0u8; 10];
     bytes[0] = 0x23; // PCP
-    bytes[1..5].copy_from_slice(endpoint_id);
+    bytes[1..5].copy_from_slice(&endpoint_id);
     bytes[5..8].copy_from_slice(&[0xFC, 0x9F, 0x5E]);
     URL_SAFE_NO_PAD.encode(bytes)
 }
@@ -56,7 +56,10 @@ pub fn endpoint_info(device_name: &str) -> Vec<u8> {
     if name_bytes.len() > 255 {
         name_bytes = &name_bytes[..255];
     }
-    out.push(name_bytes.len() as u8);
+    // PROTO: ad uzunluğu wire'da u8 — yukarıda 255'e clamp ediliyor, truncation imkansız.
+    #[allow(clippy::cast_possible_truncation)]
+    let name_len = name_bytes.len() as u8;
+    out.push(name_len);
     out.extend_from_slice(name_bytes);
     out
 }

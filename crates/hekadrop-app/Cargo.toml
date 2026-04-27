@@ -86,11 +86,9 @@ windows = { version = "0.61", features = [
 # elliptic-curve) zaten build grafine dahil — integration test'ler o sürümleri doğrudan
 # kullanabilir, dev-dependency olarak tekrar eklemeye gerek yok.
 #
-# Aşağıdaki test-özgü crate'ler mevcut test'ler tarafından doğrudan import edilmiyor, ama
-# ileride eklenecek senaryolar için önceden bildirilmiş dependency olarak tutuluyor. Bağlı
-# build ağırlığı önemsiz (<1 MB) ve `cargo test` cache'ine yaslanıyor.
-pretty_assertions = "1.4"
-tokio-test = "0.4"
+# `pretty_assertions` ve `tokio-test` daha önce "ileride lazım olur" düşüncesiyle
+# tutuluyordu — strict-lints PR'ında `cargo machete` tespit etti, kullanan kod yok.
+# YAGNI: gerçekten ihtiyaç doğunca eklenir.
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
@@ -121,3 +119,6 @@ assets = [
     ["../../resources/icon.png", "usr/share/icons/hicolor/512x512/apps/hekadrop.png", "644"],
     ["../../README.md", "usr/share/doc/hekadrop/", "644"],
 ]
+
+[lints]
+workspace = true

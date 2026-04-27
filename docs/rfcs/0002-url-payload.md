@@ -135,7 +135,7 @@ Google Quick Share (ve Android Nearby Share) tarafında URL wire yerleşimi:
 1. **Introduction frame** (sharing_enums tipi `INTRODUCTION`): bir ya da daha
    çok `TextMetadata` içerir. URL için `type = URL (2)`, `text_title = URL'in
    kendisi veya kısa preview`, `payload_id` ve `size` set edilir. URL'in tam
-   stringi bu metada değil, ayrı BYTES payload'ında gelir.
+   stringi bu metadata içinde değil, ayrı BYTES payload'ında gelir.
 2. **Bytes payload**: `PayloadType::Bytes`, body = UTF-8 URL string'i. Genelde
    tek chunk, `last_chunk=true` flag'iyle. Limiti 4 KiB pratiği yeterli (mevcut
    kodda 4 MiB assembler limiti zaten var).

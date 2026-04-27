@@ -143,6 +143,11 @@ pub fn init(settings: Settings) {
     // Issue #17: cihaz-kalıcı kimlik — bozuk / yazılamıyor senaryosunda
     // paniğe düşüp kullanıcıyı ikaz et; trust kararını güvenli şekilde
     // veremeyeceğimiz bir state ile devam etmeyelim.
+    // INVARIANT (security): trust kararı identity'ye dayanıyor — bozuk /
+    // yazılamıyor identity ile yola devam etmek "her cihaz aynı görünür"
+    // güvenlik açığı doğurur. Startup'ta panik = kullanıcıya hata göster, devam
+    // etme. Issue #17.
+    #[allow(clippy::expect_used)]
     let identity = DeviceIdentity::load_or_create()
         .expect("DeviceIdentity yüklenemedi/oluşturulamadı — identity.key kontrol edin");
     let _ = STATE.set(Arc::new(AppState {
@@ -303,6 +308,10 @@ pub fn read_history() -> Vec<HistoryItem> {
 }
 
 pub fn get() -> Arc<AppState> {
+    // INVARIANT: `init()` her zaman `main`'in ilk işlerinden — `get()` öncesinde
+    // çağrılması garanti. Aksi durum programlama hatası, panik yerine sessiz
+    // default state üretmek bug'ı maskeler.
+    #[allow(clippy::expect_used)]
     STATE
         .get()
         .expect("state::init() çağrılmadan state::get() çağrıldı")
