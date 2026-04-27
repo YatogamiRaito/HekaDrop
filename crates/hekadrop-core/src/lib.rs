@@ -1,5 +1,5 @@
 //! HekaDrop core protocol engine — UKEY2 handshake, kripto primitive'leri,
-//! frame codec, payload assembler ve guard'lar.
+//! frame codec ve guard'lar. (Payload assembler RFC-0001 Adım 4'te taşınacak.)
 //!
 //! RFC-0001 §5 Adım 3 ile `hekadrop-app`'tan ayrıştırıldı. Hedef: protocol
 //! engine'i UI/global-state'ten arındırarak 3rd party consumer'lara (CLI,
@@ -15,8 +15,8 @@
 //! # Test profili
 //!
 //! Inline `#[cfg(test)] mod tests` blokları için workspace lint set'inden
-//! relax — `lib.rs` `cfg_attr(test, allow(...))]`. Production lint disiplini
-//! aynen workspace inheritance'tan gelir.
+//! relax — `lib.rs` `#![cfg_attr(test, allow(...))]`. Production lint
+//! disiplini aynen workspace inheritance'tan gelir.
 
 #![cfg_attr(
     test,
