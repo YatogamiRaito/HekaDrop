@@ -13,10 +13,10 @@
 //! her çağrıda otomatik olarak bu GC'yi çalıştırır ([`ASSEMBLER_GC_TIMEOUT`]).
 
 use crate::error::HekaError;
-use crate::location::nearby::connections::{
+use anyhow::{anyhow, Context, Result};
+use hekadrop_proto::location::nearby::connections::{
     payload_transfer_frame::payload_header::PayloadType, PayloadTransferFrame,
 };
-use anyhow::{anyhow, Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::File;
@@ -486,10 +486,10 @@ fn remove_partial_file(path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::location::nearby::connections::payload_transfer_frame::{
+    use hekadrop_proto::location::nearby::connections::payload_transfer_frame::{
         payload_header::PayloadType as PbPayloadType, PayloadChunk, PayloadHeader,
     };
-    use crate::location::nearby::connections::PayloadTransferFrame;
+    use hekadrop_proto::location::nearby::connections::PayloadTransferFrame;
 
     /// Test helper: minimal `PayloadTransferFrame` inşa et.
     fn make_frame(id: i64, ptype: PbPayloadType, body: &[u8], last: bool) -> PayloadTransferFrame {

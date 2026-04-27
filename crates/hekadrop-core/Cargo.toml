@@ -26,8 +26,17 @@ publish = false
 hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
 
 # Async runtime — frame.rs (TcpStream, AsyncRead/Write, tokio::time::timeout)
-# + ukey2.rs (TcpStream).
-tokio = { version = "1", features = ["net", "io-util", "time"] }
+# + ukey2.rs (TcpStream). `rt` payload.rs `Handle::try_current()` ve
+# settings.rs `save_debounced` (`Handle::spawn`) için gerekli.
+tokio = { version = "1", features = ["net", "io-util", "time", "rt"] }
+
+# settings.rs / stats.rs JSON kalıcı hâl serileştirmesi.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# settings.rs `DEBOUNCE_TASK` ve stats.rs `DISK_LOCK` için statik
+# parking_lot::Mutex (zero-allocation static init).
+parking_lot = "0.12"
 
 # Wire format
 bytes = "1"
@@ -56,6 +65,10 @@ rand = "0.8"
 base64 = "0.22"
 # `hex` ukey2.rs handshake debug log (cipher_commitment + digest) için.
 hex = "0.4"
+
+[dev-dependencies]
+# payload.rs unit tests use `#[tokio::test]`.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [lints]
 workspace = true

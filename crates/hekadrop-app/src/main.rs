@@ -45,23 +45,25 @@ use wry::{DragDropEvent, WebViewBuilder};
 // `connection.rs`, `sender.rs`, `payload.rs`, vs. dosyalardaki yüzlerce
 // import noktası dokunulmadan derlenir. Lib.rs aynı re-export setini taşır.
 //
-// `payload`, `state`, `discovery`, `mdns`, `i18n`, `identity`, `platform`,
-// `settings`, `stats`, `ui` henüz app crate'inde — sonraki RFC adımlarında
-// `hekadrop-core` ve `hekadrop-net` arasında ayrılacak.
-use hekadrop_core::{config, crypto, error, file_size_guard, frame, log_redact, secure, ukey2};
+// `state`, `discovery`, `mdns`, `i18n`, `platform`, `paths`, `ui` henüz app
+// crate'inde — sonraki RFC adımlarında `hekadrop-core` ve `hekadrop-net`
+// arasında ayrılacak. Adım 4'te `identity`, `payload`, `settings`, `stats`
+// core'a taşındı; aşağıda re-export edildiği için `crate::settings::*` gibi
+// in-tree çağrı noktaları dokunulmadan derlenir.
+use hekadrop_core::{
+    config, crypto, error, file_size_guard, frame, identity, log_redact, payload, secure, settings,
+    stats, ukey2,
+};
 
 mod connection;
 mod discovery;
 mod i18n;
-mod identity;
 mod mdns;
-mod payload;
+mod paths;
 mod platform;
 mod sender;
 mod server;
-mod settings;
 mod state;
-mod stats;
 mod ui;
 
 static RUNTIME: OnceLock<Handle> = OnceLock::new();
@@ -78,7 +80,10 @@ pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
 const WINDOW_HTML: &str = include_str!("../../../resources/window.html");
 
 async fn async_main() -> Result<()> {
-    let device_name = state::get().settings.read().resolved_device_name();
+    let device_name = state::get()
+        .settings
+        .read()
+        .resolved_device_name(crate::platform::device_name);
     info!("HekaDrop başlıyor — cihaz: {}", device_name);
 
     let listener = server::start_listener().await?;
@@ -117,7 +122,7 @@ fn main() {
     // varsa o öncelikli (geliştirici kaçış vanası). Settings'i logger'dan
     // ÖNCE yüklememiz lazım → state::init'ten önce lokal load yapıp iki
     // kere okumamak için aynı instance'ı state'e taşıyoruz.
-    let settings = settings::Settings::load();
+    let settings = settings::Settings::load(&paths::config_path());
     setup_logging(settings.log_level);
 
     state::init(settings);
@@ -272,7 +277,10 @@ fn run_app() -> ! {
     #[cfg(target_os = "macos")]
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
 
-    let device_name = state::get().settings.read().resolved_device_name();
+    let device_name = state::get()
+        .settings
+        .read()
+        .resolved_device_name(crate::platform::device_name);
     let auto_accept_initial = state::get().settings.read().auto_accept;
 
     // Menü (tray)
@@ -607,7 +615,7 @@ fn handle_ipc(cmd: &str) {
             s.remove_trusted(name);
             s.clone()
         };
-        let _ = snap.save();
+        let _ = snap.save(&paths::config_path());
         push_trusted_to_ui();
         ui::notify(
             i18n::t("notify.app_name"),
@@ -662,7 +670,7 @@ fn handle_ipc(cmd: &str) {
                 *s = stats::Stats::default();
                 s.clone()
             };
-            let _ = snap.save();
+            let _ = snap.save(&paths::stats_path());
             push_stats_to_ui();
             ui::notify(i18n::t("notify.app_name"), i18n::t("notify.stats_reset"));
         }
@@ -681,7 +689,7 @@ fn handle_ipc(cmd: &str) {
                 s.trusted_devices.clear();
                 s.clone()
             };
-            let _ = snap.save();
+            let _ = snap.save(&paths::config_path());
             push_trusted_to_ui();
             ui::notify(i18n::t("notify.app_name"), i18n::t("notify.trust_cleared"));
         }
@@ -699,7 +707,7 @@ fn handle_ipc(cmd: &str) {
                 s.first_launch_completed = true;
                 s.clone()
             };
-            if let Err(e) = snap.save() {
+            if let Err(e) = snap.save(&paths::config_path()) {
                 tracing::warn!("onboarding_done save: {}", e);
             }
             info!("[ui] onboarding tamamlandı");
@@ -840,9 +848,9 @@ fn handle_settings_save(json: &str) {
         // `Handle::try_current()` çalışmaz. OnceLock henüz set edilmemişse
         // (teorik: async init daha başlamadıysa) sync fallback ile yaz.
         match RUNTIME.get() {
-            Some(h) => snap.save_debounced(h),
+            Some(h) => snap.save_debounced(h, paths::config_path()),
             None => {
-                if let Err(e) = snap.save() {
+                if let Err(e) = snap.save(&paths::config_path()) {
                     tracing::warn!("settings save fallback (no runtime): {}", e);
                 }
             }
@@ -968,7 +976,10 @@ fn maybe_push_onboarding() {
     let (should_show, device_name) = {
         let st = state::get();
         let s = st.settings.read();
-        (!s.first_launch_completed, s.resolved_device_name())
+        (
+            !s.first_launch_completed,
+            s.resolved_device_name(crate::platform::device_name),
+        )
     };
     if !should_show {
         return;
@@ -995,8 +1006,11 @@ fn maybe_push_onboarding() {
 fn push_settings_to_ui() {
     let st = state::get();
     let s = st.settings.read();
-    let resolved_name = s.resolved_device_name();
-    let resolved_dl = s.resolved_download_dir().to_string_lossy().to_string();
+    let resolved_name = s.resolved_device_name(crate::platform::device_name);
+    let resolved_dl = s
+        .resolved_download_dir(crate::platform::default_download_dir)
+        .to_string_lossy()
+        .to_string();
     // H#4: 4 yeni privacy alanı JS'ye push edilir; UI Settings sekmesinde
     // checkbox/select olarak render. `log_level` lowercase string, option
     // karşılaştırması JS tarafında direkt bu değerle yapılır.
@@ -1050,7 +1064,7 @@ fn push_stats_to_ui() {
         "service_type": crate::config::service_type(),
         "port": state::listen_port(),
         "log_dir": platform::logs_dir().to_string_lossy(),
-        "config_path": settings::config_path().to_string_lossy(),
+        "config_path": paths::config_path().to_string_lossy(),
         "bytes_received": human_size(s.bytes_received as i64),
         "bytes_sent": human_size(s.bytes_sent as i64),
         "files_received": s.files_received,
@@ -1067,7 +1081,10 @@ fn push_stats_to_ui() {
 }
 
 fn st_settings_resolved_name() -> String {
-    state::get().settings.read().resolved_device_name()
+    state::get()
+        .settings
+        .read()
+        .resolved_device_name(crate::platform::device_name)
 }
 
 fn push_trusted_to_ui() {
@@ -1134,17 +1151,20 @@ fn reveal_in_finder(path: &str) {
 }
 
 fn open_downloads_folder() {
-    let dl = state::get().settings.read().resolved_download_dir();
+    let dl = state::get()
+        .settings
+        .read()
+        .resolved_download_dir(crate::platform::default_download_dir);
     platform::open_path(&dl);
 }
 
 fn open_config_file() {
-    let path = settings::config_path();
+    let path = paths::config_path();
     if !path.exists() {
         // Snapshot clone + drop guard → disk I/O lock dışında. Yavaş FS'te
         // (encrypted home, FUSE) read() guard tüm write()'ları bloklardı.
         let snap = state::get().settings.read().clone();
-        let _ = snap.save();
+        let _ = snap.save(&path);
     }
     platform::reveal_path(&path);
 }

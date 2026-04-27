@@ -27,6 +27,7 @@
 
 use anyhow::{bail, Context, Result};
 use rand::RngCore;
+#[cfg(target_os = "windows")]
 use std::path::PathBuf;
 
 /// Uzun-süreli cihaz kimlik anahtarı.
@@ -38,19 +39,16 @@ pub struct DeviceIdentity {
 }
 
 impl DeviceIdentity {
-    /// `identity.key` dosyasını oku veya yoksa oluştur.
+    /// `identity.key` dosyasını verilen yoldan oku veya yoksa oluştur.
     ///
     /// - **Var + 32 bayt:** içerikten key'i yükler.
     /// - **Var + boyut ≠ 32:** bozuk kabul, hata döner (auto-regenerate etmez).
     /// - **Yok:** 32 bayt rastgele key üretip atomic + 0o600 ile yazar.
-    pub fn load_or_create() -> Result<Self> {
-        Self::load_or_create_at(&identity_path())
-    }
-
-    /// Path-injection variant — test harness'ının HOME/XDG env yarışı olmadan
-    /// kendi tmp dizinini kullanmasına izin verir. Ana binary kodu
-    /// `load_or_create()` çağırır; production path `config_dir()/identity.key`.
-    pub(crate) fn load_or_create_at(path: &std::path::Path) -> Result<Self> {
+    ///
+    /// RFC-0001 §5 Adım 4: `crate::platform::*` çağırılmaması için path
+    /// injection — caller (app) `paths::identity_path()` ile production
+    /// yolu sağlar; tests kendi tmp path'ini geçer.
+    pub fn load_or_create_at(path: &std::path::Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!(
@@ -150,10 +148,6 @@ impl DeviceIdentity {
         out.copy_from_slice(&h);
         out
     }
-}
-
-pub(crate) fn identity_path() -> PathBuf {
-    crate::platform::config_dir().join("identity.key")
 }
 
 /// Windows: `identity.key` DACL'ini sıkılaştır.

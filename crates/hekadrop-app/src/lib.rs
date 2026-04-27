@@ -42,7 +42,10 @@
 // in-tree çağrı noktası bu re-export'lar sayesinde dokunulmadan derlenir.
 // `tests/*.rs` ve `benches/*.rs` ise `hekadrop::crypto::xxx` formuyla bu
 // shim üzerinden core'a ulaşır.
-pub use hekadrop_core::{config, crypto, error, file_size_guard, frame, log_redact, secure, ukey2};
+pub use hekadrop_core::{
+    config, crypto, error, file_size_guard, frame, identity, log_redact, payload, secure, settings,
+    stats, ukey2,
+};
 
 // RFC-0001 §5 Adım 2: protobuf bindings `hekadrop-proto` crate'inden
 // re-export ediliyor. `crate::securegcm::...`, `crate::location::...`,
@@ -56,9 +59,3 @@ pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
 pub use hekadrop_core::{process_client_init, validate_server_init, DerivedKeys};
 
 pub mod platform;
-pub mod settings;
-
-// `PayloadAssembler` için gerekli. Entegrasyon testleri (örn.
-// `tests/payload_corrupt.rs`) ingest API üzerinden chunk senaryolarını
-// (overrun / truncation / duplicate id / out-of-order) doğrular.
-pub mod payload;

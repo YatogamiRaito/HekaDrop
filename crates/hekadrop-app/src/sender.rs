@@ -135,7 +135,10 @@ pub async fn send(req: SendRequest) -> Result<()> {
     info!("[sender] TCP bağlantı: {} ✓", addr);
 
     // 2) Plain ConnectionRequest
-    let our_name = state::get().settings.read().resolved_device_name();
+    let our_name = state::get()
+        .settings
+        .read()
+        .resolved_device_name(crate::platform::device_name);
     let conn_req = build_connection_request(&our_name);
     frame::write_frame(&mut socket, &conn_req.encode_to_vec()).await?;
     info!("[sender] ConnectionRequest gönderildi");
@@ -332,7 +335,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                                 }
                             };
                             if let Some(snap) = snap_opt {
-                                let _ = snap.save();
+                                let _ = snap.save(&crate::paths::stats_path());
                             }
                         }
                         // Bug #31: Completed gösteriminden sonra birkaç saniye içinde
@@ -479,7 +482,10 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     }
     info!("[sender] TCP bağlantı: {} ✓", addr);
 
-    let our_name = state::get().settings.read().resolved_device_name();
+    let our_name = state::get()
+        .settings
+        .read()
+        .resolved_device_name(crate::platform::device_name);
     let conn_req = build_connection_request(&our_name);
     frame::write_frame(&mut socket, &conn_req.encode_to_vec()).await?;
 
@@ -628,7 +634,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                                 }
                             };
                             if let Some(snap) = snap_opt {
-                                let _ = snap.save();
+                                let _ = snap.save(&crate::paths::stats_path());
                             }
                         }
                         state::set_progress_completed_auto_idle(
