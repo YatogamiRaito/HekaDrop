@@ -16,6 +16,34 @@
 use async_trait::async_trait;
 use hekadrop_core::ui_port::{AcceptDecision, FileSummary, UiNotification, UiPort};
 
+/// `connection::PlatformOps` trait'inin app-side concrete impl'i — `crate::
+/// platform::open_url` / `crate::platform::copy_to_clipboard`'ı sarar.
+/// Connection core'a taşındıktan sonra `Arc<dyn PlatformOps>` olarak
+/// `accept_loop`'a geçirilir; core'da `crate::platform` referansı olmaz.
+pub struct PlatformAdapter;
+
+impl PlatformAdapter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for PlatformAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl crate::connection::PlatformOps for PlatformAdapter {
+    fn open_url(&self, url: &str) {
+        crate::platform::open_url(url);
+    }
+
+    fn copy_to_clipboard(&self, text: &str) {
+        crate::platform::copy_to_clipboard(text);
+    }
+}
+
 pub struct UiAdapter;
 
 impl UiAdapter {

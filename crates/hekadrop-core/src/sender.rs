@@ -16,7 +16,7 @@
 
 use crate::config;
 use crate::connection;
-use crate::discovery::DiscoveredDevice;
+use crate::discovery_types::DiscoveredDevice;
 use crate::error::HekaError;
 use crate::frame;
 use crate::location::nearby::connections::{
@@ -33,7 +33,7 @@ use crate::sharing::nearby::{
     frame::Version as ShVersion, text_metadata::Type as TextKind, v1_frame as sh_v1, FileMetadata,
     Frame as SharingFrame, IntroductionFrame, TextMetadata, V1Frame as ShV1Frame,
 };
-use crate::state::{self, ProgressState};
+use crate::state::{self, AppState, ProgressState};
 use crate::ukey2;
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
@@ -41,6 +41,7 @@ use prost::Message;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
@@ -61,6 +62,18 @@ pub struct SendRequest {
     pub files: Vec<std::path::PathBuf>,
 }
 
+/// Sender davranışını caller'dan inject edilen platform-bağımlı yardımcılar.
+///
+/// I-1 (CLAUDE.md): core'a taşınınca `crate::platform`, `crate::i18n`,
+/// `crate::paths` referansları sızmasın diye sender artık bu callback +
+/// önceden çevrilmiş string'lerle çalışır.
+pub struct SendCtx {
+    /// Çoklu chunk'lı `Receiving` progress'i ve `Completed` özeti için
+    /// metin kısa adı (örn. "metin"). Caller `i18n::t("sender.text_summary")`
+    /// çağırıp passing eder.
+    pub text_summary: String,
+}
+
 struct PlannedFile {
     path: std::path::PathBuf,
     name: String,
@@ -68,7 +81,7 @@ struct PlannedFile {
     payload_id: i64,
 }
 
-pub async fn send(req: SendRequest) -> Result<()> {
+pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     if req.files.is_empty() {
         // Not: "hiç dosya yok" ile "toplam 0 bayt dosya var" semantik olarak
         // farklı — `EmptyPayload` ikincisini anlatır, UI mesajı yanıltıcı
@@ -135,10 +148,10 @@ pub async fn send(req: SendRequest) -> Result<()> {
     info!("[sender] TCP bağlantı: {} ✓", addr);
 
     // 2) Plain ConnectionRequest
-    let our_name = state::get()
+    let our_name = state
         .settings
         .read()
-        .resolved_device_name(crate::platform::device_name);
+        .resolved_device_name(|| state.default_device_name.clone());
     let conn_req = build_connection_request(&our_name);
     frame::write_frame(&mut socket, &conn_req.encode_to_vec()).await?;
     info!("[sender] ConnectionRequest gönderildi");
@@ -167,7 +180,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
     connection::send_sharing_frame(
         &mut socket,
         &mut ctx,
-        &connection::build_paired_key_encryption(),
+        &connection::build_paired_key_encryption(state.as_ref()),
     )
     .await?;
     info!("[sender] PairedKeyEncryption gönderildi");
@@ -177,7 +190,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
     let mut sent_paired_result = false;
     let peer_label = req.device.name.clone();
     let transfer_id = format!("out:{}:{}", req.device.addr, req.device.port);
-    let _guard = state::TransferGuard::new(&transfer_id);
+    let _guard = state::TransferGuard::new(Arc::clone(&state), &transfer_id);
     let cancel_token: CancellationToken = _guard.token.clone();
 
     loop {
@@ -195,7 +208,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                 connection::send_disconnection(&mut socket, &mut ctx)
                     .await
                     .ok();
-                state::set_progress(ProgressState::Idle);
+                state.set_progress(ProgressState::Idle);
                 return Err(HekaError::UserCancelled.into());
             }
             res = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT) => res?,
@@ -289,6 +302,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                                 bytes_sent,
                                 total_bytes,
                                 &cancel_token,
+                                state.as_ref(),
                             )
                             .await?;
                             bytes_sent += plan.size;
@@ -318,10 +332,9 @@ pub async fn send(req: SendRequest) -> Result<()> {
                         {
                             // Save'i lock dışında çalıştır — yavaş diskte UI dondurmasın.
                             // `keep_stats=false` iken snapshot clone da yapılmaz.
-                            let st = state::get();
-                            let keep = st.settings.read().keep_stats;
+                            let keep = state.settings.read().keep_stats;
                             let snap_opt = {
-                                let mut s = st.stats.write();
+                                let mut s = state.stats.write();
                                 for plan in &plans {
                                     // .max(0) ile alt sınır 0 — sign loss imkansız.
                                     #[allow(clippy::cast_sign_loss)]
@@ -335,13 +348,13 @@ pub async fn send(req: SendRequest) -> Result<()> {
                                 }
                             };
                             if let Some(snap) = snap_opt {
-                                let _ = snap.save(&crate::paths::stats_path());
+                                let _ = snap.save(&state.stats_path);
                             }
                         }
                         // Bug #31: Completed gösteriminden sonra birkaç saniye içinde
                         // otomatik Idle'a dönsün — kullanıcı pencereyi sonra açtığında
                         // eski "Tamamlandı" banner'ı kalmasın.
-                        state::set_progress_completed_auto_idle(
+                        state.set_progress_completed_auto_idle(
                             summary,
                             state::DEFAULT_COMPLETED_IDLE_DELAY,
                         );
@@ -424,7 +437,11 @@ fn detect_url_kind(text: &str) -> TextKind {
     }
 }
 
-pub async fn send_text(req: SendTextRequest) -> Result<()> {
+pub async fn send_text(
+    req: SendTextRequest,
+    state: Arc<AppState>,
+    ctx_strings: SendCtx,
+) -> Result<()> {
     // Baş/son whitespace'i baştan at: detect, title ve wire payload'ın
     // tutarlı görmesi için tek noktada normalize ediyoruz. Kullanıcı paste
     // yaparken clipboard trailing `\n` ya da `\r\n` taşıyabilir — trimsiz
@@ -458,7 +475,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     // otomatik düşer.
     let peer_label = req.device.name.clone();
     let transfer_id = format!("out-text:{}:{}", req.device.addr, req.device.port);
-    let _guard = state::TransferGuard::new(&transfer_id);
+    let _guard = state::TransferGuard::new(Arc::clone(&state), &transfer_id);
     let cancel_token: CancellationToken = _guard.token.clone();
 
     let addr = format!("{}:{}", req.device.addr, req.device.port);
@@ -482,10 +499,10 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     }
     info!("[sender] TCP bağlantı: {} ✓", addr);
 
-    let our_name = state::get()
+    let our_name = state
         .settings
         .read()
-        .resolved_device_name(crate::platform::device_name);
+        .resolved_device_name(|| state.default_device_name.clone());
     let conn_req = build_connection_request(&our_name);
     frame::write_frame(&mut socket, &conn_req.encode_to_vec()).await?;
 
@@ -507,7 +524,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     connection::send_sharing_frame(
         &mut socket,
         &mut ctx,
-        &connection::build_paired_key_encryption(),
+        &connection::build_paired_key_encryption(state.as_ref()),
     )
     .await?;
 
@@ -522,7 +539,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                 let cancel = connection::build_sharing_cancel();
                 connection::send_sharing_frame(&mut socket, &mut ctx, &cancel).await.ok();
                 connection::send_disconnection(&mut socket, &mut ctx).await.ok();
-                state::set_progress(ProgressState::Idle);
+                state.set_progress(ProgressState::Idle);
                 return Err(HekaError::UserCancelled.into());
             }
             res = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT) => res?,
@@ -573,7 +590,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                         let title = if text_kind == TextKind::Url as i32 {
                             crate::log_redact::url_scheme_host(&text)
                         } else {
-                            crate::i18n::t("sender.text_summary").to_string()
+                            ctx_strings.text_summary.clone()
                         };
                         let intro =
                             build_introduction_text(payload_id, text_kind, total_bytes, title);
@@ -608,6 +625,8 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                             text.as_bytes(),
                             &peer_label,
                             &cancel_token,
+                            state.as_ref(),
+                            &ctx_strings.text_summary,
                         )
                         .await?;
                         let _ = tokio::time::timeout(
@@ -619,10 +638,9 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                             .await
                             .ok();
                         {
-                            let st = state::get();
-                            let keep = st.settings.read().keep_stats;
+                            let keep = state.settings.read().keep_stats;
                             let snap_opt = {
-                                let mut s = st.stats.write();
+                                let mut s = state.stats.write();
                                 // .max(0) ile alt sınır 0 — sign loss imkansız.
                                 #[allow(clippy::cast_sign_loss)]
                                 let total_bytes_u = total_bytes.max(0) as u64;
@@ -634,11 +652,11 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                                 }
                             };
                             if let Some(snap) = snap_opt {
-                                let _ = snap.save(&crate::paths::stats_path());
+                                let _ = snap.save(&state.stats_path);
                             }
                         }
-                        state::set_progress_completed_auto_idle(
-                            crate::i18n::t("sender.text_summary").to_string(),
+                        state.set_progress_completed_auto_idle(
+                            ctx_strings.text_summary.clone(),
                             state::DEFAULT_COMPLETED_IDLE_DELAY,
                         );
                         info!("[sender] ✓ metin gönderimi tamamlandı");
@@ -674,6 +692,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
 /// Metni Bytes payload olarak gönderir. Küçük metin tek chunk + son empty
 /// chunk ile biter; büyük metin CHUNK_SIZE sınırıyla bölünür (Android
 /// tarafı her iki durumu da assembler reassembly ile ele alır).
+#[allow(clippy::too_many_arguments)]
 async fn send_text_bytes(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
@@ -681,6 +700,8 @@ async fn send_text_bytes(
     data: &[u8],
     peer_label: &str,
     cancel: &CancellationToken,
+    state: &AppState,
+    text_summary: &str,
 ) -> Result<()> {
     // `as i64` cast i64::MAX üstünde wrap üretir; header'ın `total_size`'ı
     // negatif olup receiver protokol hatası verir. Pratikte erişilemez ama
@@ -704,9 +725,9 @@ async fn send_text_bytes(
         let offset_i64 = i64::try_from(offset)
             .with_context(|| format!("metin payload offset'i çok büyük: {}", offset))?;
         if let Some(percent) = compute_percent(0, offset_i64, total) {
-            state::set_progress(ProgressState::Receiving {
+            state.set_progress(ProgressState::Receiving {
                 device: peer_label.to_string(),
-                file: crate::i18n::t("sender.text_summary").to_string(),
+                file: text_summary.to_string(),
                 percent,
             });
         }
@@ -788,6 +809,7 @@ async fn send_file_chunks(
     bytes_sent_before: i64,
     total_bytes: i64,
     cancel: &CancellationToken,
+    state: &AppState,
 ) -> Result<()> {
     let mut file = tokio::fs::File::open(path).await?;
     let mut buf = vec![0u8; CHUNK_SIZE];
@@ -830,7 +852,7 @@ async fn send_file_chunks(
         // total_bytes == 0 entry point'te bail ediliyor (Bug #30); yine de
         // `compute_percent` defansif olarak 0/0 ve overflow'u ele alır.
         if let Some(percent) = compute_percent(bytes_sent_before, offset, total_bytes) {
-            state::set_progress(ProgressState::Receiving {
+            state.set_progress(ProgressState::Receiving {
                 device: peer_label.to_string(),
                 file: file_name.to_string(),
                 percent,

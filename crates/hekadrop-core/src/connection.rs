@@ -27,10 +27,10 @@ use crate::sharing::nearby::{
     v1_frame as sh_v1, ConnectionResponseFrame as ShConsent, Frame as SharingFrame,
     PairedKeyEncryptionFrame, PairedKeyResultFrame, V1Frame as ShV1Frame,
 };
-use crate::state::{self, HistoryItem, ProgressState};
+use crate::state::{self, AppState, HistoryItem, ProgressState};
+use crate::ui_port::{AcceptDecision, FileSummary, UiNotification, UiPort};
 use crate::ukey2;
 use anyhow::{anyhow, Context, Result};
-use hekadrop_core::ui_port::{AcceptDecision, FileSummary, UiNotification, UiPort};
 use prost::Message;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -40,11 +40,32 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 
-pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>) -> Result<()> {
+/// Inbound bağlantı handler'ı için caller tarafından inject edilen
+/// platform-bağımlı yardımcılar.
+///
+/// I-1 (CLAUDE.md): connection core'a taşınınca `crate::platform`
+/// (open_url / copy_to_clipboard) referansı sızmasın diye trait üzerinden
+/// dispatch ediyoruz. App-side `PlatformShim` minimal `Send + Sync` impl'i
+/// `crate::platform::*` çağrılarına forward eder.
+pub trait PlatformOps: Send + Sync {
+    /// Tarayıcıda URL aç (yalnız http/https — caller şema doğrulamasını
+    /// üst seviyede yapmıştır; trait kontratı "verileni aç" değildir).
+    fn open_url(&self, url: &str);
+    /// Sistem clipboard'una metin kopyala (UTF-16 doğruluğu platform-side).
+    fn copy_to_clipboard(&self, text: &str);
+}
+
+pub async fn handle(
+    mut socket: TcpStream,
+    peer: SocketAddr,
+    ui: Arc<dyn UiPort>,
+    state: Arc<AppState>,
+    platform: Arc<dyn PlatformOps>,
+) -> Result<()> {
     // `TransferGuard::new()` içinde auto clear_cancel — bu bağlantıya özel
     // child token hem taze root'a hem de scope sonunda active_transfers
     // map'inden otomatik temizliğe (early-return yollarında bile) garanti verir.
-    let guard = state::TransferGuard::new(format!("in:{}", peer));
+    let guard = state::TransferGuard::new(Arc::clone(&state), format!("in:{}", peer));
     let cancel = guard.token.clone();
 
     // 1) plain ConnectionRequest
@@ -93,8 +114,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
     // ile bu bağlantının kaydı silinir. Böylece hash-doğrulanmış trusted
     // peer sürekli bağlantılarla throttle olmaz, ama peer-controlled
     // stringlere güvenmeyiz.
-    let st = state::get();
-    if st.rate_limiter.check_and_record(peer.ip()) {
+    if state.rate_limiter.check_and_record(peer.ip()) {
         warn!(
             "[{}] rate limit aşıldı (60 sn pencerede >10 bağlantı), reddediliyor",
             peer
@@ -132,7 +152,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
                 body_key: Some(key),
                 body_args: Vec::new(),
             });
-            state::set_progress(ProgressState::Idle);
+            state.set_progress(ProgressState::Idle);
             return Err(e);
         }
     };
@@ -169,7 +189,12 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
     let mut assembler = PayloadAssembler::new();
 
     // 8) Bizim PairedKeyEncryption'ı hemen gönder (peer'a aynı anda gönderir)
-    send_sharing_frame(&mut socket, &mut ctx, &build_paired_key_encryption()).await?;
+    send_sharing_frame(
+        &mut socket,
+        &mut ctx,
+        &build_paired_key_encryption(state.as_ref()),
+    )
+    .await?;
     info!("[{}] PairedKeyEncryption gönderildi", peer);
 
     let mut sent_paired_result = false;
@@ -209,6 +234,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
                     &mut assembler,
                     &mut pending_names,
                     &mut pending_texts,
+                    state.as_ref(),
                 );
                 ui.notify(UiNotification::Toast {
                     title_key: "notify.app_name",
@@ -268,7 +294,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
                         // panic, release wrap, ikisi de istenmiyor).
                         if let Some(percent) = compute_recv_percent(offset, body_len_usize, total) {
                             if let Some(name) = pending_names.get(&id).cloned() {
-                                state::set_progress(ProgressState::Receiving {
+                                state.set_progress(ProgressState::Receiving {
                                     device: remote_name_shared.clone(),
                                     file: name,
                                     percent,
@@ -283,7 +309,13 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
                         CompletedPayload::Bytes { id, data } => {
                             // Metin/URL payload mı?
                             if let Some(kind) = pending_texts.remove(&id) {
-                                handle_text_payload(&peer, kind, &data, ui.as_ref());
+                                handle_text_payload(
+                                    &peer,
+                                    kind,
+                                    &data,
+                                    ui.as_ref(),
+                                    platform.as_ref(),
+                                );
                                 continue;
                             }
                             if let Ok(sharing) = SharingFrame::decode(&data[..]) {
@@ -302,6 +334,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
                                     &mut pending_names,
                                     &mut peer_secret_id_hash,
                                     ui.as_ref(),
+                                    state.as_ref(),
                                 )
                                 .await?;
                                 if outcome == FlowOutcome::Disconnect {
@@ -311,6 +344,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
                                         &mut assembler,
                                         &mut pending_names,
                                         &mut pending_texts,
+                                        state.as_ref(),
                                     );
                                     break;
                                 }
@@ -339,10 +373,9 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
                                 // güncellenir (UI Tanı sekmesi session boyunca doğru kalsın)
                                 // ama disk yazma atlanır. Mevcut stats.json silinmez —
                                 // kullanıcı sonradan tekrar açabilir, eski metrik kaybolmaz.
-                                let st = state::get();
-                                let keep = st.settings.read().keep_stats;
+                                let keep = state.settings.read().keep_stats;
                                 let snap_opt = {
-                                    let mut s = st.stats.write();
+                                    let mut s = state.stats.write();
                                     // payload.rs ingest_file aşamasında `total_size < 0` reddediliyor — burada >= 0 garanti.
                                     #[allow(clippy::cast_sign_loss)]
                                     let total_size_u = total_size as u64;
@@ -354,7 +387,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
                                     }
                                 };
                                 if let Some(snap) = snap_opt {
-                                    let _ = snap.save(&crate::paths::stats_path());
+                                    let _ = snap.save(&state.stats_path);
                                 }
                             }
                             let file_name = path
@@ -362,10 +395,10 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("dosya")
                                 .to_string();
-                            state::set_progress(ProgressState::Completed {
+                            state.set_progress(ProgressState::Completed {
                                 file: file_name.clone(),
                             });
-                            state::push_history(HistoryItem {
+                            state.push_history(HistoryItem {
                                 file_name: file_name.clone(),
                                 path: path.clone(),
                                 size: total_size,
@@ -420,6 +453,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>
         &mut assembler,
         &mut pending_names,
         &mut pending_texts,
+        state.as_ref(),
     );
 
     Ok(())
@@ -445,9 +479,10 @@ fn cleanup_transfer_state(
     assembler: &mut PayloadAssembler,
     pending_names: &mut HashMap<i64, String>,
     pending_texts: &mut HashMap<i64, TextType>,
+    state: &AppState,
 ) {
     let n = drain_pending(assembler, pending_names, pending_texts);
-    state::set_progress(ProgressState::Idle);
+    state.set_progress(ProgressState::Idle);
 
     if n > 0 {
         info!(
@@ -487,7 +522,8 @@ enum FlowOutcome {
 }
 
 // RFC-0001 §5 Adım 5b: handler call-graph'ında 13 arg vardı; 14. olarak `ui`
-// eklendi. Adım 5c'de helper'lar struct olarak gruplanacak.
+// eklendi. Adım 5c'de 15. olarak `state` eklendi (singleton lookup yerine
+// inject); helper'lar bir sonraki refactor'da struct olarak gruplanacak.
 #[allow(clippy::too_many_arguments)]
 async fn handle_sharing_frame(
     peer: &SocketAddr,
@@ -504,6 +540,7 @@ async fn handle_sharing_frame(
     pending_names: &mut HashMap<i64, String>,
     peer_secret_id_hash: &mut Option<[u8; 6]>,
     ui: &dyn UiPort,
+    state: &AppState,
 ) -> Result<FlowOutcome> {
     let v1 = frame.v1.as_ref().ok_or_else(|| anyhow!("sharing v1 yok"))?;
     let t = v1.r#type.and_then(|t| sh_v1::FrameType::try_from(t).ok());
@@ -532,9 +569,8 @@ async fn handle_sharing_frame(
             // trusted peer gate'de yakalanan sayaca tabi olmaz, ama
             // peer-controlled string (name/id) spoof'u muafiyet kazandırmaz.
             if let Some(h) = *peer_secret_id_hash {
-                let s = state::get();
-                if s.settings.read().is_trusted_by_hash(&h) {
-                    s.rate_limiter.forget_most_recent(peer.ip());
+                if state.settings.read().is_trusted_by_hash(&h) {
+                    state.rate_limiter.forget_most_recent(peer.ip());
                     info!(
                         "[{}] trusted hash doğrulandı — rate-limit kaydı geri alındı",
                         peer
@@ -614,7 +650,7 @@ async fn handle_sharing_frame(
                     size,
                 });
                 if let Some(pid) = f.payload_id {
-                    planned_files.push((pid, unique_downloads_path(&name)?, name));
+                    planned_files.push((pid, unique_downloads_path(&name, state)?, name));
                 }
             }
 
@@ -652,8 +688,7 @@ async fn handle_sharing_frame(
             // bağlar; sonraki bağlantılar hash-first trusted, dialog yok.
             // Bu migration-dialog-cost spoofing engelinin doğru bedelidir.
             let trusted = {
-                let st = state::get();
-                let s = st.settings.read();
+                let s = state.settings.read();
                 match peer_secret_id_hash {
                     Some(h) => s.is_trusted_by_hash(h),
                     None => s.is_trusted_legacy(remote_name, remote_id),
@@ -668,7 +703,7 @@ async fn handle_sharing_frame(
             // prompt_accept() imzası şu an custom prompt kabul etmediği için
             // (macOS/Windows/Linux 3 ayrı blocking fn) bu polish atlandı.
 
-            let auto_accept = state::get().settings.read().auto_accept;
+            let auto_accept = state.settings.read().auto_accept;
 
             // Dalga 3 UX: Peer hash göndermiş olduğu halde hash kayıtta yoksa,
             // `(name, id)` legacy kaydı varsa — bu "v0.5 → v0.6 migration"
@@ -676,8 +711,7 @@ async fn handle_sharing_frame(
             // açıklayan bir bildirim gönder; aksi halde tanıdık cihaz için
             // birden dialog görünce "güveni zedelenmiş mi?" tereddüdü doğar.
             let migration_hint = peer_secret_id_hash.is_some() && !trusted && {
-                let st = state::get();
-                let s = st.settings.read();
+                let s = state.settings.read();
                 s.is_trusted_legacy(remote_name, remote_id)
             };
 
@@ -685,13 +719,12 @@ async fn handle_sharing_frame(
                 info!("[{}] trusted cihaz → otomatik kabul", peer);
                 // Sliding-window TTL: aktif kullanım varsa timestamp'i yenile.
                 if let Some(h) = peer_secret_id_hash {
-                    let st = state::get();
                     let snap = {
-                        let mut s = st.settings.write();
+                        let mut s = state.settings.write();
                         s.touch_trusted_by_hash(h);
                         s.clone()
                     };
-                    let _ = snap.save(&crate::paths::config_path());
+                    let _ = snap.save(&state.config_path);
                 }
                 AcceptDecision::Accept
             } else if auto_accept {
@@ -733,18 +766,16 @@ async fn handle_sharing_frame(
             if matches!(decision, AcceptDecision::Accept) {
                 if let Some(h) = peer_secret_id_hash {
                     let needs_upgrade = {
-                        let st = state::get();
-                        let s = st.settings.read();
+                        let s = state.settings.read();
                         s.is_trusted_legacy(remote_name, remote_id) && !s.is_trusted_by_hash(h)
                     };
                     if needs_upgrade {
-                        let st = state::get();
                         let snap = {
-                            let mut s = st.settings.write();
+                            let mut s = state.settings.write();
                             s.add_trusted_with_hash(remote_name, remote_id, *h);
                             s.clone()
                         };
-                        let _ = snap.save(&crate::paths::config_path());
+                        let _ = snap.save(&state.config_path);
                         info!(
                             "[{}] legacy trust kaydı secret_id_hash ile yükseltildi: {}",
                             peer, remote_name
@@ -754,9 +785,8 @@ async fn handle_sharing_frame(
             }
 
             if matches!(decision, AcceptDecision::AcceptAndTrust) {
-                let st = state::get();
                 let snap = {
-                    let mut s = st.settings.write();
+                    let mut s = state.settings.write();
                     if let Some(h) = peer_secret_id_hash {
                         s.add_trusted_with_hash(remote_name, remote_id, *h);
                     } else {
@@ -772,7 +802,7 @@ async fn handle_sharing_frame(
                     }
                     s.clone()
                 };
-                let _ = snap.save(&crate::paths::config_path());
+                let _ = snap.save(&state.config_path);
                 info!(
                     "[{}] cihaz trusted listeye eklendi: {} (id: {})",
                     peer,
@@ -837,7 +867,13 @@ async fn handle_sharing_frame(
     Ok(FlowOutcome::Continue)
 }
 
-fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8], ui: &dyn UiPort) {
+fn handle_text_payload(
+    peer: &SocketAddr,
+    kind: TextType,
+    data: &[u8],
+    ui: &dyn UiPort,
+    platform: &dyn PlatformOps,
+) {
     let text = if let Ok(s) = std::str::from_utf8(data) {
         s.trim().to_string()
     } else {
@@ -846,7 +882,7 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8], ui: &dyn 
     };
     if kind == TextType::Url {
         if is_safe_url_scheme(&text) {
-            crate::platform::open_url(&text);
+            platform.open_url(&text);
             // PRIVACY: Log dosyasına yalnız şema + host düşer; path + query
             // (token içerebilir) redact. UI bildirimi kullanıcının kendi
             // ekranında olduğu için tam preview'la gösterilir.
@@ -871,7 +907,7 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8], ui: &dyn 
                 peer,
                 crate::log_redact::url_scheme_host(&text)
             );
-            crate::platform::copy_to_clipboard(&text);
+            platform.copy_to_clipboard(&text);
             ui.notify(UiNotification::Toast {
                 title_key: "notify.app_name",
                 body_key: Some("notify.text_clipboard"),
@@ -879,7 +915,7 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8], ui: &dyn 
             });
         }
     } else {
-        crate::platform::copy_to_clipboard(&text);
+        platform.copy_to_clipboard(&text);
         info!(
             "[{}] metin panoya kopyalandı ({} karakter)",
             peer,
@@ -933,11 +969,11 @@ fn human_size(bytes: i64) -> String {
     }
 }
 
-fn unique_downloads_path(name: &str) -> Result<PathBuf> {
-    let base = state::get()
+fn unique_downloads_path(name: &str, state: &AppState) -> Result<PathBuf> {
+    let base = state
         .settings
         .read()
-        .resolved_download_dir(crate::platform::default_download_dir);
+        .resolved_download_dir(|| state.default_download_dir.clone());
     std::fs::create_dir_all(&base).ok();
 
     // SECURITY: Uzak cihazdan gelen dosya adı saldırgan kontrolünde; doğrudan
@@ -1110,7 +1146,7 @@ fn random_bytes(n: usize) -> Vec<u8> {
     v
 }
 
-pub(crate) fn build_paired_key_encryption() -> SharingFrame {
+pub(crate) fn build_paired_key_encryption(state: &AppState) -> SharingFrame {
     // Issue #17: `secret_id_hash` artık random değil — cihaz-kalıcı
     // `DeviceIdentity.long_term_key` üzerinden HKDF-SHA256 ile türetilir.
     // Peer bu değeri bizim "stabil kimlik"imiz olarak görür ve trusted
@@ -1120,7 +1156,7 @@ pub(crate) fn build_paired_key_encryption() -> SharingFrame {
     // ECDSA imza (long-term signing key) eklenecek. Şimdilik peer'lar
     // alanı doğrulamıyor (bizim tarafta da doğrulamıyoruz; bkz.
     // design 017 §5.5 / §9 answer #2).
-    let hash = state::get().identity.secret_id_hash();
+    let hash = state.identity.secret_id_hash();
     SharingFrame {
         version: Some(ShVersion::V1 as i32),
         v1: Some(ShV1Frame {
