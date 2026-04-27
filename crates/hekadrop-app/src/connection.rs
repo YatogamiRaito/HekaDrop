@@ -254,12 +254,13 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                         let id = header.id.unwrap_or(0);
                         let total = header.total_size.unwrap_or(0);
                         let offset = chunk.offset.unwrap_or(0);
-                        let body_len = chunk.body.as_ref().map(|b| b.len()).unwrap_or(0) as i64;
-                        let written = offset + body_len;
-                        if total > 0 {
-                            // clamp(0, 100) garantisi ile 0..=100 aralığında — sign loss yok.
-                            #[allow(clippy::cast_sign_loss)]
-                            let percent = ((written * 100) / total).clamp(0, 100) as u8;
+                        let body_len_usize = chunk.body.as_ref().map(|b| b.len()).unwrap_or(0);
+                        // SECURITY: peer'den gelen `offset` + `body_len` + `total`
+                        // alanları unvalidated. `*100` ve `+` operasyonlarını
+                        // checked aritmetikle koru; overflow olursa progress
+                        // update'ini sessizce atla (DoS koruması — debug build
+                        // panic, release wrap, ikisi de istenmiyor).
+                        if let Some(percent) = compute_recv_percent(offset, body_len_usize, total) {
                             if let Some(name) = pending_names.get(&id).cloned() {
                                 state::set_progress(ProgressState::Receiving {
                                     device: remote_name_shared.clone(),
@@ -1295,6 +1296,27 @@ fn parse_remote_name(endpoint_info: &[u8]) -> Option<String> {
     String::from_utf8(endpoint_info[18..18 + name_len].to_vec()).ok()
 }
 
+/// Receiver tarafı progress yüzdesi — peer'den gelen `offset`, `total_size` ve
+/// chunk body uzunluğu (usize) ile 0..=100 aralığında u8 hesabı.
+///
+/// **Why checked aritmetik:** Üç giriş alanı da unvalidated peer data. Naïve
+/// `(offset + body_len) * 100 / total` hesabı i64 overflow ile (debug panic /
+/// release wrap) yanlış progress veya DoS açar. Overflow ya da geçersiz `total`
+/// (0/negatif) → `None` (caller progress update'ini sessizce atlar).
+///
+/// Bkz. [`crate::sender::compute_percent`] sender tarafı muadili (`bytes_before`
+/// + `offset` farklı semantik). Birleştirme için RFC gerekir.
+fn compute_recv_percent(offset: i64, body_len: usize, total: i64) -> Option<u8> {
+    if total <= 0 {
+        return None;
+    }
+    let body_len_i64 = i64::try_from(body_len).ok()?;
+    let written = offset.checked_add(body_len_i64)?;
+    let scaled = written.checked_mul(100)?;
+    let raw = scaled.checked_div(total)?;
+    u8::try_from(raw.clamp(0, 100)).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1629,5 +1651,50 @@ mod tests {
         assert!(!is_safe_url_scheme(""));
         assert!(!is_safe_url_scheme("http"));
         assert!(!is_safe_url_scheme("://example.com"));
+    }
+
+    /// `compute_recv_percent` security-critical helper — peer'den gelen
+    /// unvalidated `offset` + `body_len` + `total` ile checked aritmetik
+    /// yapıyor. Her code path için en az bir vektör; overflow korumasını da
+    /// kapatıyor.
+    ///
+    /// Bkz. PR #88 review (Gemini medium-priority + Copilot): test eksikti.
+    #[test]
+    fn compute_recv_percent_normal_cases() {
+        // Yarı yol: offset=0, body=500, total=1000 → 500/1000 = 50%
+        assert_eq!(compute_recv_percent(0, 500, 1000), Some(50));
+        // Tam: offset=500, body=500, total=1000 → 100%
+        assert_eq!(compute_recv_percent(500, 500, 1000), Some(100));
+        // Başlangıç: offset=0, body=0, total=1000 → 0%
+        assert_eq!(compute_recv_percent(0, 0, 1000), Some(0));
+        // Round-down: 333/1000 = 33.3% → 33 (i64 div truncates)
+        assert_eq!(compute_recv_percent(0, 333, 1000), Some(33));
+    }
+
+    #[test]
+    fn compute_recv_percent_invalid_total_returns_none() {
+        // total = 0 → caller progress update'ini atlamalı (DivByZero koruması)
+        assert_eq!(compute_recv_percent(0, 0, 0), None);
+        // total negatif (peer protokol ihlali) → None
+        assert_eq!(compute_recv_percent(0, 100, -1), None);
+        assert_eq!(compute_recv_percent(0, 100, i64::MIN), None);
+    }
+
+    #[test]
+    fn compute_recv_percent_clamps_out_of_range() {
+        // Negatif offset (peer ihlali) → written negatif → clamp(0,100)=0
+        assert_eq!(compute_recv_percent(-10, 5, 100), Some(0));
+        // written > total → percent > 100 → clamp(0,100)=100
+        assert_eq!(compute_recv_percent(2000, 0, 1000), Some(100));
+    }
+
+    #[test]
+    fn compute_recv_percent_overflow_returns_none() {
+        // checked_add overflow: offset=i64::MAX, body=1 → +1 wrap → None
+        assert_eq!(compute_recv_percent(i64::MAX, 1, i64::MAX), None);
+        // checked_mul overflow: i64::MAX/2 * 100 → wrap → None
+        assert_eq!(compute_recv_percent(i64::MAX / 2, 0, i64::MAX), None);
+        // body_len = usize::MAX (64-bit'te i64'e sığmaz) → try_from None
+        assert_eq!(compute_recv_percent(0, usize::MAX, 1000), None);
     }
 }
