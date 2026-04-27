@@ -2,6 +2,14 @@
 //!
 //! `OnceLock` ile tek seferlik init, `parking_lot::RwLock` ile lock-free-ish okuma.
 //! Connection handler'ları progress ve history'yi günceller, tray thread'i okur.
+//!
+//! # Yapı (RFC-0001 §5 Adım 5a)
+//!
+//! - **Plain struct katmanı:** `AppState` ve `impl AppState`. `Arc<AppState>`
+//!   parametre olarak gezdirilebilir; global'siz çalışır.
+//! - **App-singleton plumbing:** `STATE` static + `init`/`get` + free fn
+//!   wrapper'lar. Bu katman Adım 5c'de **app-only** kalacak; core'a sadece
+//!   plain struct taşınacak.
 
 use crate::identity::DeviceIdentity;
 use crate::settings::Settings;
@@ -51,6 +59,10 @@ pub struct HistoryItem {
     pub sha256_short: String,
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AppState — plain struct (taşınmaya hazır, global state YOK)
+// ─────────────────────────────────────────────────────────────────────────────
+
 pub struct AppState {
     pub settings: RwLock<Settings>,
     /// Cihaz-kalıcı kriptografik kimlik — `identity.key`'den yüklenir ya da
@@ -85,6 +97,215 @@ pub struct AppState {
     /// Kalıcı kullanım istatistikleri.
     pub stats: RwLock<Stats>,
 }
+
+impl AppState {
+    /// Yeni bir `AppState` kurar ve `Arc` içine sarar.
+    ///
+    /// Bu konstrüktör global state'e DOKUNMAZ — `Arc<AppState>` parametre
+    /// olarak gezdirilebilir. App-singleton katmanı (`init`) bu konstrüktörü
+    /// `STATE` static'ine yerleştirmek için kullanır.
+    pub fn new(settings: Settings) -> Arc<Self> {
+        // Issue #17: cihaz-kalıcı kimlik — bozuk / yazılamıyor senaryosunda
+        // paniğe düşüp kullanıcıyı ikaz et; trust kararını güvenli şekilde
+        // veremeyeceğimiz bir state ile devam etmeyelim.
+        // INVARIANT (security): trust kararı identity'ye dayanıyor — bozuk /
+        // yazılamıyor identity ile yola devam etmek "her cihaz aynı görünür"
+        // güvenlik açığı doğurur. Startup'ta panik = kullanıcıya hata göster, devam
+        // etme. Issue #17.
+        #[allow(clippy::expect_used)]
+        let identity = DeviceIdentity::load_or_create_at(&crate::paths::identity_path())
+            .expect("DeviceIdentity yüklenemedi/oluşturulamadı — identity.key kontrol edin");
+        Arc::new(Self {
+            settings: RwLock::new(settings),
+            identity,
+            progress: RwLock::new(ProgressState::Idle),
+            progress_gen: AtomicU64::new(0),
+            history: RwLock::new(VecDeque::with_capacity(HISTORY_CAP)),
+            listen_port: RwLock::new(0),
+            cancel_root: RwLock::new(CancellationToken::new()),
+            active_transfers: Mutex::new(HashMap::new()),
+            hide_window_flag: AtomicBool::new(false),
+            show_window_flag: AtomicBool::new(false),
+            pending_js: RwLock::new(Vec::new()),
+            rate_limiter: RateLimiter::new(),
+            stats: RwLock::new(Stats::load(&crate::paths::stats_path())),
+        })
+    }
+
+    // ── pending_js / window flags ───────────────────────────────────────────
+
+    /// Event loop, her tick'te bu kuyruktaki JS ifadelerini çalıştırır.
+    pub fn enqueue_js(&self, js: String) {
+        self.pending_js.write().push(js);
+    }
+
+    pub fn drain_js(&self) -> Vec<String> {
+        let mut q = self.pending_js.write();
+        std::mem::take(&mut *q)
+    }
+
+    pub fn request_hide_window(&self) {
+        self.hide_window_flag.store(true, Ordering::SeqCst);
+    }
+
+    pub fn request_show_window(&self) {
+        self.show_window_flag.store(true, Ordering::SeqCst);
+    }
+
+    /// Event loop ile koordinasyon: bayrak set ise true döner ve sıfırlar.
+    pub fn consume_hide_window(&self) -> bool {
+        self.hide_window_flag.swap(false, Ordering::SeqCst)
+    }
+
+    pub fn consume_show_window(&self) -> bool {
+        self.show_window_flag.swap(false, Ordering::SeqCst)
+    }
+
+    // ── cancel / transfer registry ──────────────────────────────────────────
+
+    /// Yeni bir inbound/outbound transfer handler'ı çağırmadan önce bu fonksiyonu
+    /// kullanarak root'tan türeyen bir child token alır. Broadcast cancel
+    /// (`request_cancel_all`) hem root'u hem tüm child'ları tetikler.
+    pub fn new_child_token(&self) -> CancellationToken {
+        self.cancel_root.read().child_token()
+    }
+
+    /// Transferi id ile kaydeder. Aynı id daha önce kayıtlıysa üzerine yazılır —
+    /// bu senaryo pratikte olmamalı (her handler unique id üretir), ama idempotent
+    /// davranış test edilebilirlik için tercih edildi.
+    pub fn register_transfer(&self, id: impl Into<String>, token: CancellationToken) {
+        self.active_transfers.lock().insert(id.into(), token);
+    }
+
+    pub fn unregister_transfer(&self, id: &str) {
+        self.active_transfers.lock().remove(id);
+    }
+
+    /// UI'dan iptal isteği. `id == None` → root cancel (tüm aktif transferler).
+    /// `id == Some(...)` → yalnız o transfer'e ait child token cancel; diğerleri
+    /// etkilenmez. Bilinmeyen id sessizce yutulur (race: transfer bitmiş olabilir).
+    pub fn request_cancel(&self, id: Option<&str>) {
+        match id {
+            None => {
+                self.cancel_root.read().cancel();
+            }
+            Some(id) => {
+                if let Some(tok) = self.active_transfers.lock().get(id).cloned() {
+                    tok.cancel();
+                }
+            }
+        }
+    }
+
+    /// Root token cancel'lenmişse taze bir root üretir. Cancel edilmemişse no-op.
+    ///
+    /// Bir kez cancel edildikten sonra `CancellationToken` kalıcıdır — tekrar
+    /// kullanılamaz. `cleanup_transfer_state()` buradan BİLEREK kaçınır: in-flight
+    /// diğer transferlerin tokenı canlı kalmalı. Yalnızca tüm broadcast cancel
+    /// tamamlandıktan sonra (örn. kullanıcı yeni bir gönderim başlattığında) yeni
+    /// root'a geçmek güvenlidir.
+    pub fn clear_cancel(&self) {
+        // Fast path: ortak durum (root temiz) yalnızca read-lock alır. Yalnızca
+        // gerçekten cancelled ise write-lock'a upgrade ediyoruz — her transfer
+        // başında gereksiz exclusive lock contention'ını engeller.
+        if !self.cancel_root.read().is_cancelled() {
+            return;
+        }
+        let mut guard = self.cancel_root.write();
+        // Write-lock beklerken başka bir thread zaten yeni root yazmış olabilir:
+        // tekrar kontrol et.
+        if guard.is_cancelled() {
+            *guard = CancellationToken::new();
+        }
+    }
+
+    // ── listen port ─────────────────────────────────────────────────────────
+
+    pub fn set_listen_port(&self, p: u16) {
+        *self.listen_port.write() = p;
+    }
+
+    pub fn listen_port(&self) -> u16 {
+        *self.listen_port.read()
+    }
+
+    // ── history ─────────────────────────────────────────────────────────────
+
+    pub fn push_history(&self, item: HistoryItem) {
+        let mut h = self.history.write();
+        h.push_front(item);
+        while h.len() > HISTORY_CAP {
+            h.pop_back();
+        }
+    }
+
+    pub fn read_history(&self) -> Vec<HistoryItem> {
+        self.history.read().iter().cloned().collect()
+    }
+
+    // ── progress ────────────────────────────────────────────────────────────
+
+    /// Progress'i atomik olarak günceller, jenerasyonu artırır ve yeni jenerasyon
+    /// değerini döndürür.
+    ///
+    /// Write lock altında hem progress'i yazar hem gen'i arttırır — bu ikisinin
+    /// arasında başka bir `set_progress` çağrısı olamaz. Dolayısıyla döndürülen
+    /// değer, çağıranın `set` ettiği progress durumuna birebir karşılık gelir ve
+    /// gecikmeli görevler bu değeri yarış koşulu riski olmadan yakalayabilir.
+    pub fn set_progress(&self, p: ProgressState) -> u64 {
+        let mut guard = self.progress.write();
+        *guard = p;
+        // Write lock zaten release/acquire sync sağlar; AcqRel defansif tercih.
+        self.progress_gen.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    pub fn read_progress(&self) -> ProgressState {
+        self.progress.read().clone()
+    }
+
+    /// Mevcut progress jenerasyonunu döner. Gecikmeli reset görevleri bu değeri
+    /// kendileri önce okuyup, zamanlayıcı dolduğunda aynı değerin hâlâ geçerli
+    /// olup olmadığını kontrol ederler.
+    pub fn progress_generation(&self) -> u64 {
+        self.progress_gen.load(Ordering::Acquire)
+    }
+}
+
+/// RAII: scope sonunda `unregister_transfer` çağırır. Early-return / `?`
+/// yollarında da temizlik garantili.
+///
+/// Drop, davranışsal eşdeğerlik için global singleton (`get()`) üzerinden
+/// `unregister_transfer` çağırır — guard `Arc<AppState>` tutmaz. Adım 5c'de
+/// guard core'a taşınırken tasarımı yeniden değerlendirilecek.
+pub struct TransferGuard {
+    id: String,
+    pub token: CancellationToken,
+}
+
+impl TransferGuard {
+    /// Yeni bir transfer guard'ı kurar. Eğer önceki broadcast cancel sonrası
+    /// root hâlâ cancelled durumdaysa önce `clear_cancel()` ile taze root'a
+    /// geçer — aksi halde bu yeni transfer doğar doğmaz cancelled olur
+    /// (footgun: eski tasarımda callsite'lar elle `clear_cancel()` çağırmak
+    /// zorundaydı). RAII kapsülü olarak bu çağrıyı tek noktaya topluyoruz.
+    pub fn new(id: impl Into<String>) -> Self {
+        let id = id.into();
+        clear_cancel();
+        let token = new_child_token();
+        register_transfer(id.clone(), token.clone());
+        Self { id, token }
+    }
+}
+
+impl Drop for TransferGuard {
+    fn drop(&mut self) {
+        unregister_transfer(&self.id);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RateLimiter — plain helper (AppState alanı)
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Sliding-window IP-bazlı rate limiter.
 ///
@@ -137,174 +358,14 @@ impl RateLimiter {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// App-singleton plumbing — Adım 5c'de app crate'inde kalır
+// ─────────────────────────────────────────────────────────────────────────────
+
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
 
 pub fn init(settings: Settings) {
-    // Issue #17: cihaz-kalıcı kimlik — bozuk / yazılamıyor senaryosunda
-    // paniğe düşüp kullanıcıyı ikaz et; trust kararını güvenli şekilde
-    // veremeyeceğimiz bir state ile devam etmeyelim.
-    // INVARIANT (security): trust kararı identity'ye dayanıyor — bozuk /
-    // yazılamıyor identity ile yola devam etmek "her cihaz aynı görünür"
-    // güvenlik açığı doğurur. Startup'ta panik = kullanıcıya hata göster, devam
-    // etme. Issue #17.
-    #[allow(clippy::expect_used)]
-    let identity = DeviceIdentity::load_or_create_at(&crate::paths::identity_path())
-        .expect("DeviceIdentity yüklenemedi/oluşturulamadı — identity.key kontrol edin");
-    let _ = STATE.set(Arc::new(AppState {
-        settings: RwLock::new(settings),
-        identity,
-        progress: RwLock::new(ProgressState::Idle),
-        progress_gen: AtomicU64::new(0),
-        history: RwLock::new(VecDeque::with_capacity(HISTORY_CAP)),
-        listen_port: RwLock::new(0),
-        cancel_root: RwLock::new(CancellationToken::new()),
-        active_transfers: Mutex::new(HashMap::new()),
-        hide_window_flag: AtomicBool::new(false),
-        show_window_flag: AtomicBool::new(false),
-        pending_js: RwLock::new(Vec::new()),
-        rate_limiter: RateLimiter::new(),
-        stats: RwLock::new(Stats::load(&crate::paths::stats_path())),
-    }));
-}
-
-/// Event loop, her tick'te bu kuyruktaki JS ifadelerini çalıştırır.
-pub fn enqueue_js(js: String) {
-    get().pending_js.write().push(js);
-}
-
-pub fn drain_js() -> Vec<String> {
-    let st = get();
-    let mut q = st.pending_js.write();
-    std::mem::take(&mut *q)
-}
-
-pub fn request_hide_window() {
-    get().hide_window_flag.store(true, Ordering::SeqCst);
-}
-
-pub fn request_show_window() {
-    get().show_window_flag.store(true, Ordering::SeqCst);
-}
-
-/// Event loop ile koordinasyon: bayrak set ise true döner ve sıfırlar.
-pub fn consume_hide_window() -> bool {
-    get().hide_window_flag.swap(false, Ordering::SeqCst)
-}
-
-pub fn consume_show_window() -> bool {
-    get().show_window_flag.swap(false, Ordering::SeqCst)
-}
-
-/// Yeni bir inbound/outbound transfer handler'ı çağırmadan önce bu fonksiyonu
-/// kullanarak root'tan türeyen bir child token alır. Broadcast cancel
-/// (`request_cancel_all`) hem root'u hem tüm child'ları tetikler.
-pub fn new_child_token() -> CancellationToken {
-    get().cancel_root.read().child_token()
-}
-
-/// Transferi id ile kaydeder. Aynı id daha önce kayıtlıysa üzerine yazılır —
-/// bu senaryo pratikte olmamalı (her handler unique id üretir), ama idempotent
-/// davranış test edilebilirlik için tercih edildi.
-pub fn register_transfer(id: impl Into<String>, token: CancellationToken) {
-    get().active_transfers.lock().insert(id.into(), token);
-}
-
-pub fn unregister_transfer(id: &str) {
-    get().active_transfers.lock().remove(id);
-}
-
-/// RAII: scope sonunda `unregister_transfer` çağırır. Early-return / `?`
-/// yollarında da temizlik garantili.
-pub struct TransferGuard {
-    id: String,
-    pub token: CancellationToken,
-}
-
-impl TransferGuard {
-    /// Yeni bir transfer guard'ı kurar. Eğer önceki broadcast cancel sonrası
-    /// root hâlâ cancelled durumdaysa önce `clear_cancel()` ile taze root'a
-    /// geçer — aksi halde bu yeni transfer doğar doğmaz cancelled olur
-    /// (footgun: eski tasarımda callsite'lar elle `clear_cancel()` çağırmak
-    /// zorundaydı). RAII kapsülü olarak bu çağrıyı tek noktaya topluyoruz.
-    pub fn new(id: impl Into<String>) -> Self {
-        let id = id.into();
-        clear_cancel();
-        let token = new_child_token();
-        register_transfer(id.clone(), token.clone());
-        Self { id, token }
-    }
-}
-
-impl Drop for TransferGuard {
-    fn drop(&mut self) {
-        unregister_transfer(&self.id);
-    }
-}
-
-/// UI'dan iptal isteği. `id == None` → root cancel (tüm aktif transferler).
-/// `id == Some(...)` → yalnız o transfer'e ait child token cancel; diğerleri
-/// etkilenmez. Bilinmeyen id sessizce yutulur (race: transfer bitmiş olabilir).
-pub fn request_cancel(id: Option<&str>) {
-    let st = get();
-    match id {
-        None => {
-            st.cancel_root.read().cancel();
-        }
-        Some(id) => {
-            if let Some(tok) = st.active_transfers.lock().get(id).cloned() {
-                tok.cancel();
-            }
-        }
-    }
-}
-
-/// Legacy kompat: tray menüsündeki "İptal" "hepsini iptal et" anlamındaydı.
-pub fn request_cancel_all() {
-    request_cancel(None);
-}
-
-/// Root token cancel'lenmişse taze bir root üretir. Cancel edilmemişse no-op.
-///
-/// Bir kez cancel edildikten sonra `CancellationToken` kalıcıdır — tekrar
-/// kullanılamaz. `cleanup_transfer_state()` buradan BİLEREK kaçınır: in-flight
-/// diğer transferlerin tokenı canlı kalmalı. Yalnızca tüm broadcast cancel
-/// tamamlandıktan sonra (örn. kullanıcı yeni bir gönderim başlattığında) yeni
-/// root'a geçmek güvenlidir.
-pub fn clear_cancel() {
-    let st = get();
-    // Fast path: ortak durum (root temiz) yalnızca read-lock alır. Yalnızca
-    // gerçekten cancelled ise write-lock'a upgrade ediyoruz — her transfer
-    // başında gereksiz exclusive lock contention'ını engeller.
-    if !st.cancel_root.read().is_cancelled() {
-        return;
-    }
-    let mut guard = st.cancel_root.write();
-    // Write-lock beklerken başka bir thread zaten yeni root yazmış olabilir:
-    // tekrar kontrol et.
-    if guard.is_cancelled() {
-        *guard = CancellationToken::new();
-    }
-}
-
-pub fn set_listen_port(p: u16) {
-    *get().listen_port.write() = p;
-}
-
-pub fn listen_port() -> u16 {
-    *get().listen_port.read()
-}
-
-pub fn push_history(item: HistoryItem) {
-    let st = get();
-    let mut h = st.history.write();
-    h.push_front(item);
-    while h.len() > HISTORY_CAP {
-        h.pop_back();
-    }
-}
-
-pub fn read_history() -> Vec<HistoryItem> {
-    get().history.read().iter().cloned().collect()
+    let _ = STATE.set(AppState::new(settings));
 }
 
 pub fn get() -> Arc<AppState> {
@@ -318,35 +379,84 @@ pub fn get() -> Arc<AppState> {
         .clone()
 }
 
-/// Progress'i atomik olarak günceller, jenerasyonu artırır ve yeni jenerasyon
-/// değerini döndürür.
-///
-/// Write lock altında hem progress'i yazar hem gen'i arttırır — bu ikisinin
-/// arasında başka bir `set_progress` çağrısı olamaz. Dolayısıyla döndürülen
-/// değer, çağıranın `set` ettiği progress durumuna birebir karşılık gelir ve
-/// gecikmeli görevler bu değeri yarış koşulu riski olmadan yakalayabilir.
-fn set_progress_returning_gen(p: ProgressState) -> u64 {
-    let st = get();
-    let mut guard = st.progress.write();
-    *guard = p;
-    // Write lock zaten release/acquire sync sağlar; AcqRel defansif tercih.
-    st.progress_gen.fetch_add(1, Ordering::AcqRel) + 1
+// ── Free-fn shim'ler — caller API'sini koruyoruz (90 callsite) ─────────────
+
+pub fn enqueue_js(js: String) {
+    get().enqueue_js(js);
+}
+
+pub fn drain_js() -> Vec<String> {
+    get().drain_js()
+}
+
+pub fn request_hide_window() {
+    get().request_hide_window();
+}
+
+pub fn request_show_window() {
+    get().request_show_window();
+}
+
+pub fn consume_hide_window() -> bool {
+    get().consume_hide_window()
+}
+
+pub fn consume_show_window() -> bool {
+    get().consume_show_window()
+}
+
+pub fn new_child_token() -> CancellationToken {
+    get().new_child_token()
+}
+
+pub fn register_transfer(id: impl Into<String>, token: CancellationToken) {
+    get().register_transfer(id, token);
+}
+
+pub fn unregister_transfer(id: &str) {
+    get().unregister_transfer(id);
+}
+
+pub fn request_cancel(id: Option<&str>) {
+    get().request_cancel(id);
+}
+
+/// Legacy kompat: tray menüsündeki "İptal" "hepsini iptal et" anlamındaydı.
+pub fn request_cancel_all() {
+    request_cancel(None);
+}
+
+pub fn clear_cancel() {
+    get().clear_cancel();
+}
+
+pub fn set_listen_port(p: u16) {
+    get().set_listen_port(p);
+}
+
+pub fn listen_port() -> u16 {
+    get().listen_port()
+}
+
+pub fn push_history(item: HistoryItem) {
+    get().push_history(item);
+}
+
+pub fn read_history() -> Vec<HistoryItem> {
+    get().read_history()
 }
 
 /// Progress'i günceller ve değişiklik jenerasyonunu artırır.
 pub fn set_progress(p: ProgressState) {
-    let _ = set_progress_returning_gen(p);
+    let _ = get().set_progress(p);
 }
 
 pub fn read_progress() -> ProgressState {
-    get().progress.read().clone()
+    get().read_progress()
 }
 
-/// Mevcut progress jenerasyonunu döner. Gecikmeli reset görevleri bu değeri
-/// kendileri önce okuyup, zamanlayıcı dolduğunda aynı değerin hâlâ geçerli
-/// olup olmadığını kontrol ederler.
 pub fn progress_generation() -> u64 {
-    get().progress_gen.load(Ordering::Acquire)
+    get().progress_generation()
 }
 
 /// `Completed { file }` durumunu yazar ve `delay` süresi sonunda — eğer o
@@ -354,12 +464,12 @@ pub fn progress_generation() -> u64 {
 /// döner.
 ///
 /// Yakalanan jenerasyon, Completed'i yazan *aynı* write lock altında üretilir
-/// (bkz. `set_progress_returning_gen`); bu yüzden "yaz" ile "gen'i yakala"
+/// (bkz. `AppState::set_progress`); bu yüzden "yaz" ile "gen'i yakala"
 /// arasında başka bir thread araya giremez.
 ///
 /// Bu fonksiyon Tokio runtime context'i içinde çağrılmalıdır.
 pub fn set_progress_completed_auto_idle(file: String, delay: Duration) {
-    let captured_gen = set_progress_returning_gen(ProgressState::Completed { file });
+    let captured_gen = get().set_progress(ProgressState::Completed { file });
     tokio::spawn(async move {
         tokio::time::sleep(delay).await;
         // Sleep sırasında başka bir mutasyon olmadıysa Idle'a dön.
