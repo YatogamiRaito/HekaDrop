@@ -30,7 +30,7 @@ jobs:
           - fuzz_ukey2_handshake_init
           - fuzz_secure_decrypt
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@nightly
