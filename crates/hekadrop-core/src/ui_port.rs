@@ -15,9 +15,15 @@
 //!
 //! # Invariant (CLAUDE.md I-1)
 //!
-//! Bu modül başka modüle ait yol referansı içermez — sadece `std` +
-//! path tipleri. Pre-commit grep guard bunu doğrular; ihlal ederseniz
-//! core ↔ app döngüsel bağımlılık doğar.
+//! Bu modül **`crate::*` referansı içermez** — yani app crate'inin
+//! modüllerine (`crate::platform`, `crate::ui`, `crate::i18n`,
+//! `crate::state`, vs.) doğrudan bağımlı olmamalıdır. Amaç core ↔ app
+//! arasında **yönlü** bağımlılığı korumak. `#[async_trait::async_trait]`
+//! gibi 3rd party crate path'leri (proc-macro / utility) bu invarianta
+//! dahil **değildir** — yalnız in-tree `crate::*` yasak.
+//!
+//! Pre-commit grep guard (`grep crate:: ui_port.rs`) bu mimari sınırı
+//! doğrular; ihlal ederseniz core ↔ app döngüsel bağımlılık doğar.
 
 use std::path::PathBuf;
 
