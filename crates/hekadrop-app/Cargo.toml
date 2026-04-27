@@ -13,6 +13,12 @@ keywords = ["quick-share", "nearby-share", "p2p", "file-transfer", "macos"]
 categories = ["network-programming", "command-line-utilities"]
 
 [dependencies]
+# Workspace internal: protobuf bindings (RFC-0001 §5 Adım 2 ile ayrıştırıldı)
+# Explicit version pin: cargo-deny `[bans] wildcards = "deny"` kuralı için
+# workspace path-dep'in version belirtmesi şart. `=0.7.0` workspace package
+# version'ı ile kilit; bump için tek noktadan değişir.
+hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
+
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 bytes = "1"
@@ -71,8 +77,8 @@ windows = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-[build-dependencies]
-prost-build = "0.14"
+# NOT: `[build-dependencies]` ve `prost-build` RFC-0001 §5 Adım 2 ile
+# `hekadrop-proto` crate'ine taşındı; app crate'in kendi build.rs'i yok.
 
 [dev-dependencies]
 # Bütün kripto/proto crate'leri ([dependencies] altında olan p256, aes, cbc, hmac, sha2,
