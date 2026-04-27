@@ -1816,6 +1816,10 @@ fn toggle_login_item() {
     // Yoksa ekle — current_exe path'ini tırnak içine al.
     // path.display() UTF-8 olmayan byte'ları lossy dönüştürebilir; OsStr'in
     // wide encoding'ini kullanarak lossless UTF-16 üretiyoruz.
+    // Err binding'i `e` format!'da kullanılıyor — `let-else` formunda Err
+    // değişkenine ulaşılamaz; bu match form bilinçli tutuluyor. clippy
+    // refactor önerir ama burada error context detayını koruma tercihi.
+    #[allow(clippy::manual_let_else, clippy::single_match_else)]
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -1827,9 +1831,9 @@ fn toggle_login_item() {
         }
     };
     let mut cmdline_w: Vec<u16> = Vec::with_capacity(exe.as_os_str().len() + 3);
-    cmdline_w.push(b'"' as u16);
+    cmdline_w.push(u16::from(b'"'));
     cmdline_w.extend(exe.as_os_str().encode_wide());
-    cmdline_w.push(b'"' as u16);
+    cmdline_w.push(u16::from(b'"'));
     cmdline_w.push(0);
     // REG_SZ: byte uzunluğu (null dahil).
     let byte_len = cmdline_w.len() * std::mem::size_of::<u16>();
@@ -1890,12 +1894,9 @@ fn toggle_login_item() {
 /// kurulu binary olsun aynı kalır.
 #[cfg(target_os = "linux")]
 fn toggle_login_item() {
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => {
-            ui::notify("HekaDrop", "HOME bulunamadı");
-            return;
-        }
+    let Ok(home) = std::env::var("HOME") else {
+        ui::notify("HekaDrop", "HOME bulunamadı");
+        return;
     };
 
     let unit_dir = std::path::PathBuf::from(&home).join(".config/systemd/user");
@@ -1917,6 +1918,10 @@ fn toggle_login_item() {
         return;
     }
 
+    // Err binding'i `e` format!'da kullanılıyor — `let-else` formunda Err
+    // değişkenine ulaşılamaz; bu match form bilinçli tutuluyor. clippy
+    // refactor önerir ama burada error context detayını koruma tercihi.
+    #[allow(clippy::manual_let_else, clippy::single_match_else)]
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
