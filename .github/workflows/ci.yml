@@ -124,6 +124,58 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  lints-extra:
+    name: Extra lints (machete + hack + typos)
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: lints-extra
+
+      # `cargo hack check` workspace'i compile eder — hekadrop-app GTK3 +
+      # WebKit2GTK system lib'lerine bağlı. Aynı set `test-linux` job'unda da
+      # kurulu (DRY için ayrı action'a çıkarmak gelecek refactor'da).
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            protobuf-compiler \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libdbus-1-dev
+
+      # `taiki-e/install-action` cargo-binstall'a göre çok hızlı (pre-built);
+      # her tool için ayrı `cargo install` yerine paralel binary fetch.
+      - name: Install lint tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete,cargo-hack,typos-cli
+
+      # Workspace-split sonrası unused dep birikimini erken yakalar.
+      - name: cargo-machete (unused deps)
+        run: cargo machete --with-metadata
+
+      # `--no-dev-deps` dev-dep cycles ile uğraşmasın diye; `--feature-powerset`
+      # her feature kombinasyonu için derler — `--features` argümanları bitlenmesin.
+      - name: cargo-hack (feature powerset check)
+        run: cargo hack check --feature-powerset --no-dev-deps --workspace
+
+      - name: typos (codebase typo check)
+        run: typos
+
   test-windows:
     name: Test + Build (Windows)
     runs-on: windows-latest

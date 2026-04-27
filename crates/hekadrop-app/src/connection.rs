@@ -16,7 +16,8 @@ use crate::location::nearby::connections::{
     payload_transfer_frame::{
         self as ptf, payload_header::PayloadType, PayloadChunk, PayloadHeader,
     },
-    v1_frame, ConnectionResponseFrame, OfflineFrame, OsInfo, PayloadTransferFrame, V1Frame,
+    v1_frame, ConnectionResponseFrame, DisconnectionFrame, KeepAliveFrame, OfflineFrame, OsInfo,
+    PayloadTransferFrame, V1Frame,
 };
 use crate::payload::{CompletedPayload, PayloadAssembler};
 use crate::secure::SecureCtx;
@@ -190,7 +191,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
         // okunmuş frame bir daha kullanılmaz çünkü burada bail yolundayız.
         let read_result = tokio::select! {
             biased;
-            _ = cancel.cancelled() => {
+            () = cancel.cancelled() => {
                 info!(
                     "[{}] kullanıcı iptal — Cancel + Disconnect gönderiliyor",
                     peer
@@ -228,9 +229,8 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
         };
 
         let offline = OfflineFrame::decode(inner.as_ref()).context("iç OfflineFrame")?;
-        let v1 = match offline.v1 {
-            Some(v) => v,
-            None => continue,
+        let Some(v1) = offline.v1 else {
+            continue;
         };
         let ftype = v1
             .r#type
@@ -257,6 +257,8 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                         let body_len = chunk.body.as_ref().map(|b| b.len()).unwrap_or(0) as i64;
                         let written = offset + body_len;
                         if total > 0 {
+                            // clamp(0, 100) garantisi ile 0..=100 aralığında — sign loss yok.
+                            #[allow(clippy::cast_sign_loss)]
                             let percent = ((written * 100) / total).clamp(0, 100) as u8;
                             if let Some(name) = pending_names.get(&id).cloned() {
                                 state::set_progress(ProgressState::Receiving {
@@ -333,7 +335,10 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 let keep = st.settings.read().keep_stats;
                                 let snap_opt = {
                                     let mut s = st.stats.write();
-                                    s.record_received(&remote_name_shared, total_size as u64);
+                                    // payload.rs ingest_file aşamasında `total_size < 0` reddediliyor — burada >= 0 garanti.
+                                    #[allow(clippy::cast_sign_loss)]
+                                    let total_size_u = total_size as u64;
+                                    s.record_received(&remote_name_shared, total_size_u);
                                     if keep {
                                         Some(s.clone())
                                     } else {
@@ -384,7 +389,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                     version: Some(1),
                     v1: Some(V1Frame {
                         r#type: Some(v1_frame::FrameType::KeepAlive as i32),
-                        keep_alive: Some(Default::default()),
+                        keep_alive: Some(KeepAliveFrame::default()),
                         ..Default::default()
                     }),
                 };
@@ -744,21 +749,18 @@ async fn handle_sharing_frame(
                 let st = state::get();
                 let snap = {
                     let mut s = st.settings.write();
-                    match peer_secret_id_hash {
-                        Some(h) => {
-                            s.add_trusted_with_hash(remote_name, remote_id, *h);
-                        }
-                        None => {
-                            // Peer hash göndermedi — legacy kayıt yazılır.
-                            // Üç sürüm sonra (v0.7) bu yol kaldırılacak; o zamana
-                            // kadar kullanıcı trust seçtiği halde spec'e uymayan
-                            // peer'lar çalışmaya devam etsin.
-                            info!(
-                                "[{}] peer secret_id_hash göndermedi — legacy trust kaydı yazıldı",
-                                peer
-                            );
-                            s.add_trusted(remote_name, remote_id);
-                        }
+                    if let Some(h) = peer_secret_id_hash {
+                        s.add_trusted_with_hash(remote_name, remote_id, *h);
+                    } else {
+                        // Peer hash göndermedi — legacy kayıt yazılır.
+                        // Üç sürüm sonra (v0.7) bu yol kaldırılacak; o zamana
+                        // kadar kullanıcı trust seçtiği halde spec'e uymayan
+                        // peer'lar çalışmaya devam etsin.
+                        info!(
+                            "[{}] peer secret_id_hash göndermedi — legacy trust kaydı yazıldı",
+                            peer
+                        );
+                        s.add_trusted(remote_name, remote_id);
                     }
                     s.clone()
                 };
@@ -825,59 +827,55 @@ async fn handle_sharing_frame(
 }
 
 fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
-    let text = match std::str::from_utf8(data) {
-        Ok(s) => s.trim().to_string(),
-        Err(_) => {
-            warn!("[{}] UTF-8 olmayan metin payload", peer);
-            return;
-        }
+    let text = if let Ok(s) = std::str::from_utf8(data) {
+        s.trim().to_string()
+    } else {
+        warn!("[{}] UTF-8 olmayan metin payload", peer);
+        return;
     };
-    match kind {
-        TextType::Url => {
-            if is_safe_url_scheme(&text) {
-                crate::platform::open_url(&text);
-                // PRIVACY: Log dosyasına yalnız şema + host düşer; path + query
-                // (token içerebilir) redact. UI bildirimi kullanıcının kendi
-                // ekranında olduğu için tam preview'la gösterilir.
-                info!(
-                    "[{}] URL açıldı: {}",
-                    peer,
-                    crate::log_redact::url_scheme_host(&text)
-                );
-                ui::notify(
-                    crate::i18n::t("notify.app_name"),
-                    &crate::i18n::tf("notify.url_opened", &[&preview(&text, 80)]),
-                );
-            } else {
-                // SECURITY: http/https dışı şemalar (javascript:, file://, smb://
-                // vb.) exfiltration / RCE / NTLM leak riskidir. Otomatik
-                // açılmaz; metin clipboard'a kopyalanır ve kullanıcıya bildirilir.
-                // PRIVACY: Güvensiz URL'nin şema + host'u debug için yeterli;
-                // tam string (javascript: payload vb.) log'a düşmez.
-                warn!(
-                    "[{}] güvensiz şemalı URL reddedildi (yalnız http/https açılır): {}",
-                    peer,
-                    crate::log_redact::url_scheme_host(&text)
-                );
-                crate::platform::copy_to_clipboard(&text);
-                ui::notify(
-                    crate::i18n::t("notify.app_name"),
-                    &crate::i18n::tf("notify.text_clipboard", &[&preview(&text, 80)]),
-                );
-            }
-        }
-        _ => {
-            crate::platform::copy_to_clipboard(&text);
+    if kind == TextType::Url {
+        if is_safe_url_scheme(&text) {
+            crate::platform::open_url(&text);
+            // PRIVACY: Log dosyasına yalnız şema + host düşer; path + query
+            // (token içerebilir) redact. UI bildirimi kullanıcının kendi
+            // ekranında olduğu için tam preview'la gösterilir.
             info!(
-                "[{}] metin panoya kopyalandı ({} karakter)",
+                "[{}] URL açıldı: {}",
                 peer,
-                text.len()
+                crate::log_redact::url_scheme_host(&text)
             );
+            ui::notify(
+                crate::i18n::t("notify.app_name"),
+                &crate::i18n::tf("notify.url_opened", &[&preview(&text, 80)]),
+            );
+        } else {
+            // SECURITY: http/https dışı şemalar (javascript:, file://, smb://
+            // vb.) exfiltration / RCE / NTLM leak riskidir. Otomatik
+            // açılmaz; metin clipboard'a kopyalanır ve kullanıcıya bildirilir.
+            // PRIVACY: Güvensiz URL'nin şema + host'u debug için yeterli;
+            // tam string (javascript: payload vb.) log'a düşmez.
+            warn!(
+                "[{}] güvensiz şemalı URL reddedildi (yalnız http/https açılır): {}",
+                peer,
+                crate::log_redact::url_scheme_host(&text)
+            );
+            crate::platform::copy_to_clipboard(&text);
             ui::notify(
                 crate::i18n::t("notify.app_name"),
                 &crate::i18n::tf("notify.text_clipboard", &[&preview(&text, 80)]),
             );
         }
+    } else {
+        crate::platform::copy_to_clipboard(&text);
+        info!(
+            "[{}] metin panoya kopyalandı ({} karakter)",
+            peer,
+            text.len()
+        );
+        ui::notify(
+            crate::i18n::t("notify.app_name"),
+            &crate::i18n::tf("notify.text_clipboard", &[&preview(&text, 80)]),
+        );
     }
 }
 
@@ -895,7 +893,7 @@ pub(crate) async fn send_disconnection(socket: &mut TcpStream, ctx: &mut SecureC
         version: Some(1),
         v1: Some(V1Frame {
             r#type: Some(v1_frame::FrameType::Disconnection as i32),
-            disconnection: Some(Default::default()),
+            disconnection: Some(DisconnectionFrame::default()),
             ..Default::default()
         }),
     };
@@ -906,6 +904,8 @@ pub(crate) async fn send_disconnection(socket: &mut TcpStream, ctx: &mut SecureC
 
 fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    // HUMAN: log gösterimi — TB üstü dosyada mantissa hassasiyet kaybı tolere edilir.
+    #[allow(clippy::cast_precision_loss)]
     let mut n = bytes as f64;
     let mut i = 0;
     while n >= 1024.0 && i < UNITS.len() - 1 {

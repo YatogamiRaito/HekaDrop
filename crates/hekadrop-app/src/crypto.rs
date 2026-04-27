@@ -16,8 +16,12 @@ type Aes256CbcDec = Decryptor<Aes256>;
 pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
     let hk = Hkdf::<Sha256>::new(Some(salt), ikm);
     let mut out = vec![0u8; len];
+    // INVARIANT: HKDF-SHA256 yalnızca `len > 255 * HashLen (= 8160 bayt)` için
+    // başarısız olur; tüm caller'lar (UKEY2 key derivation, Quick Share session
+    // keys) ≤32 bayt ister. Çağrı kontrat ihlali = programlama hatası.
+    #[allow(clippy::expect_used)]
     hk.expand(info, &mut out)
-        .expect("HKDF genişletme başarısız");
+        .expect("HKDF len > 255*32 invariant ihlali");
     out
 }
 
@@ -40,7 +44,7 @@ pub fn pin_code_from_auth_key(key: &[u8]) -> String {
     let mut mult: i64 = 1;
     const MOD: i64 = 9973;
     for &b in key {
-        let signed = b as i8 as i64;
+        let signed = i64::from(b as i8);
         hash = (hash + signed * mult).rem_euclid(MOD);
         mult = (mult * 31).rem_euclid(MOD);
     }
@@ -62,7 +66,13 @@ pub fn session_fingerprint(auth_key: &[u8]) -> String {
 }
 
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC anahtar boyu");
+    // INVARIANT: HMAC-SHA256 spec'i (RFC 2104) tüm key uzunluklarını kabul eder
+    // (kısa key zero-pad'lenir, uzun key SHA-256'dan geçer). `new_from_slice`
+    // dökümante edilmiş olarak hiçbir koşulda fail etmez — yalnız trait
+    // signature uniformluğu için Result döner.
+    #[allow(clippy::expect_used)]
+    let mut mac =
+        HmacSha256::new_from_slice(key).expect("HMAC-SHA256 her key uzunluğunu kabul eder");
     mac.update(data);
     let result = mac.finalize().into_bytes();
     let mut out = [0u8; 32];

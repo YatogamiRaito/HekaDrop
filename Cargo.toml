@@ -11,6 +11,73 @@ license = "MIT"
 repository = "https://github.com/YatogamiRaito/HekaDrop"
 homepage = "https://github.com/YatogamiRaito/HekaDrop"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Workspace-wide lint policy
+# ─────────────────────────────────────────────────────────────────────────────
+# Felsefe: enforceable lint set. Burada listelenen her lint, mevcut codebase'de
+# 0 violation üretir; yeni kod bu disiplini bozarsa CI (-D warnings) kırılır.
+#
+# Kapsam dışı bırakılanlar (RED-tier — ayrı tracking issue'larla cleanup):
+#   * clippy::pedantic umbrella (~1,228 hit)        — issue #TBD
+#   * clippy::doc_markdown (445 hand + 792 gen)     — issue #TBD
+#   * unreachable_pub (349)                         — issue #TBD
+#   * clippy::uninlined_format_args (225)           — bu PR'da --fix uygulandı
+#   * clippy::must_use_candidate (71 hand)          — issue #TBD
+#   * clippy::match_same_arms (68)                  — issue #TBD
+#   * clippy::cast_possible_wrap (36, security)     — issue #TBD (audit gerekiyor)
+#   * unused_crate_dependencies                     — false-pos cascade, atlandı
+#
+# Konsensus referans: Embark, uv, ruff. Top-tier (tokio/ripgrep/rustls/hyper)
+# minimal config tercih ediyor; biz crypto/protocol surface taşıyan bir desktop
+# app olduğumuz için Embark-tier'a daha yakın duruyoruz.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+single_use_lifetimes = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+
+[workspace.lints.clippy]
+# Ship-blocker'lar — production'a sızmamalı
+dbg_macro = "deny"
+print_stdout = "warn"
+print_stderr = "warn"
+todo = "warn"
+unimplemented = "warn"
+exit = "warn"
+# Korumalı paniği zorla — unwrap/expect/panic prod'da yasak; testte allow'lu
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+# Numerik güvenlik — silent truncation/overflow tespiti
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_precision_loss = "warn"
+cast_lossless = "warn"
+# unsafe disiplini — her unsafe block "// SAFETY:" ister
+undocumented_unsafe_blocks = "warn"
+missing_safety_doc = "warn"
+# Embark/uv/ruff konsensus — security ve correctness sinyali güçlü
+rc_mutex = "warn"
+mem_forget = "warn"
+map_err_ignore = "warn"
+empty_drop = "warn"
+get_unwrap = "warn"
+redundant_clone = "warn"
+use_self = "warn"
+# Kalite — düşük volüm, anlık temizlik
+manual_let_else = "warn"
+ignored_unit_patterns = "warn"
+trivially_copy_pass_by_ref = "warn"
+single_match_else = "warn"
+default_trait_access = "warn"
+large_enum_variant = "warn"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+missing_crate_level_docs = "warn"
+
 [profile.release]
 opt-level = "z"
 lto = true

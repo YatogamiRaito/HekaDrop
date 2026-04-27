@@ -17,7 +17,9 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-arbitrary = { version = "1", features = ["derive"] }
+# `arbitrary` cargo-fuzz template'inden kalmıştı; mevcut fuzz target'larımız
+# raw `&[u8]` slice'ı doğrudan tüketiyor (`#[derive(Arbitrary)]` kullanmıyoruz).
+# İhtiyaç doğunca yeniden eklenir.
 
 [dependencies.hekadrop]
 path = ".."

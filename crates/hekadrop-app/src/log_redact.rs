@@ -41,9 +41,8 @@ pub fn sha_short(sha_hex: &str) -> &str {
 /// Şema veya host parse edilemezse `<unparsable>` döner.
 pub fn url_scheme_host(url: &str) -> String {
     let trimmed = url.trim();
-    let (scheme, rest) = match trimmed.split_once("://") {
-        Some(pair) => pair,
-        None => return "<unparsable>".to_string(),
+    let Some((scheme, rest)) = trimmed.split_once("://") else {
+        return "<unparsable>".to_string();
     };
     if scheme.is_empty() {
         return "<unparsable>".to_string();

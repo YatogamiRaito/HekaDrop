@@ -61,16 +61,13 @@ pub async fn accept_loop(listener: TcpListener) -> Result<()> {
         }
 
         // `try_acquire_owned` — bloklamaz; doluysa bağlantıyı hemen kapat.
-        let permit = match Arc::clone(&permits).try_acquire_owned() {
-            Ok(p) => p,
-            Err(_) => {
-                warn!(
-                    "max concurrent ({}) aşıldı — {} reddedildi",
-                    MAX_CONCURRENT_CONNECTIONS, addr
-                );
-                drop(socket);
-                continue;
-            }
+        let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
+            warn!(
+                "max concurrent ({}) aşıldı — {} reddedildi",
+                MAX_CONCURRENT_CONNECTIONS, addr
+            );
+            drop(socket);
+            continue;
         };
 
         info!("bağlantı: {}", addr);

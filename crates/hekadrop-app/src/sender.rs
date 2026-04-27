@@ -24,7 +24,7 @@ use crate::location::nearby::connections::{
     payload_transfer_frame::{
         self as ptf, payload_header::PayloadType, PayloadChunk, PayloadHeader,
     },
-    v1_frame, ConnectionRequestFrame, OfflineFrame, PayloadTransferFrame, V1Frame,
+    v1_frame, ConnectionRequestFrame, KeepAliveFrame, OfflineFrame, PayloadTransferFrame, V1Frame,
 };
 use crate::payload::{CompletedPayload, PayloadAssembler};
 use crate::secure::SecureCtx;
@@ -183,7 +183,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
         // bail yolunda terk ediyoruz.
         let raw = tokio::select! {
             biased;
-            _ = cancel_token.cancelled() => {
+            () = cancel_token.cancelled() => {
                 info!("[sender] kullanıcı iptal etti");
                 let cancel = connection::build_sharing_cancel();
                 connection::send_sharing_frame(&mut socket, &mut ctx, &cancel)
@@ -320,7 +320,10 @@ pub async fn send(req: SendRequest) -> Result<()> {
                             let snap_opt = {
                                 let mut s = st.stats.write();
                                 for plan in &plans {
-                                    s.record_sent(&peer_label, plan.size.max(0) as u64);
+                                    // .max(0) ile alt sınır 0 — sign loss imkansız.
+                                    #[allow(clippy::cast_sign_loss)]
+                                    let size_u = plan.size.max(0) as u64;
+                                    s.record_sent(&peer_label, size_u);
                                 }
                                 if keep {
                                     Some(s.clone())
@@ -355,7 +358,7 @@ pub async fn send(req: SendRequest) -> Result<()> {
                     version: Some(1),
                     v1: Some(V1Frame {
                         r#type: Some(v1_frame::FrameType::KeepAlive as i32),
-                        keep_alive: Some(Default::default()),
+                        keep_alive: Some(KeepAliveFrame::default()),
                         ..Default::default()
                     }),
                 };
@@ -433,8 +436,10 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     // `as i64` cast i64::MAX üstü uzunlukta wrap/negatif üretir; protokol
     // field'ları (`size`, `total_size`) bozulur. Pratikte bir String bu boyuta
     // ulaşamaz ama savunma amaçlı erken hata.
-    let total_bytes: i64 = i64::try_from(text.len())
-        .map_err(|_| anyhow!("metin payload çok büyük: {} bayt", text.len()))?;
+    // TryFromIntError ZST; orijinal "out of range" mesajı kullanıcıya bilgi katmıyor — kendi context'imizi yazıyoruz.
+    let total_bytes: i64 = i64::try_from(text.len()).map_err(|_e: std::num::TryFromIntError| {
+        anyhow!("metin payload çok büyük: {} bayt", text.len())
+    })?;
     let payload_id = (rand::thread_rng().next_u64() >> 1) as i64;
     // URL şeklinde ise TextKind::Url ile etiketliyoruz: Android/alıcı share
     // sheet'te URL'i "Tarayıcıda aç" aksiyonuyla gösterir. Aksi hâlde düz TEXT.
@@ -459,7 +464,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     // SYN retry bekletmesin, iptal anında çıkabilsin.
     let mut socket = tokio::select! {
         biased;
-        _ = cancel_token.cancelled() => return Err(HekaError::UserCancelled.into()),
+        () = cancel_token.cancelled() => return Err(HekaError::UserCancelled.into()),
         res = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addr)) => {
             match res {
                 Ok(r) => r?,
@@ -507,7 +512,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     loop {
         let raw = tokio::select! {
             biased;
-            _ = cancel_token.cancelled() => {
+            () = cancel_token.cancelled() => {
                 info!("[sender] kullanıcı iptal etti (metin)");
                 let cancel = connection::build_sharing_cancel();
                 connection::send_sharing_frame(&mut socket, &mut ctx, &cancel).await.ok();
@@ -613,7 +618,10 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                             let keep = st.settings.read().keep_stats;
                             let snap_opt = {
                                 let mut s = st.stats.write();
-                                s.record_sent(&peer_label, total_bytes.max(0) as u64);
+                                // .max(0) ile alt sınır 0 — sign loss imkansız.
+                                #[allow(clippy::cast_sign_loss)]
+                                let total_bytes_u = total_bytes.max(0) as u64;
+                                s.record_sent(&peer_label, total_bytes_u);
                                 if keep {
                                     Some(s.clone())
                                 } else {
@@ -642,7 +650,7 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
                     version: Some(1),
                     v1: Some(V1Frame {
                         r#type: Some(v1_frame::FrameType::KeepAlive as i32),
-                        keep_alive: Some(Default::default()),
+                        keep_alive: Some(KeepAliveFrame::default()),
                         ..Default::default()
                     }),
                 };
@@ -672,8 +680,10 @@ async fn send_text_bytes(
     // `as i64` cast i64::MAX üstünde wrap üretir; header'ın `total_size`'ı
     // negatif olup receiver protokol hatası verir. Pratikte erişilemez ama
     // erken ve anlamlı hata daha iyi.
-    let total = i64::try_from(data.len())
-        .map_err(|_| anyhow!("metin payload çok büyük: {} bayt", data.len()))?;
+    // TryFromIntError ZST; orijinal mesaj bilgi katmıyor — kendi context'imiz daha açıklayıcı.
+    let total = i64::try_from(data.len()).map_err(|_e: std::num::TryFromIntError| {
+        anyhow!("metin payload çok büyük: {} bayt", data.len())
+    })?;
     let mut offset: usize = 0;
     while offset < data.len() {
         if cancel.is_cancelled() {
@@ -682,14 +692,17 @@ async fn send_text_bytes(
         let end = (offset + CHUNK_SIZE).min(data.len());
         let body = data[offset..end].to_vec();
         let last_flag = 0;
-        let offset_i64 = i64::try_from(offset)
-            .map_err(|_| anyhow!("metin payload offset'i çok büyük: {}", offset))?;
+        // TryFromIntError ZST; bizim context daha bilgilendirici.
+        let offset_i64 = i64::try_from(offset).map_err(|_e: std::num::TryFromIntError| {
+            anyhow!("metin payload offset'i çok büyük: {}", offset)
+        })?;
         let wrapped = wrap_bytes_payload_transfer(payload_id, total, offset_i64, last_flag, body);
         let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
         frame::write_frame(socket, &enc).await?;
         offset = end;
-        let offset_i64 = i64::try_from(offset)
-            .map_err(|_| anyhow!("metin payload offset'i çok büyük: {}", offset))?;
+        let offset_i64 = i64::try_from(offset).map_err(|_e: std::num::TryFromIntError| {
+            anyhow!("metin payload offset'i çok büyük: {}", offset)
+        })?;
         if let Some(percent) = compute_percent(0, offset_i64, total) {
             state::set_progress(ProgressState::Receiving {
                 device: peer_label.to_string(),
@@ -787,7 +800,7 @@ async fn send_file_chunks(
         // Cancel yolunda yarım okunmuş chunk terk edilir; zaten bail'liyoruz.
         let n = tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Err(HekaError::CancelledDuringChunk.into()),
+            () = cancel.cancelled() => return Err(HekaError::CancelledDuringChunk.into()),
             res = file.read(&mut buf) => res?,
         };
         if n == 0 {
@@ -835,13 +848,11 @@ async fn send_file_chunks(
 /// sarmalayıcısıyla uygulanır.
 async fn wait_peer_disconnect(socket: &mut TcpStream, ctx: &mut SecureCtx) -> Result<()> {
     loop {
-        let raw = match frame::read_frame(socket).await {
-            Ok(r) => r,
-            Err(_) => return Ok(()),
+        let Ok(raw) = frame::read_frame(socket).await else {
+            return Ok(());
         };
-        let inner = match ctx.decrypt(&raw) {
-            Ok(b) => b,
-            Err(_) => continue,
+        let Ok(inner) = ctx.decrypt(&raw) else {
+            continue;
         };
         let Ok(offline) = OfflineFrame::decode(inner.as_ref()) else {
             continue;
@@ -857,7 +868,7 @@ async fn wait_peer_disconnect(socket: &mut TcpStream, ctx: &mut SecureCtx) -> Re
                     version: Some(1),
                     v1: Some(V1Frame {
                         r#type: Some(v1_frame::FrameType::KeepAlive as i32),
-                        keep_alive: Some(Default::default()),
+                        keep_alive: Some(KeepAliveFrame::default()),
                         ..Default::default()
                     }),
                 };
@@ -964,7 +975,10 @@ fn compute_percent(bytes_before: i64, offset: i64, total: i64) -> Option<u8> {
     let cumulative = bytes_before.checked_add(offset)?;
     let product = cumulative.checked_mul(100)?;
     let raw = product.checked_div(total)?;
-    Some(raw.clamp(0, 100) as u8)
+    // clamp(0, 100) sonrası değer 0..=100 aralığında — sign loss imkansız.
+    #[allow(clippy::cast_sign_loss)]
+    let percent = raw.clamp(0, 100) as u8;
+    Some(percent)
 }
 
 fn build_connection_request(our_name: &str) -> OfflineFrame {

@@ -193,6 +193,10 @@ fn prompt_accept_blocking(
     let msg_w = to_wide(&message);
     let title_w = to_wide(title);
 
+    // SAFETY: `msg_w` ve `title_w` `to_wide` ile üretilmiş, NUL ile sonlanan
+    // local `Vec<u16>`'lar; çağrı süresince scope'ta yaşıyor. `MessageBoxW`
+    // PCWSTR'leri yalnızca embedded NUL'a kadar okur ve senkron döner;
+    // `HWND::default()` (NULL parent) MSDN'de top-level dialog için geçerli.
     let result = unsafe {
         MessageBoxW(
             Some(HWND::default()),
@@ -497,9 +501,13 @@ pub fn fatal_error_dialog(title: &str, body: &str) {
                 .args(["--title", title, "--error", body])
                 .status();
         } else {
-            // Dialog yoksa stderr'e düş — headless ortamda en azından
-            // kullanıcı terminalde görür.
-            eprintln!("[HekaDrop] {}: {}", title, body);
+            // Dialog yoksa stderr'e düş — headless / VM / SSH ortamlarında
+            // en azından kullanıcı terminalde fatal mesajı görür. Tracing
+            // henüz initialize olmamış olabilir (startup-fatal).
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("[HekaDrop] {}: {}", title, body);
+            }
         }
     }
     #[cfg(target_os = "windows")]
@@ -513,6 +521,10 @@ pub fn fatal_error_dialog(title: &str, body: &str) {
         let body_w = to_wide(body);
         let title_w = to_wide(title);
         // Startup path'te — thread spawn etmeden main thread'de blokla.
+        // SAFETY: `body_w` ve `title_w` `to_wide` ile üretilmiş NUL-terminated
+        // local `Vec<u16>`'lar; senkron `MessageBoxW` çağrısı süresince
+        // canlı. PCWSTR'ler yalnızca NUL'a kadar okunur, parent HWND NULL
+        // (top-level) MSDN'de geçerli; dönüş değerini umursamıyoruz.
         unsafe {
             MessageBoxW(
                 Some(HWND::default()),
@@ -572,6 +584,11 @@ pub fn show_info(title: &str, body: &str) {
                 };
                 let body_w = to_wide(&body);
                 let title_w = to_wide(&title);
+                // SAFETY: `body_w` ve `title_w` `to_wide` ile üretilmiş NUL-
+                // terminated `Vec<u16>`'lar; bu spawn edilmiş thread'in
+                // closure'u ile sahiplenildikleri için senkron `MessageBoxW`
+                // dönene kadar canlı. PCWSTR'ler yalnızca NUL'a kadar okunur,
+                // NULL parent HWND top-level dialog için MSDN'de geçerli.
                 unsafe {
                     MessageBoxW(
                         Some(HWND::default()),
@@ -1087,6 +1104,8 @@ fn have(bin: &str) -> bool {
 
 fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    // HUMAN: byte sayısını okunur birime çevirmek için precision loss kabul.
+    #[allow(clippy::cast_precision_loss)]
     let mut n = bytes as f64;
     let mut i = 0;
     while n >= 1024.0 && i < UNITS.len() - 1 {

@@ -77,10 +77,10 @@ impl LogLevel {
     /// düşer.
     pub fn filter_directive(self) -> &'static str {
         match self {
-            LogLevel::Error => "hekadrop=error",
-            LogLevel::Warn => "hekadrop=warn",
-            LogLevel::Info => "hekadrop=info",
-            LogLevel::Debug => "hekadrop=debug",
+            Self::Error => "hekadrop=error",
+            Self::Warn => "hekadrop=warn",
+            Self::Info => "hekadrop=info",
+            Self::Debug => "hekadrop=debug",
         }
     }
 
@@ -88,10 +88,10 @@ impl LogLevel {
     /// ile aynı değer. IPC JSON parsing tarafında string karşılaştırması için.
     pub fn as_str(self) -> &'static str {
         match self {
-            LogLevel::Error => "error",
-            LogLevel::Warn => "warn",
-            LogLevel::Info => "info",
-            LogLevel::Debug => "debug",
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
         }
     }
 
@@ -99,10 +99,10 @@ impl LogLevel {
     /// değerler `Info` default'una düşer (invalid input'ta sessiz güven).
     pub fn parse_or_default(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
-            "error" => LogLevel::Error,
-            "warn" | "warning" => LogLevel::Warn,
-            "debug" => LogLevel::Debug,
-            _ => LogLevel::Info,
+            "error" => Self::Error,
+            "warn" | "warning" => Self::Warn,
+            "debug" => Self::Debug,
+            _ => Self::Info,
         }
     }
 }
@@ -145,6 +145,8 @@ pub struct TrustedDevice {
 mod hex_hash_opt {
     use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
 
+    // serde signature kontratı `&Option<T>` ister — pass-by-value yapılamaz.
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn serialize<S: Serializer>(value: &Option<[u8; 6]>, s: S) -> Result<S::Ok, S::Error> {
         match value {
             Some(bytes) => s.serialize_str(&hex::encode(bytes)),
@@ -301,6 +303,10 @@ impl Settings {
     /// (süresiz trust). Kayıt silinmez, sadece güvenilir sayılmaz —
     /// kullanıcı yeniden "kabul + güven" seçerse `add_trusted_with_hash`
     /// timestamp'i yeniler.
+    // API ergonomics: caller'lar `&hash` ile çağırıyor (storage'da `Option<[u8;6]>`),
+    // by-value `*hash` deref talebi kod akışını bozar. 2 byte pass-by-ref overhead
+    // kabul edilebilir; bu yöntem hot path değil (trust kontrolü, frame başına ≤1).
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn is_trusted_by_hash(&self, hash: &[u8; 6]) -> bool {
         let now = now_epoch();
         let ttl = self.trust_ttl_secs;
@@ -391,6 +397,8 @@ impl Settings {
     /// Mevcut trusted bağlantı yeniden kullanıldığında timestamp'i yenile
     /// (sliding-window TTL). Aksi halde aktif cihazlar 7 gün sonunda
     /// dialog sorardı; bu UX'i fena bozar. Hash eşleşmeyen çağrı no-op.
+    // API ergonomics: bkz. `is_trusted_by_hash` aynı gerekçe.
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn touch_trusted_by_hash(&mut self, hash: &[u8; 6]) {
         let now = now_epoch();
         if let Some(existing) = self
@@ -511,7 +519,7 @@ impl Settings {
         let path = config_path();
         std::fs::read_to_string(&path)
             .ok()
-            .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
+            .and_then(|s| serde_json::from_str::<Self>(&s).ok())
             .unwrap_or_default()
     }
 
@@ -694,6 +702,11 @@ fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
     src_w.push(0);
     let mut dst_w: Vec<u16> = dst.as_os_str().encode_wide().collect();
     dst_w.push(0);
+    // SAFETY: `src_w` ve `dst_w` `encode_wide` + manuel `push(0)` ile
+    // NUL-terminated UTF-16 buffer'lar; `MoveFileExW` senkron çağrısı
+    // süresince scope'ta canlı. PCWSTR'ler yalnızca embedded NUL'a kadar
+    // okunur; başka pointer/handle paylaşımı yok, dönüş değeri Result olarak
+    // ele alınıyor.
     unsafe {
         MoveFileExW(
             PCWSTR(src_w.as_ptr()),

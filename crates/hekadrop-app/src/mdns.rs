@@ -24,7 +24,7 @@ impl Drop for MdnsHandle {
 pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
     let service_type = config::service_type();
     let endpoint_id = config::random_endpoint_id();
-    let instance = config::instance_name(&endpoint_id);
+    let instance = config::instance_name(endpoint_id);
     let endpoint_info_b64 = config::endpoint_info_b64(device_name);
 
     // Sadece fiziksel/kablosuz arayüzleri yayınla. Docker, libvirt, Tailscale ve
