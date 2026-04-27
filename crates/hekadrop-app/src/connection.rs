@@ -1652,4 +1652,49 @@ mod tests {
         assert!(!is_safe_url_scheme("http"));
         assert!(!is_safe_url_scheme("://example.com"));
     }
+
+    /// `compute_recv_percent` security-critical helper — peer'den gelen
+    /// unvalidated `offset` + `body_len` + `total` ile checked aritmetik
+    /// yapıyor. Her code path için en az bir vektör; overflow korumasını da
+    /// kapatıyor.
+    ///
+    /// Bkz. PR #88 review (Gemini medium-priority + Copilot): test eksikti.
+    #[test]
+    fn compute_recv_percent_normal_cases() {
+        // Yarı yol: offset=0, body=500, total=1000 → 500/1000 = 50%
+        assert_eq!(compute_recv_percent(0, 500, 1000), Some(50));
+        // Tam: offset=500, body=500, total=1000 → 100%
+        assert_eq!(compute_recv_percent(500, 500, 1000), Some(100));
+        // Başlangıç: offset=0, body=0, total=1000 → 0%
+        assert_eq!(compute_recv_percent(0, 0, 1000), Some(0));
+        // Round-down: 333/1000 = 33.3% → 33 (i64 div truncates)
+        assert_eq!(compute_recv_percent(0, 333, 1000), Some(33));
+    }
+
+    #[test]
+    fn compute_recv_percent_invalid_total_returns_none() {
+        // total = 0 → caller progress update'ini atlamalı (DivByZero koruması)
+        assert_eq!(compute_recv_percent(0, 0, 0), None);
+        // total negatif (peer protokol ihlali) → None
+        assert_eq!(compute_recv_percent(0, 100, -1), None);
+        assert_eq!(compute_recv_percent(0, 100, i64::MIN), None);
+    }
+
+    #[test]
+    fn compute_recv_percent_clamps_out_of_range() {
+        // Negatif offset (peer ihlali) → written negatif → clamp(0,100)=0
+        assert_eq!(compute_recv_percent(-10, 5, 100), Some(0));
+        // written > total → percent > 100 → clamp(0,100)=100
+        assert_eq!(compute_recv_percent(2000, 0, 1000), Some(100));
+    }
+
+    #[test]
+    fn compute_recv_percent_overflow_returns_none() {
+        // checked_add overflow: offset=i64::MAX, body=1 → +1 wrap → None
+        assert_eq!(compute_recv_percent(i64::MAX, 1, i64::MAX), None);
+        // checked_mul overflow: i64::MAX/2 * 100 → wrap → None
+        assert_eq!(compute_recv_percent(i64::MAX / 2, 0, i64::MAX), None);
+        // body_len = usize::MAX (64-bit'te i64'e sığmaz) → try_from None
+        assert_eq!(compute_recv_percent(0, usize::MAX, 1000), None);
+    }
 }
