@@ -44,7 +44,7 @@
 // shim üzerinden core'a ulaşır.
 pub use hekadrop_core::{
     config, crypto, error, file_size_guard, frame, identity, log_redact, payload, secure, settings,
-    stats, ukey2,
+    stats, ui_port, ukey2,
 };
 
 // RFC-0001 §5 Adım 2: protobuf bindings `hekadrop-proto` crate'inden

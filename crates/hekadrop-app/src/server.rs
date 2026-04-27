@@ -1,5 +1,6 @@
 use crate::connection;
 use anyhow::Result;
+use hekadrop_core::ui_port::UiPort;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
@@ -47,7 +48,7 @@ pub async fn start_listener() -> Result<TcpListener> {
     }
 }
 
-pub async fn accept_loop(listener: TcpListener) -> Result<()> {
+pub async fn accept_loop(listener: TcpListener, ui: Arc<dyn UiPort>) -> Result<()> {
     let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
     loop {
         let (socket, addr) = listener.accept().await?;
@@ -71,8 +72,9 @@ pub async fn accept_loop(listener: TcpListener) -> Result<()> {
         };
 
         info!("bağlantı: {}", addr);
+        let ui_for_conn = Arc::clone(&ui);
         tokio::spawn(async move {
-            if let Err(e) = connection::handle(socket, addr).await {
+            if let Err(e) = connection::handle(socket, addr, ui_for_conn).await {
                 warn!("bağlantı hatası ({}): {:?}", addr, e);
             }
             drop(permit); // connection bittiğinde permit geri döner

@@ -66,6 +66,7 @@ mod sender;
 mod server;
 mod state;
 mod ui;
+mod ui_adapter;
 
 static RUNTIME: OnceLock<Handle> = OnceLock::new();
 
@@ -104,8 +105,17 @@ async fn async_main() -> Result<()> {
         None
     };
 
+    // RFC-0001 §5 Adım 5b — UiPort dependency injection. `connection::handle`
+    // artık `crate::ui::*`'i doğrudan import etmiyor; tüm toast/dialog
+    // çağrıları `Arc<dyn UiPort>` üzerinden geçer. `UiAdapter` mevcut
+    // `crate::ui` + `crate::i18n` çevrimini sarar — kullanıcıya görünen
+    // davranış değişmez, ama core'a taşınınca `tao`/`wry`/`notify-rust`
+    // bağımlılığı sızmaz.
+    let ui_port: std::sync::Arc<dyn hekadrop_core::ui_port::UiPort> =
+        std::sync::Arc::new(ui_adapter::UiAdapter::new());
+
     tokio::select! {
-        res = server::accept_loop(listener) => {
+        res = server::accept_loop(listener, ui_port) => {
             if let Err(e) = res {
                 tracing::error!("accept_loop hata: {:?}", e);
             }
