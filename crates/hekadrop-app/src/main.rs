@@ -51,19 +51,31 @@ use wry::{DragDropEvent, WebViewBuilder};
 // core'a taşındı; aşağıdaki `use ...` bin için crate-içi alias üretiyor (lib.rs
 // dış tüketiciler için ayrıca `pub use` ediyor) — `crate::settings::*` gibi
 // in-tree çağrı noktaları dokunulmadan derlenir.
-use hekadrop_core::{
-    config, crypto, error, file_size_guard, frame, identity, log_redact, payload, secure, settings,
-    stats, ukey2,
-};
+// RFC-0001 §5 Adım 5c — `connection`, `sender`, `server`, `state` (plain
+// struct + impl), `discovery_types` core'a taşındı. Aşağıdaki re-export +
+// app-side `state` shim dosyası in-tree call site'ları (`crate::state::*`,
+// `crate::connection::*`, `crate::sender::*`, `crate::server::*`,
+// `crate::discovery_types::*`) dokunulmadan derler.
+use hekadrop_core::discovery_types::DeviceKind;
+use hekadrop_core::{config, connection, log_redact, sender, server, settings, stats};
 
-mod connection;
+/// `DeviceKind` → kullanıcıya gösterilen Türkçe etiket (emoji ile). Core
+/// UI/i18n-agnostic kalsın diye bu mapping app crate'inde — PR #93 review
+/// (Copilot) sonrası kind_label() core'dan çıkartıldı.
+fn device_kind_label(kind: DeviceKind) -> &'static str {
+    match kind {
+        DeviceKind::Phone => "📱 Telefon",
+        DeviceKind::Tablet => "📱 Tablet",
+        DeviceKind::Computer => "💻 Bilgisayar",
+        DeviceKind::Unknown => "❓ Bilinmeyen",
+    }
+}
+
 mod discovery;
 mod i18n;
 mod mdns;
 mod paths;
 mod platform;
-mod sender;
-mod server;
 mod state;
 mod ui;
 mod ui_adapter;
@@ -114,8 +126,14 @@ async fn async_main() -> Result<()> {
     let ui_port: std::sync::Arc<dyn hekadrop_core::ui_port::UiPort> =
         std::sync::Arc::new(ui_adapter::UiAdapter::new());
 
+    // RFC-0001 §5 Adım 5c — connection.rs core'a taşındıktan sonra
+    // `crate::platform::open_url` / `copy_to_clipboard` çağrıları doğrudan
+    // sızdırılamaz. `PlatformAdapter` trait üzerinden bu shim'i kapsüller.
+    let platform_ops: std::sync::Arc<dyn connection::PlatformOps> =
+        std::sync::Arc::new(ui_adapter::PlatformAdapter::new());
+
     tokio::select! {
-        res = server::accept_loop(listener, ui_port) => {
+        res = server::accept_loop(listener, ui_port, state::get(), platform_ops) => {
             if let Err(e) = res {
                 tracing::error!("accept_loop hata: {:?}", e);
             }
@@ -1268,7 +1286,15 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
 
     let labels: Vec<String> = devices
         .iter()
-        .map(|d| format!("{} — {} ({}:{})", d.kind_label(), d.name, d.addr, d.port))
+        .map(|d| {
+            format!(
+                "{} — {} ({}:{})",
+                device_kind_label(d.kind()),
+                d.name,
+                d.addr,
+                d.port
+            )
+        })
         .collect();
     let Some(idx) = ui::choose_device(labels).await else {
         return;
@@ -1293,7 +1319,7 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
         device: device.clone(),
         files,
     };
-    match sender::send(req).await {
+    match sender::send(req, state::get()).await {
         Ok(()) => {
             ui::notify(
                 i18n::t("notify.app_name"),
@@ -1336,7 +1362,15 @@ async fn initiate_text_send_flow(text: String) {
 
     let labels: Vec<String> = devices
         .iter()
-        .map(|d| format!("{} — {} ({}:{})", d.kind_label(), d.name, d.addr, d.port))
+        .map(|d| {
+            format!(
+                "{} — {} ({}:{})",
+                device_kind_label(d.kind()),
+                d.name,
+                d.addr,
+                d.port
+            )
+        })
         .collect();
     let Some(idx) = ui::choose_device(labels).await else {
         return;
@@ -1355,7 +1389,10 @@ async fn initiate_text_send_flow(text: String) {
         device: device.clone(),
         text,
     };
-    match sender::send_text(req).await {
+    let send_ctx = sender::SendCtx {
+        text_summary: i18n::t("sender.text_summary").to_string(),
+    };
+    match sender::send_text(req, state::get(), send_ctx).await {
         Ok(()) => {
             ui::notify(
                 i18n::t("notify.app_name"),

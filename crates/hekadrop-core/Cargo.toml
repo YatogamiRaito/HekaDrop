@@ -30,7 +30,23 @@ hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
 # payload.rs `Handle::try_current()` için; `rt-multi-thread` payload.rs
 # `tokio::task::block_in_place` çağrısı için zorunlu — sync I/O wrap'i
 # yalnız multi-thread runtime'da çalışır.
-tokio = { version = "1", features = ["net", "io-util", "time", "rt", "rt-multi-thread"] }
+#
+# Adım 5c sonrası: `sync` (Semaphore — server.rs; Mutex/RwLock async),
+# `macros` (connection.rs / sender.rs `tokio::select!`), `fs` (sender.rs
+# `tokio::fs::File` — disk read while reading chunks).
+tokio = { version = "1", features = [
+    "net",
+    "io-util",
+    "time",
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "macros",
+    "fs",
+] }
+# Adım 5c: `state.rs` `CancellationToken` (cancel propagation) + `rt`
+# Handle bağlama. Public surface (`AppState.cancel_root` field tipi).
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # settings.rs / stats.rs JSON kalıcı hâl serileştirmesi.
 serde = { version = "1", features = ["derive"] }

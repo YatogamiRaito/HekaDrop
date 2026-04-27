@@ -54,6 +54,19 @@ pub mod stats;
 pub mod ui_port;
 pub mod ukey2;
 
+// RFC-0001 §5 Adım 5c — `connection`, `sender`, `server`, `state`,
+// `discovery_types` core'a taşındı. Bu modüller `crate::location::*`,
+// `crate::sharing::*` çağrı kuyruğunu (in-tree) korumak için protobuf
+// bindings'i root-level re-export ediyoruz; aynı pattern app shim'inde
+// de var (lib.rs / main.rs).
+pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
+
+pub mod connection;
+pub mod discovery_types;
+pub mod sender;
+pub mod server;
+pub mod state;
+
 // Fuzz harness (`crates/hekadrop-app/fuzz/fuzz_targets/fuzz_ukey2_handshake_init.rs`)
 // ve test'ler eski lib.rs surface üzerinden bu sembolleri root-level alıyordu;
 // shim app tarafında devam ettirir ama core de kendi root pub re-export'larını

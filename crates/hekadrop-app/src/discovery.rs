@@ -13,25 +13,10 @@ use std::net::IpAddr;
 use std::time::Duration;
 use tracing::debug;
 
-#[derive(Debug, Clone)]
-pub struct DiscoveredDevice {
-    pub name: String,
-    pub addr: IpAddr,
-    pub port: u16,
-    pub device_type: u8,
-    pub fullname: String,
-}
-
-impl DiscoveredDevice {
-    pub fn kind_label(&self) -> &'static str {
-        match self.device_type {
-            1 => "📱 Telefon",
-            2 => "📱 Tablet",
-            3 => "💻 Bilgisayar",
-            _ => "❓ Bilinmeyen",
-        }
-    }
-}
+// RFC-0001 §5 Adım 5c — `DiscoveredDevice` POD core'a taşındı
+// (`hekadrop_core::discovery_types`). App crate'i mDNS scan'i ve
+// parse'ı barındırır; sender / UI bu re-export üzerinden tipi alır.
+pub use hekadrop_core::discovery_types::DiscoveredDevice;
 
 /// Belirtilen süre boyunca mDNS tarar, bulunan tüm Quick Share cihazlarını döner.
 /// Kendi yayın yaptığımız servisi (aynı hostname + port) filtreler.
