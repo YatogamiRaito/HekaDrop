@@ -51,6 +51,7 @@ pub mod payload;
 pub mod secure;
 pub mod settings;
 pub mod stats;
+pub mod ui_port;
 pub mod ukey2;
 
 // Fuzz harness (`crates/hekadrop-app/fuzz/fuzz_targets/fuzz_ukey2_handshake_init.rs`)

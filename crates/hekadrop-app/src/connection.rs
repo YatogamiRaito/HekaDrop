@@ -28,18 +28,19 @@ use crate::sharing::nearby::{
     PairedKeyEncryptionFrame, PairedKeyResultFrame, V1Frame as ShV1Frame,
 };
 use crate::state::{self, HistoryItem, ProgressState};
-use crate::ui;
 use crate::ukey2;
 use anyhow::{anyhow, Context, Result};
+use hekadrop_core::ui_port::{AcceptDecision, FileSummary, UiNotification, UiPort};
 use prost::Message;
 use rand::RngCore;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 
-pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
+pub async fn handle(mut socket: TcpStream, peer: SocketAddr, ui: Arc<dyn UiPort>) -> Result<()> {
     // `TransferGuard::new()` içinde auto clear_cancel — bu bağlantıya özel
     // child token hem taze root'a hem de scope sonunda active_transfers
     // map'inden otomatik temizliğe (early-return yollarında bile) garanti verir.
@@ -126,7 +127,11 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
         Err(e) => {
             let key = classify_handshake_error(&e);
             warn!("[{}] UKEY2 handshake başarısız: {:#}", peer, e);
-            ui::notify(crate::i18n::t("notify.app_name"), crate::i18n::t(key));
+            ui.notify(UiNotification::Toast {
+                title_key: "notify.app_name",
+                body_key: Some(key),
+                body_args: Vec::new(),
+            });
             state::set_progress(ProgressState::Idle);
             return Err(e);
         }
@@ -205,10 +210,11 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                     &mut pending_names,
                     &mut pending_texts,
                 );
-                ui::notify(
-                    crate::i18n::t("notify.app_name"),
-                    crate::i18n::t("notify.transfer_cancelled"),
-                );
+                ui.notify(UiNotification::Toast {
+                    title_key: "notify.app_name",
+                    body_key: Some("notify.transfer_cancelled"),
+                    body_args: Vec::new(),
+                });
                 break;
             }
             res = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT) => res,
@@ -277,7 +283,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                         CompletedPayload::Bytes { id, data } => {
                             // Metin/URL payload mı?
                             if let Some(kind) = pending_texts.remove(&id) {
-                                handle_text_payload(&peer, kind, &data);
+                                handle_text_payload(&peer, kind, &data, ui.as_ref());
                                 continue;
                             }
                             if let Ok(sharing) = SharingFrame::decode(&data[..]) {
@@ -295,6 +301,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                     &mut pending_texts,
                                     &mut pending_names,
                                     &mut peer_secret_id_hash,
+                                    ui.as_ref(),
                                 )
                                 .await?;
                                 if outcome == FlowOutcome::Disconnect {
@@ -372,14 +379,12 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                 crate::log_redact::path_basename(&path),
                                 total_size
                             );
-                            ui::notify_file_received(
-                                crate::i18n::t("notify.app_name"),
-                                &crate::i18n::tf(
-                                    "notify.received",
-                                    &[&file_name, &human_size(total_size)],
-                                ),
-                                path.clone(),
-                            );
+                            ui.notify(UiNotification::FileReceived {
+                                title_key: "notify.app_name",
+                                body_key: "notify.received",
+                                body_args: vec![file_name.clone(), human_size(total_size)],
+                                path: path.clone(),
+                            });
                         }
                     }
                 }
@@ -481,6 +486,8 @@ enum FlowOutcome {
     Disconnect,
 }
 
+// RFC-0001 §5 Adım 5b: handler call-graph'ında 13 arg vardı; 14. olarak `ui`
+// eklendi. Adım 5c'de helper'lar struct olarak gruplanacak.
 #[allow(clippy::too_many_arguments)]
 async fn handle_sharing_frame(
     peer: &SocketAddr,
@@ -496,6 +503,7 @@ async fn handle_sharing_frame(
     pending_texts: &mut HashMap<i64, TextType>,
     pending_names: &mut HashMap<i64, String>,
     peer_secret_id_hash: &mut Option<[u8; 6]>,
+    ui: &dyn UiPort,
 ) -> Result<FlowOutcome> {
     let v1 = frame.v1.as_ref().ok_or_else(|| anyhow!("sharing v1 yok"))?;
     let t = v1.r#type.and_then(|t| sh_v1::FrameType::try_from(t).ok());
@@ -563,7 +571,7 @@ async fn handle_sharing_frame(
                 peer, file_count, text_count
             );
 
-            let mut summaries: Vec<ui::FileSummary> = Vec::new();
+            let mut summaries: Vec<FileSummary> = Vec::new();
             let mut planned_files: Vec<(i64, std::path::PathBuf, String)> = Vec::new();
             for f in &intro.file_metadata {
                 let name = f.name.clone().unwrap_or_else(|| "dosya".into());
@@ -601,7 +609,7 @@ async fn handle_sharing_frame(
                         return Err(HekaError::PayloadSizeAbsurd(raw_size).into());
                     }
                 };
-                summaries.push(ui::FileSummary {
+                summaries.push(FileSummary {
                     name: name.clone(),
                     size,
                 });
@@ -685,27 +693,26 @@ async fn handle_sharing_frame(
                     };
                     let _ = snap.save(&crate::paths::config_path());
                 }
-                ui::AcceptResult::Accept
+                AcceptDecision::Accept
             } else if auto_accept {
                 info!("[{}] settings.auto_accept=true → otomatik kabul", peer);
-                ui::AcceptResult::Accept
+                AcceptDecision::Accept
             } else {
                 if migration_hint {
                     info!(
                         "[{}] legacy → hash migration dialog'u gösteriliyor: {}",
                         peer, remote_name
                     );
-                    ui::notify(
-                        crate::i18n::t("trust.migration.title"),
-                        &crate::i18n::tf("trust.migration.body", &[remote_name, pin_code]),
-                    );
+                    ui.notify(UiNotification::TrustMigrationHint {
+                        device: remote_name.to_string(),
+                        pin: pin_code.to_string(),
+                    });
                 }
-                ui::prompt_accept(remote_name, pin_code, &summaries, text_count)
+                ui.prompt_accept(remote_name, pin_code, &summaries, text_count)
                     .await
-                    .unwrap_or(ui::AcceptResult::Reject)
             };
 
-            let ok = !matches!(decision, ui::AcceptResult::Reject);
+            let ok = !matches!(decision, AcceptDecision::Reject);
             *accepted_flag = ok;
 
             // Opportunistic legacy → hash upgrade.
@@ -723,7 +730,7 @@ async fn handle_sharing_frame(
             // `add_trusted_with_hash` ile upgrade eder (legacy match → hash
             // doldurulur); burada sadece düz `Accept` + legacy varsa enrich
             // ederiz. Reject yolunda hiçbir zaman çalışmaz.
-            if matches!(decision, ui::AcceptResult::Accept) {
+            if matches!(decision, AcceptDecision::Accept) {
                 if let Some(h) = peer_secret_id_hash {
                     let needs_upgrade = {
                         let st = state::get();
@@ -746,7 +753,7 @@ async fn handle_sharing_frame(
                 }
             }
 
-            if matches!(decision, ui::AcceptResult::AcceptAndTrust) {
+            if matches!(decision, AcceptDecision::AcceptAndTrust) {
                 let st = state::get();
                 let snap = {
                     let mut s = st.settings.write();
@@ -776,10 +783,10 @@ async fn handle_sharing_frame(
                         remote_id
                     }
                 );
-                ui::notify(
-                    "HekaDrop",
-                    &format!("{} artık güvenilir cihaz", remote_name),
-                );
+                ui.notify(UiNotification::ToastRaw {
+                    title: "HekaDrop".to_string(),
+                    body: format!("{} artık güvenilir cihaz", remote_name),
+                });
             }
 
             if ok {
@@ -814,7 +821,10 @@ async fn handle_sharing_frame(
                 }
                 send_sharing_frame(socket, ctx, &build_consent_reject()).await?;
                 info!("[{}] ✗ kullanıcı reddetti", peer);
-                ui::notify("HekaDrop", &format!("{}: aktarım reddedildi", remote_name));
+                ui.notify(UiNotification::ToastRaw {
+                    title: "HekaDrop".to_string(),
+                    body: format!("{}: aktarım reddedildi", remote_name),
+                });
                 return Ok(FlowOutcome::Disconnect);
             }
         }
@@ -827,7 +837,7 @@ async fn handle_sharing_frame(
     Ok(FlowOutcome::Continue)
 }
 
-fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
+fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8], ui: &dyn UiPort) {
     let text = if let Ok(s) = std::str::from_utf8(data) {
         s.trim().to_string()
     } else {
@@ -845,10 +855,11 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
                 peer,
                 crate::log_redact::url_scheme_host(&text)
             );
-            ui::notify(
-                crate::i18n::t("notify.app_name"),
-                &crate::i18n::tf("notify.url_opened", &[&preview(&text, 80)]),
-            );
+            ui.notify(UiNotification::Toast {
+                title_key: "notify.app_name",
+                body_key: Some("notify.url_opened"),
+                body_args: vec![preview(&text, 80)],
+            });
         } else {
             // SECURITY: http/https dışı şemalar (javascript:, file://, smb://
             // vb.) exfiltration / RCE / NTLM leak riskidir. Otomatik
@@ -861,10 +872,11 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
                 crate::log_redact::url_scheme_host(&text)
             );
             crate::platform::copy_to_clipboard(&text);
-            ui::notify(
-                crate::i18n::t("notify.app_name"),
-                &crate::i18n::tf("notify.text_clipboard", &[&preview(&text, 80)]),
-            );
+            ui.notify(UiNotification::Toast {
+                title_key: "notify.app_name",
+                body_key: Some("notify.text_clipboard"),
+                body_args: vec![preview(&text, 80)],
+            });
         }
     } else {
         crate::platform::copy_to_clipboard(&text);
@@ -873,10 +885,11 @@ fn handle_text_payload(peer: &SocketAddr, kind: TextType, data: &[u8]) {
             peer,
             text.len()
         );
-        ui::notify(
-            crate::i18n::t("notify.app_name"),
-            &crate::i18n::tf("notify.text_clipboard", &[&preview(&text, 80)]),
-        );
+        ui.notify(UiNotification::Toast {
+            title_key: "notify.app_name",
+            body_key: Some("notify.text_clipboard"),
+            body_args: vec![preview(&text, 80)],
+        });
     }
 }
 

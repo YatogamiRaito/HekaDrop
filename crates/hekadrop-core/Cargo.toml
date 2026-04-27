@@ -51,6 +51,10 @@ thiserror = "2"
 # Tracing — ukey2.rs handshake event'leri
 tracing = "0.1"
 
+# RFC-0001 §5 Adım 5b — UiPort trait async interface; `prompt_accept` async fn
+# trait method'u object-safe `Arc<dyn UiPort>` kullanılabilsin diye.
+async-trait = "0.1"
+
 # Kripto
 sha2 = "0.10"
 hkdf = "0.12"
