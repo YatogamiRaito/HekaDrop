@@ -348,7 +348,12 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                 }
                             };
                             if let Some(snap) = snap_opt {
-                                let _ = snap.save(&state.stats_path);
+                                // PR #93 Gemini review: async worker'ı bloklamamak için
+                                // sync I/O `spawn_blocking`'e atılır; fire-and-forget.
+                                let stats_path = state.stats_path.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    let _ = snap.save(&stats_path);
+                                });
                             }
                         }
                         // Bug #31: Completed gösteriminden sonra birkaç saniye içinde
@@ -652,7 +657,11 @@ pub async fn send_text(
                                 }
                             };
                             if let Some(snap) = snap_opt {
-                                let _ = snap.save(&state.stats_path);
+                                // Bkz. yukarı: spawn_blocking ile async worker bloklamasız.
+                                let stats_path = state.stats_path.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    let _ = snap.save(&stats_path);
+                                });
                             }
                         }
                         state.set_progress_completed_auto_idle(

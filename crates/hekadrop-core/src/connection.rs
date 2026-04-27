@@ -387,7 +387,14 @@ pub async fn handle(
                                     }
                                 };
                                 if let Some(snap) = snap_opt {
-                                    let _ = snap.save(&state.stats_path);
+                                    // Async context'te sync I/O (atomic_write tmp+rename)
+                                    // worker thread'i bloklamasın diye spawn_blocking;
+                                    // fire-and-forget — save zaten `let _ = ...` ile
+                                    // hatayı swallow ediyor (PR #93 review, Gemini medium).
+                                    let stats_path = state.stats_path.clone();
+                                    tokio::task::spawn_blocking(move || {
+                                        let _ = snap.save(&stats_path);
+                                    });
                                 }
                             }
                             let file_name = path
@@ -650,7 +657,15 @@ async fn handle_sharing_frame(
                     size,
                 });
                 if let Some(pid) = f.payload_id {
-                    planned_files.push((pid, unique_downloads_path(&name, state)?, name));
+                    // `unique_downloads_path` `std::fs::create_dir_all` +
+                    // `OpenOptions::create_new` (atomic placeholder reserve) gibi
+                    // sync I/O yapar; worker thread bloklamamak için
+                    // `block_in_place` (multi-thread runtime'da scheduler'ı
+                    // bilgilendirir, result inline alınır). PR #93 Gemini review.
+                    let target = tokio::task::block_in_place(|| {
+                        unique_downloads_path(&name, state)
+                    })?;
+                    planned_files.push((pid, target, name));
                 }
             }
 
@@ -724,7 +739,11 @@ async fn handle_sharing_frame(
                         s.touch_trusted_by_hash(h);
                         s.clone()
                     };
-                    let _ = snap.save(&state.config_path);
+                    // Bkz. yukarı: spawn_blocking ile async worker thread bloklanmasın.
+                    let config_path = state.config_path.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let _ = snap.save(&config_path);
+                    });
                 }
                 AcceptDecision::Accept
             } else if auto_accept {
@@ -775,7 +794,10 @@ async fn handle_sharing_frame(
                             s.add_trusted_with_hash(remote_name, remote_id, *h);
                             s.clone()
                         };
-                        let _ = snap.save(&state.config_path);
+                        let config_path = state.config_path.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let _ = snap.save(&config_path);
+                        });
                         info!(
                             "[{}] legacy trust kaydı secret_id_hash ile yükseltildi: {}",
                             peer, remote_name
@@ -802,7 +824,10 @@ async fn handle_sharing_frame(
                     }
                     s.clone()
                 };
-                let _ = snap.save(&state.config_path);
+                let config_path = state.config_path.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = snap.save(&config_path);
+                });
                 info!(
                     "[{}] cihaz trusted listeye eklendi: {} (id: {})",
                     peer,
