@@ -316,10 +316,21 @@ impl AppState {
     ///
     /// `Weak` referans saklanır — sleep sırasında AppState drop edilirse
     /// (test teardown / process shutdown) reset task no-op'lar.
+    ///
+    /// `Handle::try_current()` ile mevcut Tokio runtime detect edilir; runtime
+    /// dışı caller (CLI/test/FFI) için panik yerine reset task **skip** edilir
+    /// — `Completed` durumu kalıcı olur, caller manuel `Idle`'a alabilir.
+    /// PR #93 review (Copilot): core API non-tokio context'te de güvenli
+    /// olmalı.
     pub fn set_progress_completed_auto_idle(self: &Arc<Self>, file: String, delay: Duration) {
         let captured_gen = self.set_progress(ProgressState::Completed { file });
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            // Tokio runtime yok — auto-idle reset planlanamaz; Completed
+            // durumu kalır.
+            return;
+        };
         let weak = Arc::downgrade(self);
-        tokio::spawn(async move {
+        handle.spawn(async move {
             tokio::time::sleep(delay).await;
             let Some(s) = weak.upgrade() else { return };
             // Sleep sırasında başka bir mutasyon olmadıysa Idle'a dön.

@@ -7,6 +7,29 @@
 
 use std::net::IpAddr;
 
+/// Quick Share peer device kategorisi (TXT record `device_type` byte'ından).
+/// Display string'leri caller (UI/CLI) tarafında i18n + emoji ile çözülür —
+/// core UI/locale-agnostic kalır. PR #93 review (Copilot): kind_label() Türkçe
+/// + emoji string'leri core'dan çıkartıldı.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceKind {
+    Phone,
+    Tablet,
+    Computer,
+    Unknown,
+}
+
+impl DeviceKind {
+    pub fn from_byte(b: u8) -> Self {
+        match b {
+            1 => Self::Phone,
+            2 => Self::Tablet,
+            3 => Self::Computer,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Tek bir keşfedilmiş Quick Share peer'in özet bilgisi.
 ///
 /// Sender flow caller'dan bu yapıyı alır; kendi başına mDNS taraması
@@ -21,12 +44,7 @@ pub struct DiscoveredDevice {
 }
 
 impl DiscoveredDevice {
-    pub fn kind_label(&self) -> &'static str {
-        match self.device_type {
-            1 => "📱 Telefon",
-            2 => "📱 Tablet",
-            3 => "💻 Bilgisayar",
-            _ => "❓ Bilinmeyen",
-        }
+    pub fn kind(&self) -> DeviceKind {
+        DeviceKind::from_byte(self.device_type)
     }
 }

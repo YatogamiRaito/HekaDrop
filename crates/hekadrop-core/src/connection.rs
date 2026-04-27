@@ -662,9 +662,8 @@ async fn handle_sharing_frame(
                     // sync I/O yapar; worker thread bloklamamak için
                     // `block_in_place` (multi-thread runtime'da scheduler'ı
                     // bilgilendirir, result inline alınır). PR #93 Gemini review.
-                    let target = tokio::task::block_in_place(|| {
-                        unique_downloads_path(&name, state)
-                    })?;
+                    let target =
+                        tokio::task::block_in_place(|| unique_downloads_path(&name, state))?;
                     planned_files.push((pid, target, name));
                 }
             }

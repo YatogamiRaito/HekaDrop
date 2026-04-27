@@ -34,7 +34,7 @@ impl Default for PlatformAdapter {
     }
 }
 
-impl crate::connection::PlatformOps for PlatformAdapter {
+impl hekadrop_core::connection::PlatformOps for PlatformAdapter {
     fn open_url(&self, url: &str) {
         crate::platform::open_url(url);
     }

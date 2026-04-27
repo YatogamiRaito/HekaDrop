@@ -56,7 +56,20 @@ use wry::{DragDropEvent, WebViewBuilder};
 // app-side `state` shim dosyası in-tree call site'ları (`crate::state::*`,
 // `crate::connection::*`, `crate::sender::*`, `crate::server::*`,
 // `crate::discovery_types::*`) dokunulmadan derler.
+use hekadrop_core::discovery_types::DeviceKind;
 use hekadrop_core::{config, connection, log_redact, sender, server, settings, stats};
+
+/// `DeviceKind` → kullanıcıya gösterilen Türkçe etiket (emoji ile). Core
+/// UI/i18n-agnostic kalsın diye bu mapping app crate'inde — PR #93 review
+/// (Copilot) sonrası kind_label() core'dan çıkartıldı.
+fn device_kind_label(kind: DeviceKind) -> &'static str {
+    match kind {
+        DeviceKind::Phone => "📱 Telefon",
+        DeviceKind::Tablet => "📱 Tablet",
+        DeviceKind::Computer => "💻 Bilgisayar",
+        DeviceKind::Unknown => "❓ Bilinmeyen",
+    }
+}
 
 mod discovery;
 mod i18n;
@@ -1273,7 +1286,15 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
 
     let labels: Vec<String> = devices
         .iter()
-        .map(|d| format!("{} — {} ({}:{})", d.kind_label(), d.name, d.addr, d.port))
+        .map(|d| {
+            format!(
+                "{} — {} ({}:{})",
+                device_kind_label(d.kind()),
+                d.name,
+                d.addr,
+                d.port
+            )
+        })
         .collect();
     let Some(idx) = ui::choose_device(labels).await else {
         return;
@@ -1341,7 +1362,15 @@ async fn initiate_text_send_flow(text: String) {
 
     let labels: Vec<String> = devices
         .iter()
-        .map(|d| format!("{} — {} ({}:{})", d.kind_label(), d.name, d.addr, d.port))
+        .map(|d| {
+            format!(
+                "{} — {} ({}:{})",
+                device_kind_label(d.kind()),
+                d.name,
+                d.addr,
+                d.port
+            )
+        })
         .collect();
     let Some(idx) = ui::choose_device(labels).await else {
         return;
