@@ -48,7 +48,8 @@ use wry::{DragDropEvent, WebViewBuilder};
 // `state`, `discovery`, `mdns`, `i18n`, `platform`, `paths`, `ui` henüz app
 // crate'inde — sonraki RFC adımlarında `hekadrop-core` ve `hekadrop-net`
 // arasında ayrılacak. Adım 4'te `identity`, `payload`, `settings`, `stats`
-// core'a taşındı; aşağıda re-export edildiği için `crate::settings::*` gibi
+// core'a taşındı; aşağıdaki `use ...` bin için crate-içi alias üretiyor (lib.rs
+// dış tüketiciler için ayrıca `pub use` ediyor) — `crate::settings::*` gibi
 // in-tree çağrı noktaları dokunulmadan derlenir.
 use hekadrop_core::{
     config, crypto, error, file_size_guard, frame, identity, log_redact, payload, secure, settings,

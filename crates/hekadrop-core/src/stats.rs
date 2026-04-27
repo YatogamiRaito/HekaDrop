@@ -57,12 +57,11 @@ impl Stats {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        // Process-wide Stats disk lock — review-18 (HIGH) save reordering.
-        // connection.rs (RX path) ve sender.rs (TX path) eş zamanlı
-        // `save()` çağırdığında snapshot'lar disk I/O kuyruğunda ters
-        // sırada çözülüp eski hal diske yazılabilir. Bu mutex serileştirir.
-        static DISK_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
-        let _guard = DISK_LOCK.lock();
+        // Process-wide disk serialization `crate::settings::atomic_write` →
+        // `atomic_write_mode` içindeki `SETTINGS_DISK_LOCK` ile zaten yapılıyor;
+        // önceden buradaydı, PR #90 review (Gemini) tespit etti — duplicate
+        // mutex kaldırıldı. Tek lock connection.rs RX + sender.rs TX
+        // path'lerinin save reordering'ini de serileştirmeye yetiyor.
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
