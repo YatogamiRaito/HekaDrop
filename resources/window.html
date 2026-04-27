@@ -1489,7 +1489,7 @@
     // ---- Rust → JS callbacks ----
     window.applySettings = function(cfg) {
       // Rust push'ı sırasında change event'leri autosave tetikler → loop
-      // riski. `suppressAutosave` bayrağı ile programatic set'ler
+      // riski. `suppressAutosave` bayrağı ile programmatic set'ler
       // debounce'a düşmez.
       suppressAutosave = true;
       try {

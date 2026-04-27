@@ -62,7 +62,7 @@
 //! ## False positive / negative senaryoları
 //! * CI runner'da IO ciddi yavaşsa threshold aşılabilir — generous bir
 //!   threshold (100 ms) kullanıyoruz.
-//! * Pattern regresse ederse (ör. biri `save()`'i guard altında çağırmaya
+//! * Pattern regress ederse (ör. biri `save()`'i guard altında çağırmaya
 //!   dönerse) B'nin read-acquire süresi disk I/O süresiyle doğrudan
 //!   korele olur → assertion patlar.
 //!
@@ -128,7 +128,7 @@ impl Payload {
 /// paralel bir `read()` task'ını bloklamamalı.
 ///
 /// Eşik: Reader task'ın tek bir `read()` acquire süresi 100 ms altında
-/// kalmalı. Pattern regresse olursa reader 500 ms'e kadar bloklanır.
+/// kalmalı. Pattern regress olursa reader 500 ms'e kadar bloklanır.
 #[test]
 fn save_write_lock_not_held_during_disk_io() {
     let dir = std::env::temp_dir().join(format!(
@@ -195,7 +195,7 @@ fn save_write_lock_not_held_during_disk_io() {
     let _ = std::fs::remove_dir_all(&dir);
 
     // Eşik: 100 ms. Pattern doğruysa tipik değer <1 ms (mutasyon ~µs).
-    // Regresse senaryoda (guard altında save) bu değer 5+ ms'e fırlar
+    // Regressed senaryoda (guard altında save) bu değer 5+ ms'e fırlar
     // — her writer iterasyonu reader'ı tam blokladığı için max >= 5 ms.
     assert!(
         samples > 10,
@@ -204,7 +204,7 @@ fn save_write_lock_not_held_during_disk_io() {
     );
     assert!(
         max_ms < 100.0,
-        "read() acquire max {:.3} ms — snapshot pattern regresse olmuş olabilir \
+        "read() acquire max {:.3} ms — snapshot pattern regress olmuş olabilir \
          (write guard disk I/O altında tutuluyor). Örnek sayısı: {}",
         max_ms,
         samples

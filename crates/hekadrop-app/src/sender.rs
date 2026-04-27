@@ -35,7 +35,7 @@ use crate::sharing::nearby::{
 };
 use crate::state::{self, ProgressState};
 use crate::ukey2;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use prost::Message;
 use rand::RngCore;
@@ -435,11 +435,10 @@ pub async fn send_text(req: SendTextRequest) -> Result<()> {
     }
     // `as i64` cast i64::MAX üstü uzunlukta wrap/negatif üretir; protokol
     // field'ları (`size`, `total_size`) bozulur. Pratikte bir String bu boyuta
-    // ulaşamaz ama savunma amaçlı erken hata.
-    // TryFromIntError ZST; orijinal "out of range" mesajı kullanıcıya bilgi katmıyor — kendi context'imizi yazıyoruz.
-    let total_bytes: i64 = i64::try_from(text.len()).map_err(|_e: std::num::TryFromIntError| {
-        anyhow!("metin payload çok büyük: {} bayt", text.len())
-    })?;
+    // ulaşamaz ama savunma amaçlı erken hata. `with_context` orijinal
+    // `TryFromIntError`'ı zincirde korur (ZST ama nedeni belgeler).
+    let total_bytes: i64 = i64::try_from(text.len())
+        .with_context(|| format!("metin payload çok büyük: {} bayt", text.len()))?;
     let payload_id = (rand::thread_rng().next_u64() >> 1) as i64;
     // URL şeklinde ise TextKind::Url ile etiketliyoruz: Android/alıcı share
     // sheet'te URL'i "Tarayıcıda aç" aksiyonuyla gösterir. Aksi hâlde düz TEXT.
@@ -679,11 +678,9 @@ async fn send_text_bytes(
 ) -> Result<()> {
     // `as i64` cast i64::MAX üstünde wrap üretir; header'ın `total_size`'ı
     // negatif olup receiver protokol hatası verir. Pratikte erişilemez ama
-    // erken ve anlamlı hata daha iyi.
-    // TryFromIntError ZST; orijinal mesaj bilgi katmıyor — kendi context'imiz daha açıklayıcı.
-    let total = i64::try_from(data.len()).map_err(|_e: std::num::TryFromIntError| {
-        anyhow!("metin payload çok büyük: {} bayt", data.len())
-    })?;
+    // erken ve anlamlı hata daha iyi. `with_context` orijinal hatayı zincirde korur.
+    let total = i64::try_from(data.len())
+        .with_context(|| format!("metin payload çok büyük: {} bayt", data.len()))?;
     let mut offset: usize = 0;
     while offset < data.len() {
         if cancel.is_cancelled() {
@@ -692,17 +689,14 @@ async fn send_text_bytes(
         let end = (offset + CHUNK_SIZE).min(data.len());
         let body = data[offset..end].to_vec();
         let last_flag = 0;
-        // TryFromIntError ZST; bizim context daha bilgilendirici.
-        let offset_i64 = i64::try_from(offset).map_err(|_e: std::num::TryFromIntError| {
-            anyhow!("metin payload offset'i çok büyük: {}", offset)
-        })?;
+        let offset_i64 = i64::try_from(offset)
+            .with_context(|| format!("metin payload offset'i çok büyük: {}", offset))?;
         let wrapped = wrap_bytes_payload_transfer(payload_id, total, offset_i64, last_flag, body);
         let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
         frame::write_frame(socket, &enc).await?;
         offset = end;
-        let offset_i64 = i64::try_from(offset).map_err(|_e: std::num::TryFromIntError| {
-            anyhow!("metin payload offset'i çok büyük: {}", offset)
-        })?;
+        let offset_i64 = i64::try_from(offset)
+            .with_context(|| format!("metin payload offset'i çok büyük: {}", offset))?;
         if let Some(percent) = compute_percent(0, offset_i64, total) {
             state::set_progress(ProgressState::Receiving {
                 device: peer_label.to_string(),

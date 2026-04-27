@@ -254,12 +254,13 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                         let id = header.id.unwrap_or(0);
                         let total = header.total_size.unwrap_or(0);
                         let offset = chunk.offset.unwrap_or(0);
-                        let body_len = chunk.body.as_ref().map(|b| b.len()).unwrap_or(0) as i64;
-                        let written = offset + body_len;
-                        if total > 0 {
-                            // clamp(0, 100) garantisi ile 0..=100 aralığında — sign loss yok.
-                            #[allow(clippy::cast_sign_loss)]
-                            let percent = ((written * 100) / total).clamp(0, 100) as u8;
+                        let body_len_usize = chunk.body.as_ref().map(|b| b.len()).unwrap_or(0);
+                        // SECURITY: peer'den gelen `offset` + `body_len` + `total`
+                        // alanları unvalidated. `*100` ve `+` operasyonlarını
+                        // checked aritmetikle koru; overflow olursa progress
+                        // update'ini sessizce atla (DoS koruması — debug build
+                        // panic, release wrap, ikisi de istenmiyor).
+                        if let Some(percent) = compute_recv_percent(offset, body_len_usize, total) {
                             if let Some(name) = pending_names.get(&id).cloned() {
                                 state::set_progress(ProgressState::Receiving {
                                     device: remote_name_shared.clone(),
@@ -1293,6 +1294,27 @@ fn parse_remote_name(endpoint_info: &[u8]) -> Option<String> {
         return None;
     }
     String::from_utf8(endpoint_info[18..18 + name_len].to_vec()).ok()
+}
+
+/// Receiver tarafı progress yüzdesi — peer'den gelen `offset`, `total_size` ve
+/// chunk body uzunluğu (usize) ile 0..=100 aralığında u8 hesabı.
+///
+/// **Why checked aritmetik:** Üç giriş alanı da unvalidated peer data. Naïve
+/// `(offset + body_len) * 100 / total` hesabı i64 overflow ile (debug panic /
+/// release wrap) yanlış progress veya DoS açar. Overflow ya da geçersiz `total`
+/// (0/negatif) → `None` (caller progress update'ini sessizce atlar).
+///
+/// Bkz. [`crate::sender::compute_percent`] sender tarafı muadili (`bytes_before`
+/// + `offset` farklı semantik). Birleştirme için RFC gerekir.
+fn compute_recv_percent(offset: i64, body_len: usize, total: i64) -> Option<u8> {
+    if total <= 0 {
+        return None;
+    }
+    let body_len_i64 = i64::try_from(body_len).ok()?;
+    let written = offset.checked_add(body_len_i64)?;
+    let scaled = written.checked_mul(100)?;
+    let raw = scaled.checked_div(total)?;
+    u8::try_from(raw.clamp(0, 100)).ok()
 }
 
 #[cfg(test)]
