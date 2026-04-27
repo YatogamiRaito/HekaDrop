@@ -101,19 +101,22 @@ pub struct AppState {
 impl AppState {
     /// Yeni bir `AppState` kurar ve `Arc` içine sarar.
     ///
-    /// Bu konstrüktör global state'e DOKUNMAZ — `Arc<AppState>` parametre
-    /// olarak gezdirilebilir. App-singleton katmanı (`init`) bu konstrüktörü
-    /// `STATE` static'ine yerleştirmek için kullanır.
-    pub fn new(settings: Settings) -> Arc<Self> {
-        // Issue #17: cihaz-kalıcı kimlik — bozuk / yazılamıyor senaryosunda
-        // paniğe düşüp kullanıcıyı ikaz et; trust kararını güvenli şekilde
-        // veremeyeceğimiz bir state ile devam etmeyelim.
+    /// Bu konstrüktör global state'e ve `crate::paths` modülüne DOKUNMAZ —
+    /// `identity_path` ve `stats_path` caller (app-singleton katmanı) tarafından
+    /// inject edilir. Bu sayede `AppState` Adım 5c'de core'a taşınınca
+    /// `crate::paths` (app-only) bağımlılığı sızmaz; PR #91 review (Gemini
+    /// medium) tespit etti.
+    pub fn new(
+        settings: Settings,
+        identity_path: &std::path::Path,
+        stats_path: &std::path::Path,
+    ) -> Arc<Self> {
         // INVARIANT (security): trust kararı identity'ye dayanıyor — bozuk /
         // yazılamıyor identity ile yola devam etmek "her cihaz aynı görünür"
-        // güvenlik açığı doğurur. Startup'ta panik = kullanıcıya hata göster, devam
-        // etme. Issue #17.
+        // güvenlik açığı doğurur. Startup'ta panik = kullanıcıya hata göster,
+        // devam etme. Issue #17.
         #[allow(clippy::expect_used)]
-        let identity = DeviceIdentity::load_or_create_at(&crate::paths::identity_path())
+        let identity = DeviceIdentity::load_or_create_at(identity_path)
             .expect("DeviceIdentity yüklenemedi/oluşturulamadı — identity.key kontrol edin");
         Arc::new(Self {
             settings: RwLock::new(settings),
@@ -128,7 +131,7 @@ impl AppState {
             show_window_flag: AtomicBool::new(false),
             pending_js: RwLock::new(Vec::new()),
             rate_limiter: RateLimiter::new(),
-            stats: RwLock::new(Stats::load(&crate::paths::stats_path())),
+            stats: RwLock::new(Stats::load(stats_path)),
         })
     }
 
@@ -365,7 +368,15 @@ impl RateLimiter {
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
 
 pub fn init(settings: Settings) {
-    let _ = STATE.set(AppState::new(settings));
+    // App-singleton katmanı path'leri inject ediyor — `AppState::new` core'a
+    // taşındığında bu çağrı app crate'inde kalmaya devam eder. Path
+    // resolution `crate::paths` (`crate::platform::config_dir()` üstünde)
+    // sorumluluğu.
+    let _ = STATE.set(AppState::new(
+        settings,
+        &crate::paths::identity_path(),
+        &crate::paths::stats_path(),
+    ));
 }
 
 pub fn get() -> Arc<AppState> {
