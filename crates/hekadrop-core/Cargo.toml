@@ -25,9 +25,20 @@ publish = false
 # Workspace path-deps (proto bindings)
 hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
 
-# Async runtime — frame.rs (TcpStream, AsyncRead/Write, tokio::time::timeout)
-# + ukey2.rs (TcpStream).
-tokio = { version = "1", features = ["net", "io-util", "time"] }
+# Async runtime — frame.rs (TcpStream, AsyncRead/Write, tokio::time::timeout),
+# ukey2.rs (TcpStream), settings.rs `save_debounced` (Handle::spawn). `rt`
+# payload.rs `Handle::try_current()` için; `rt-multi-thread` payload.rs
+# `tokio::task::block_in_place` çağrısı için zorunlu — sync I/O wrap'i
+# yalnız multi-thread runtime'da çalışır.
+tokio = { version = "1", features = ["net", "io-util", "time", "rt", "rt-multi-thread"] }
+
+# settings.rs / stats.rs JSON kalıcı hâl serileştirmesi.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# settings.rs `DEBOUNCE_TASK` ve stats.rs `DISK_LOCK` için statik
+# parking_lot::Mutex (zero-allocation static init).
+parking_lot = "0.12"
 
 # Wire format
 bytes = "1"
@@ -56,6 +67,18 @@ rand = "0.8"
 base64 = "0.22"
 # `hex` ukey2.rs handshake debug log (cipher_commitment + digest) için.
 hex = "0.4"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# settings.rs `replace_atomic` Win32 path'inde `MoveFileExW` çağrısı için.
+# Feature set yalnız o API yüzeyini kapsar — minimum binary etki.
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
+
+[dev-dependencies]
+# payload.rs unit tests use `#[tokio::test]`.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [lints]
 workspace = true

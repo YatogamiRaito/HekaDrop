@@ -45,8 +45,12 @@ pub mod crypto;
 pub mod error;
 pub mod file_size_guard;
 pub mod frame;
+pub mod identity;
 pub mod log_redact;
+pub mod payload;
 pub mod secure;
+pub mod settings;
+pub mod stats;
 pub mod ukey2;
 
 // Fuzz harness (`crates/hekadrop-app/fuzz/fuzz_targets/fuzz_ukey2_handshake_init.rs`)

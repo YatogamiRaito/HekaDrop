@@ -347,7 +347,7 @@ pub async fn handle(mut socket: TcpStream, peer: SocketAddr) -> Result<()> {
                                     }
                                 };
                                 if let Some(snap) = snap_opt {
-                                    let _ = snap.save();
+                                    let _ = snap.save(&crate::paths::stats_path());
                                 }
                             }
                             let file_name = path
@@ -683,7 +683,7 @@ async fn handle_sharing_frame(
                         s.touch_trusted_by_hash(h);
                         s.clone()
                     };
-                    let _ = snap.save();
+                    let _ = snap.save(&crate::paths::config_path());
                 }
                 ui::AcceptResult::Accept
             } else if auto_accept {
@@ -737,7 +737,7 @@ async fn handle_sharing_frame(
                             s.add_trusted_with_hash(remote_name, remote_id, *h);
                             s.clone()
                         };
-                        let _ = snap.save();
+                        let _ = snap.save(&crate::paths::config_path());
                         info!(
                             "[{}] legacy trust kaydı secret_id_hash ile yükseltildi: {}",
                             peer, remote_name
@@ -765,7 +765,7 @@ async fn handle_sharing_frame(
                     }
                     s.clone()
                 };
-                let _ = snap.save();
+                let _ = snap.save(&crate::paths::config_path());
                 info!(
                     "[{}] cihaz trusted listeye eklendi: {} (id: {})",
                     peer,
@@ -921,7 +921,10 @@ fn human_size(bytes: i64) -> String {
 }
 
 fn unique_downloads_path(name: &str) -> Result<PathBuf> {
-    let base = state::get().settings.read().resolved_download_dir();
+    let base = state::get()
+        .settings
+        .read()
+        .resolved_download_dir(crate::platform::default_download_dir);
     std::fs::create_dir_all(&base).ok();
 
     // SECURITY: Uzak cihazdan gelen dosya adı saldırgan kontrolünde; doğrudan

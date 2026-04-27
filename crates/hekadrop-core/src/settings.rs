@@ -515,15 +515,14 @@ impl Settings {
 }
 
 impl Settings {
-    pub fn load() -> Self {
-        let path = config_path();
-        std::fs::read_to_string(&path)
+    pub fn load(path: &Path) -> Self {
+        std::fs::read_to_string(path)
             .ok()
             .and_then(|s| serde_json::from_str::<Self>(&s).ok())
             .unwrap_or_default()
     }
 
-    pub fn save(&self) -> Result<()> {
+    pub fn save(&self, path: &Path) -> Result<()> {
         // Pre-flight: kullanıcı explicit bir `download_dir` seçmişse dizinin
         // hâlâ var olduğundan ve yazılabilir olduğundan emin ol. Aksi halde
         // kullanıcı Settings'te kaydet-yeşil-tik görür ama runtime'da transfer
@@ -537,12 +536,11 @@ impl Settings {
         if let Some(ref dir) = self.download_dir {
             validate_download_dir(dir).context("download_dir doğrulaması başarısız")?;
         }
-        let path = config_path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
         let json = serde_json::to_string_pretty(self).context("JSON serialize")?;
-        atomic_write(&path, json.as_bytes()).context("config.json yazılamadı")?;
+        atomic_write(path, json.as_bytes()).context("config.json yazılamadı")?;
         Ok(())
     }
 
@@ -561,7 +559,7 @@ impl Settings {
     /// kullanılıyordu — fakat tao event-loop thread'i tokio runtime'a bağlı
     /// olmadığından her çağrı `Err(_)` dalına düşüp sync `save()`'e iniyordu
     /// ve debounce fiilen devre dışı kalıyordu.
-    pub fn save_debounced(&self, handle: &tokio::runtime::Handle) {
+    pub fn save_debounced(&self, handle: &tokio::runtime::Handle, path: PathBuf) {
         let snap = self.clone();
         let handle = handle.clone();
         let mut slot = DEBOUNCE_TASK.lock();
@@ -571,28 +569,28 @@ impl Settings {
         }
         *slot = Some(handle.spawn(async move {
             tokio::time::sleep(DEBOUNCE_WINDOW).await;
-            if let Err(e) = snap.save() {
+            if let Err(e) = snap.save(&path) {
                 tracing::warn!("settings save_debounced write: {}", e);
             }
         }));
     }
 
-    pub fn resolved_device_name(&self) -> String {
+    /// Kullanıcı `device_name` set etmediyse `default()` ile platform default'una düş.
+    /// RFC-0001 §5 Adım 4: core artık `crate::platform::*` çağırmaz; default
+    /// closure'unu caller (app) inject eder (`crate::platform::device_name`).
+    pub fn resolved_device_name<F: FnOnce() -> String>(&self, default: F) -> String {
         self.device_name
             .clone()
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(crate::platform::device_name)
+            .unwrap_or_else(default)
     }
 
-    pub fn resolved_download_dir(&self) -> PathBuf {
-        self.download_dir
-            .clone()
-            .unwrap_or_else(crate::platform::default_download_dir)
+    /// Kullanıcı `download_dir` set etmediyse `default()` ile platform default'una düş.
+    /// RFC-0001 §5 Adım 4: core artık `crate::platform::*` çağırmaz; default
+    /// closure'unu caller (app) inject eder (`crate::platform::default_download_dir`).
+    pub fn resolved_download_dir<F: FnOnce() -> PathBuf>(&self, default: F) -> PathBuf {
+        self.download_dir.clone().unwrap_or_else(default)
     }
-}
-
-pub fn config_path() -> PathBuf {
-    crate::platform::config_dir().join("config.json")
 }
 
 /// Debounce penceresi — `save_debounced()` çağrısı 100 ms sonra diske yazar.

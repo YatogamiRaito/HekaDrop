@@ -148,7 +148,7 @@ pub fn init(settings: Settings) {
     // güvenlik açığı doğurur. Startup'ta panik = kullanıcıya hata göster, devam
     // etme. Issue #17.
     #[allow(clippy::expect_used)]
-    let identity = DeviceIdentity::load_or_create()
+    let identity = DeviceIdentity::load_or_create_at(&crate::paths::identity_path())
         .expect("DeviceIdentity yüklenemedi/oluşturulamadı — identity.key kontrol edin");
     let _ = STATE.set(Arc::new(AppState {
         settings: RwLock::new(settings),
@@ -163,7 +163,7 @@ pub fn init(settings: Settings) {
         show_window_flag: AtomicBool::new(false),
         pending_js: RwLock::new(Vec::new()),
         rate_limiter: RateLimiter::new(),
-        stats: RwLock::new(Stats::load()),
+        stats: RwLock::new(Stats::load(&crate::paths::stats_path())),
     }));
 }
 

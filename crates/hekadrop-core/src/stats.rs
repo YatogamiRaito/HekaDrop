@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -49,29 +49,26 @@ fn now_epoch() -> u64 {
 }
 
 impl Stats {
-    pub fn load() -> Self {
-        let path = stats_path();
-        std::fs::read_to_string(&path)
+    pub fn load(path: &Path) -> Self {
+        std::fs::read_to_string(path)
             .ok()
             .and_then(|s| serde_json::from_str::<Self>(&s).ok())
             .unwrap_or_default()
     }
 
-    pub fn save(&self) -> Result<()> {
-        // Process-wide Stats disk lock — review-18 (HIGH) save reordering.
-        // connection.rs (RX path) ve sender.rs (TX path) eş zamanlı
-        // `save()` çağırdığında snapshot'lar disk I/O kuyruğunda ters
-        // sırada çözülüp eski hal diske yazılabilir. Bu mutex serileştirir.
-        static DISK_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
-        let _guard = DISK_LOCK.lock();
+    pub fn save(&self, path: &Path) -> Result<()> {
+        // Process-wide disk serialization `crate::settings::atomic_write` →
+        // `atomic_write_mode` içindeki `SETTINGS_DISK_LOCK` ile zaten yapılıyor;
+        // önceden buradaydı, PR #90 review (Gemini) tespit etti — duplicate
+        // mutex kaldırıldı. Tek lock connection.rs RX + sender.rs TX
+        // path'lerinin save reordering'ini de serileştirmeye yetiyor.
 
-        let path = stats_path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
         let json = serde_json::to_string_pretty(self).context("stats JSON serialize")?;
         // Atomik tmp+rename — crash sırasında yarım yazılmış JSON diske kalmaz.
-        crate::settings::atomic_write(&path, json.as_bytes()).context("stats.json yazılamadı")?;
+        crate::settings::atomic_write(path, json.as_bytes()).context("stats.json yazılamadı")?;
         Ok(())
     }
 
@@ -117,8 +114,4 @@ impl Stats {
             .max_by_key(|(_, s)| s.bytes)
             .map(|(n, s)| (n.clone(), s.bytes))
     }
-}
-
-fn stats_path() -> PathBuf {
-    crate::platform::config_dir().join("stats.json")
 }
