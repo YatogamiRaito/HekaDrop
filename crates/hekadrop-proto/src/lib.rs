@@ -6,33 +6,62 @@
 //!
 //! Proto kaynakları upstream Google/Nearby Connections SDK reverse-engineering
 //! ürünüdür; bkz. `proto/` dizini ve `docs/protocol/README.md`.
+//!
+//! # Lint disiplini
+//!
+//! Bu crate **el yazımı kod barındırmaz** — sadece module declaration'ları ve
+//! `include!()` macro'ları. Bu nedenle lint allow'ları **crate-level değil,
+//! her generated module'a `#[allow]` outer attribute olarak** uygulanır:
+//!
+//! - El yazımı yardımcı (helper function, type alias, vb.) gelecekte
+//!   eklenirse Rust disiplini altında kalır (allow gevşekliği bulaşmaz).
+//! - Allow set'i sadece prost'un ürettiği kodun gerektirdiği lint'ler:
+//!   `non_snake_case`/`non_camel_case_types` (proto field/enum convention),
+//!   `clippy::all` (prost-generated derive'lar), `unused_qualifications`
+//!   (prost fully-qualified path kullanır), `rustdoc::invalid_html_tags`
+//!   (proto comment'lardaki `<...>` benzeri token'lar), `dead_code`
+//!   (test'lerde kullanılmayan tipler için).
+//!
+//! Daha iyi olası iyileştirme (yapılmadı, GH issue'da takip edilmeli):
+//! `prost-build` config'inde `.message_attribute()` ile generated kod'a
+//! `#[allow(...)]` inject etmek. O zaman bu wrapper bile gerekmezdi. Şimdilik
+//! sade çözüm yeterli; v0.8 implementation fazında değerlendirilir.
 
-// Generated kod prost'tan; clippy + rustdoc + style lint'leri bizim
-// kontrolümüzde değil. Eski `hekadrop-app/src/lib.rs`'in proto modüllerine
-// uyguladığı tam #![allow] seti burada da uygulanır (Gemini PR-86 yorumu):
-// proto field/enum identifier'ları upstream Google convention'ı (camelCase
-// ve PascalCase karışımı) ile geliyor; rustdoc'taki HTML benzeri etiketler
-// proto comment'larından kaynaklanıyor.
-#![allow(clippy::all)]
-#![allow(clippy::pedantic)]
-#![allow(unused_qualifications)]
-#![allow(non_snake_case)]
-#![allow(non_camel_case_types)]
-#![allow(dead_code)]
-#![allow(rustdoc::invalid_html_tags)]
-#![allow(rustdoc::broken_intra_doc_links)]
-
-/// Google Nearby Connections SecureGCM frame'leri ve UKEY2 handshake mesajları.
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    unused_qualifications,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod securegcm {
     include!(concat!(env!("OUT_DIR"), "/securegcm.rs"));
 }
 
-/// Google Nearby Connections SecureMessage envelope (HMAC + AES-CBC layer).
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    unused_qualifications,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod securemessage {
     include!(concat!(env!("OUT_DIR"), "/securemessage.rs"));
 }
 
-/// Nearby Connections location-based discovery ve transfer frame'leri.
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    unused_qualifications,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod location {
     pub mod nearby {
         pub mod connections {
@@ -49,7 +78,15 @@ pub mod location {
     }
 }
 
-/// Quick Share sharing protokol mesajları (Introduction, PayloadTransfer, vs.).
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    unused_qualifications,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
 pub mod sharing {
     pub mod nearby {
         include!(concat!(env!("OUT_DIR"), "/sharing.nearby.rs"));
