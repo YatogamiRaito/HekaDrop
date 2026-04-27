@@ -11,9 +11,9 @@ pub fn service_type() -> String {
     format!("_{}._tcp.local.", hex::encode_upper(&hash[..6]))
 }
 
-pub fn device_name() -> String {
-    crate::platform::device_name()
-}
+// `device_name()` Adım 3 öncesi `crate::platform::device_name()` çağıran bir
+// shim'di — `platform` app'a ait olduğu için core'a sığmadı. Tek call site
+// (`settings::resolved_device_name`) artık platform helper'ı doğrudan çağırıyor.
 
 pub fn random_endpoint_id() -> [u8; 4] {
     const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";

@@ -10,13 +10,13 @@
 use crate::crypto;
 use crate::error::HekaError;
 use crate::frame;
-use crate::securegcm::{
+use anyhow::{anyhow, Result};
+use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+use hekadrop_proto::securegcm::{
     ukey2_client_init, Ukey2ClientFinished, Ukey2ClientInit, Ukey2HandshakeCipher, Ukey2Message,
     Ukey2ServerInit,
 };
-use crate::securemessage::{EcP256PublicKey, GenericPublicKey, PublicKeyType};
-use anyhow::{anyhow, Result};
-use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+use hekadrop_proto::securemessage::{EcP256PublicKey, GenericPublicKey, PublicKeyType};
 use p256::{ecdh::diffie_hellman, EncodedPoint, PublicKey, SecretKey};
 use prost::Message;
 use rand::rngs::OsRng;
@@ -501,7 +501,7 @@ mod tests {
 
     #[test]
     fn validate_server_init_dogru_cipher_ve_versionda_gecer() {
-        use crate::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
+        use hekadrop_proto::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
         let ok = Ukey2ServerInit {
             version: Some(1),
             random: Some(vec![0u8; 32].into()),
@@ -517,7 +517,7 @@ mod tests {
         // ServerInit P256_SHA512 dışında bir cipher dönerse handshake bail
         // etmeli. Burada `CurveCurve25519Sha512` (değer 1) kullanıyoruz —
         // ClientInit'de teklif etmediğimiz bir cipher.
-        use crate::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
+        use hekadrop_proto::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
         let bad = Ukey2ServerInit {
             version: Some(1),
             random: Some(vec![0u8; 32].into()),
@@ -536,7 +536,7 @@ mod tests {
         // SECURITY: V1 dışında bir UKEY2 version dönmek hem protokol-ihlali
         // hem de olası downgrade vektörü. `None` ve V0 gibi varyantlar da
         // reddedilmeli.
-        use crate::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
+        use hekadrop_proto::securegcm::{Ukey2HandshakeCipher, Ukey2ServerInit};
         let v0 = Ukey2ServerInit {
             version: Some(0),
             random: Some(vec![0u8; 32].into()),
@@ -562,7 +562,7 @@ mod tests {
     fn cipher_commitments_flood_reddedilir() {
         // SECURITY: process_client_init 8'den fazla cipher_commitment içeren
         // ClientInit'i reddetmeli — prost default sınırsız repeated field.
-        use crate::securegcm::{
+        use hekadrop_proto::securegcm::{
             ukey2_client_init::CipherCommitment, Ukey2ClientInit, Ukey2HandshakeCipher,
             Ukey2Message,
         };

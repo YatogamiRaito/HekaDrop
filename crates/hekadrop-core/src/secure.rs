@@ -11,10 +11,10 @@
 
 use crate::crypto;
 use crate::error::HekaError;
-use crate::securegcm::{DeviceToDeviceMessage, GcmMetadata, Type as GcmType};
-use crate::securemessage::{EncScheme, Header, HeaderAndBody, SecureMessage, SigScheme};
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
+use hekadrop_proto::securegcm::{DeviceToDeviceMessage, GcmMetadata, Type as GcmType};
+use hekadrop_proto::securemessage::{EncScheme, Header, HeaderAndBody, SecureMessage, SigScheme};
 use prost::Message;
 use rand::RngCore;
 

@@ -13,40 +13,51 @@ keywords = ["quick-share", "nearby-share", "p2p", "file-transfer", "macos"]
 categories = ["network-programming", "command-line-utilities"]
 
 [dependencies]
-# Workspace internal: protobuf bindings (RFC-0001 §5 Adım 2 ile ayrıştırıldı)
-# Explicit version pin: cargo-deny `[bans] wildcards = "deny"` kuralı için
-# workspace path-dep'in version belirtmesi şart. `=0.7.0` workspace package
-# version'ı ile kilit; bump için tek noktadan değişir.
+# Workspace internal — protocol engine + protobuf bindings.
+# Explicit version pin (`=0.7.0`): cargo-deny `[bans] wildcards = "deny"`
+# kuralı için workspace path-dep version belirtmesi şart.
+# RFC-0001 §5 Adım 2: hekadrop-proto. Adım 3: hekadrop-core (kripto, frame,
+# UKEY2, secure, error, log_redact, file_size_guard, config taşındı).
+hekadrop-core = { path = "../hekadrop-core", version = "=0.7.0" }
 hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
 
+# tokio — app burada `rt-multi-thread`, `macros`, `sync`, `signal`, `time`,
+# `fs` feature'larını kullanıyor; core ise yalnızca `net` + `io-util` ister.
+# Cargo feature unification ile hepsi tek build.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-bytes = "1"
-prost = { version = "0.14", features = ["std"] }
 mdns-sd = "0.19"
-sha2 = "0.10"
 hex = "0.4"
-anyhow = "1"
-thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-rand = "0.8"
 if-addrs = "0.15"
-base64 = "0.22"
 tray-icon = "0.22"
 tao = "0.35"
 wry = "0.55"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 parking_lot = "0.12"
-p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
-hkdf = "0.12"
-hmac = "0.12"
+# Adım 3 sonrası app'ta kalan ortak dep'ler — `cargo machete` bu kullanımları
+# doğruluyor. Çoğu birden fazla app modülü tarafından çağrılıyor (connection,
+# sender, payload, identity, discovery, mdns, settings…). Aynı dep core'da da
+# var — Cargo feature unification ile tek build.
+prost = { version = "0.14", features = ["std"] }
+bytes = "1"
+sha2 = "0.10"
+rand = "0.8"
+anyhow = "1"
+thiserror = "2"
+base64 = "0.22"
+# Kripto stack — connection.rs / sender.rs / identity.rs hâlâ doğrudan kullanır.
+# Sonraki RFC adımlarında (state + connection core'a taşınınca) ihtiyaç
+# duyulmayacak; o zaman temizlenir.
 aes = "0.8"
 cbc = { version = "0.1", features = ["std"] }
 cipher = { version = "0.4", features = ["block-padding"] }
-subtle = "2"
+hmac = "0.12"
+hkdf = "0.12"
+p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
 elliptic-curve = { version = "0.13", features = ["sec1"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

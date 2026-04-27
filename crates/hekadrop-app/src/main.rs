@@ -38,27 +38,31 @@ use tray_icon::TrayIconBuilder;
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use wry::{DragDropEvent, WebViewBuilder};
 
-mod config;
+// RFC-0001 §5 Adım 3 — `hekadrop-core` shim'i.
+//
+// 8 leaf modül artık core'da. `crate::crypto::xxx`, `use crate::error::*` gibi
+// in-tree çağrıları korumak için root-level re-export ediyoruz; bu sayede
+// `connection.rs`, `sender.rs`, `payload.rs`, vs. dosyalardaki yüzlerce
+// import noktası dokunulmadan derlenir. Lib.rs aynı re-export setini taşır.
+//
+// `payload`, `state`, `discovery`, `mdns`, `i18n`, `identity`, `platform`,
+// `settings`, `stats`, `ui` henüz app crate'inde — sonraki RFC adımlarında
+// `hekadrop-core` ve `hekadrop-net` arasında ayrılacak.
+use hekadrop_core::{config, crypto, error, file_size_guard, frame, log_redact, secure, ukey2};
+
 mod connection;
-mod crypto;
 mod discovery;
-mod error;
-mod file_size_guard;
-mod frame;
 mod i18n;
 mod identity;
-mod log_redact;
 mod mdns;
 mod payload;
 mod platform;
-mod secure;
 mod sender;
 mod server;
 mod settings;
 mod state;
 mod stats;
 mod ui;
-mod ukey2;
 
 static RUNTIME: OnceLock<Handle> = OnceLock::new();
 
