@@ -60,7 +60,7 @@ aes = "0.8"
 cbc = { version = "0.1", features = ["std"] }
 cipher = { version = "0.4", features = ["block-padding"] }
 hmac = "0.12"
-hkdf = "0.12"
+hkdf = "0.13"
 p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
 elliptic-curve = { version = "0.13", features = ["sec1"] }
 
