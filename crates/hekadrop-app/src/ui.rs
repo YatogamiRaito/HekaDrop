@@ -501,9 +501,13 @@ pub fn fatal_error_dialog(title: &str, body: &str) {
                 .args(["--title", title, "--error", body])
                 .status();
         } else {
-            // Dialog yoksa stderr'e düş — headless ortamda en azından
-            // kullanıcı terminalde görür.
-            eprintln!("[HekaDrop] {}: {}", title, body);
+            // Dialog yoksa stderr'e düş — headless / VM / SSH ortamlarında
+            // en azından kullanıcı terminalde fatal mesajı görür. Tracing
+            // henüz initialize olmamış olabilir (startup-fatal).
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("[HekaDrop] {}: {}", title, body);
+            }
         }
     }
     #[cfg(target_os = "windows")]

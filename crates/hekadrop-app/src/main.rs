@@ -380,15 +380,14 @@ fn run_app() -> ! {
     let webview = {
         use tao::platform::unix::WindowExtUnix;
         use wry::WebViewBuilderExtUnix;
-        let vbox = match window.default_vbox() {
-            Some(v) => v,
-            None => {
-                ui::fatal_error_dialog(
-                    "HekaDrop başlatılamıyor",
-                    "GTK pencere kabı (vbox) alınamadı. GTK3 + WebKit2GTK kurulu olduğundan emin olun.",
-                );
-                std::process::exit(1);
-            }
+        let Some(vbox) = window.default_vbox() else {
+            ui::fatal_error_dialog(
+                "HekaDrop başlatılamıyor",
+                "GTK pencere kabı (vbox) alınamadı. GTK3 + WebKit2GTK kurulu olduğundan emin olun.",
+            );
+            // Fatal startup; bkz. yukarı.
+            #[allow(clippy::exit)]
+            std::process::exit(1);
         };
         match builder.build_gtk(vbox) {
             Ok(w) => w,
@@ -397,6 +396,8 @@ fn run_app() -> ! {
                     "HekaDrop başlatılamıyor",
                     &format!("webview oluşturulamadı: {}", e),
                 );
+                // Fatal startup; bkz. yukarı.
+                #[allow(clippy::exit)]
                 std::process::exit(1);
             }
         }

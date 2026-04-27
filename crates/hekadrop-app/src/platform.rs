@@ -704,12 +704,9 @@ pub(crate) mod win {
         // CloseClipboard her yoldan çağrılır; handle'ın sahipliği clipboard'ta.
         unsafe {
             OpenClipboard(None)?;
-            let handle = match GetClipboardData(CF_UNICODETEXT) {
-                Ok(h) => h,
-                Err(_) => {
-                    let _ = CloseClipboard();
-                    return Ok(None);
-                }
+            let Ok(handle) = GetClipboardData(CF_UNICODETEXT) else {
+                let _ = CloseClipboard();
+                return Ok(None);
             };
             let hglobal = HGLOBAL(handle.0 as _);
             let ptr = GlobalLock(hglobal) as *const u16;
