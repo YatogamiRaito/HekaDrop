@@ -581,7 +581,7 @@ impl Settings {
         self.device_name
             .clone()
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(crate::config::device_name)
+            .unwrap_or_else(crate::platform::device_name)
     }
 
     pub fn resolved_download_dir(&self) -> PathBuf {

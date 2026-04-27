@@ -1480,6 +1480,7 @@ dependencies = [
  "cipher",
  "criterion",
  "elliptic-curve",
+ "hekadrop-core",
  "hekadrop-proto",
  "hex",
  "hkdf",
@@ -1494,7 +1495,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "subtle",
  "tao",
  "thiserror 2.0.18",
  "tokio",
@@ -1505,6 +1505,31 @@ dependencies = [
  "tray-icon",
  "windows",
  "wry",
+]
+
+[[package]]
+name = "hekadrop-core"
+version = "0.7.0"
+dependencies = [
+ "aes",
+ "anyhow",
+ "base64",
+ "bytes",
+ "cbc",
+ "cipher",
+ "elliptic-curve",
+ "hekadrop-proto",
+ "hex",
+ "hkdf",
+ "hmac",
+ "p256",
+ "prost",
+ "rand",
+ "sha2",
+ "subtle",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

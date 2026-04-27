@@ -34,42 +34,31 @@
     )
 )]
 
-pub mod crypto;
-pub mod file_size_guard;
-
-pub mod config;
-pub mod log_redact;
-pub mod platform;
-pub mod settings;
-
-mod error;
-mod frame;
+// RFC-0001 §5 Adım 3 — `hekadrop-core` shim'i.
+//
+// 8 leaf modül (`crypto`, `secure`, `frame`, `ukey2`, `error`,
+// `file_size_guard`, `log_redact`, `config`) artık `hekadrop-core` crate'inde.
+// `crate::crypto::xxx`, `use crate::secure::SecureCtx` gibi yüzlerce
+// in-tree çağrı noktası bu re-export'lar sayesinde dokunulmadan derlenir.
+// `tests/*.rs` ve `benches/*.rs` ise `hekadrop::crypto::xxx` formuyla bu
+// shim üzerinden core'a ulaşır.
+pub use hekadrop_core::{config, crypto, error, file_size_guard, frame, log_redact, secure, ukey2};
 
 // RFC-0001 §5 Adım 2: protobuf bindings `hekadrop-proto` crate'inden
 // re-export ediliyor. `crate::securegcm::...`, `crate::location::...`,
 // `crate::sharing::...`, `crate::securemessage::...` çağrıları kod tabanı
-// boyunca korunur (yüzlerce import noktası dokunulmaz). Dual-include
-// borcu (lib.rs + main.rs aynı bloku yineliyordu) bu adımla kapandı.
+// boyunca korunur (yüzlerce import noktası dokunulmaz).
 pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
 
-mod ukey2;
+// `tests/ukey2_handshake.rs` + `tests/ukey2_downgrade.rs` ve fuzz harness
+// (`fuzz_ukey2_handshake_init`) bu sembolleri root-level `hekadrop::xxx` ile
+// alıyordu — Adım 3 öncesi yüzeyi korumak için aynı seviyede yeniden export.
+pub use hekadrop_core::{process_client_init, validate_server_init, DerivedKeys};
 
-pub use ukey2::{validate_server_init, DerivedKeys};
-
-// TODO(fuzz/Q1): `process_client_init` ham bir `&[u8]` alıp `Ukey2Message` +
-// `Ukey2ClientInit` decode + validation pipeline'ını çalıştırır — `fuzz/`
-// harness'i (`fuzz_ukey2_handshake_init`) tam bu parser'ı hedefler. Lib
-// surface'i minimum tutmak için yalnızca fuzz için re-export ediyoruz; üretim
-// çağrıları hâlâ crate-içi. Q2'de UKEY2 modülü `hekadrop-core` crate'ine
-// ayrıldığında bu export natural olarak `pub` API hâline gelecek.
-pub use ukey2::process_client_init;
+pub mod platform;
+pub mod settings;
 
 // `PayloadAssembler` için gerekli. Entegrasyon testleri (örn.
 // `tests/payload_corrupt.rs`) ingest API üzerinden chunk senaryolarını
 // (overrun / truncation / duplicate id / out-of-order) doğrular.
 pub mod payload;
-
-// `SecureCtx` için gerekli. Entegrasyon testleri (örn. `tests/hmac_tag_length.rs`)
-// `SecureMessage` protobuf'ını elle kurup `SecureCtx::decrypt`'e veriyor — bu yüzden
-// modül + SecureMessage tipi lib-surface'den görünmeli.
-pub mod secure;

@@ -1,0 +1,60 @@
+[package]
+name = "hekadrop-core"
+description = "HekaDrop core protocol engine — UKEY2 handshake, AES/HMAC kripto, frame codec, pure protocol logic (no UI/global state)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+# RFC-0001 §5 Adım 3 — Foundation v0.7.0 workspace refactor.
+#
+# Bu crate hekadrop-app içindeki 8 leaf modülü (`crypto`, `secure`, `frame`,
+# `ukey2`, `error`, `file_size_guard`, `log_redact`, `config`) izole eder.
+# Aşağıdaki dep set'i recon raporundan (a16df238…) türetildi — her dep en az
+# bir taşınmış modül tarafından kullanılıyor.
+#
+# Public surface v1.0.0'a kadar **stable değil** — RFC-0001 Adım 8 sonunda
+# semver lock'lanır. O güne dek breaking change PR ile geçer; CHANGELOG'da
+# `### Changed` altına not düşülür.
+
+[dependencies]
+# Workspace path-deps (proto bindings)
+hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
+
+# Async runtime — frame.rs (TcpStream, AsyncRead/Write) + ukey2.rs (TcpStream)
+tokio = { version = "1", features = ["net", "io-util"] }
+
+# Wire format
+bytes = "1"
+prost = { version = "0.14", features = ["std"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Tracing — ukey2.rs handshake event'leri
+tracing = "0.1"
+
+# Kripto
+sha2 = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
+aes = "0.8"
+cbc = { version = "0.1", features = ["std"] }
+cipher = { version = "0.4", features = ["block-padding"] }
+subtle = "2"
+p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
+elliptic-curve = { version = "0.13", features = ["sec1"] }
+
+# Random + encoding
+rand = "0.8"
+base64 = "0.22"
+# `hex` ukey2.rs handshake debug log (cipher_commitment + digest) için.
+hex = "0.4"
+
+[lints]
+workspace = true

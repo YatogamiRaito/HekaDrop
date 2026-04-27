@@ -1,0 +1,56 @@
+//! HekaDrop core protocol engine — UKEY2 handshake, kripto primitive'leri,
+//! frame codec, payload assembler ve guard'lar.
+//!
+//! RFC-0001 §5 Adım 3 ile `hekadrop-app`'tan ayrıştırıldı. Hedef: protocol
+//! engine'i UI/global-state'ten arındırarak 3rd party consumer'lara (CLI,
+//! daemon, Android router, FFI) `tao`/`wry`/`tray-icon` zinciri olmadan
+//! sunmak. RFC §1 M1.
+//!
+//! # Public surface — STABILITE GARANTİSİ YOK (v1.0.0'a kadar)
+//!
+//! Bu crate `publish = false`; semver lock'u RFC-0001 Adım 8 (workspace
+//! refactor kapanışı) sonunda kurulur. O zamana dek public API breaking
+//! değişebilir; her değişiklik CHANGELOG `### Changed` altına not düşer.
+//!
+//! # Test profili
+//!
+//! Inline `#[cfg(test)] mod tests` blokları için workspace lint set'inden
+//! relax — `lib.rs` `cfg_attr(test, allow(...))]`. Production lint disiplini
+//! aynen workspace inheritance'tan gelir.
+
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::expect_fun_call,
+        clippy::panic,
+        clippy::print_stdout,
+        clippy::print_stderr,
+        clippy::redundant_clone,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::cast_precision_loss,
+        clippy::ignored_unit_patterns,
+        clippy::use_self,
+        clippy::trivially_copy_pass_by_ref,
+        clippy::single_match_else,
+        clippy::map_err_ignore,
+    )
+)]
+
+pub mod config;
+pub mod crypto;
+pub mod error;
+pub mod file_size_guard;
+pub mod frame;
+pub mod log_redact;
+pub mod secure;
+pub mod ukey2;
+
+// Fuzz harness (`crates/hekadrop-app/fuzz/fuzz_targets/fuzz_ukey2_handshake_init.rs`)
+// ve test'ler eski lib.rs surface üzerinden bu sembolleri root-level alıyordu;
+// shim app tarafında devam ettirir ama core de kendi root pub re-export'larını
+// belgelemek için aşağıdakileri sabitler.
+pub use ukey2::{process_client_init, validate_server_init, DerivedKeys};
