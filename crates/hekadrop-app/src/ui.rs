@@ -790,11 +790,10 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-$dlg.Description = '{}'
+$dlg.Description = '{desc}'
 $dlg.ShowNewFolderButton = $true
 if ($dlg.ShowDialog() -eq 'OK') {{ $dlg.SelectedPath }}
-"#,
-        desc
+"#
     );
     let out = Command::new("powershell")
         .args([
