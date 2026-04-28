@@ -1249,8 +1249,12 @@ pub(crate) async fn send_sharing_frame(
     sharing: &SharingFrame,
 ) -> Result<()> {
     let body = sharing.encode_to_vec();
+    // SAFETY-CAST: u64 >> 1 her zaman 0..=i64::MAX aralığında — high bit
+    // shift ile sıfırlanıyor, wrap yok.
+    #[allow(clippy::cast_possible_wrap)]
     let payload_id: i64 = (rand::thread_rng().next_u64() >> 1) as i64;
-    let total = body.len() as i64;
+    let total = i64::try_from(body.len())
+        .with_context(|| format!("sharing frame body i64'a sığmıyor: {} bayt", body.len()))?;
 
     // İlk chunk: tam gövde, offset=0, flags=0.
     // `body` bu satırdan sonra kullanılmıyor → clone yerine move (alokasyon

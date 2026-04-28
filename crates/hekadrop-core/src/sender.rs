@@ -111,11 +111,18 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
             }
             .into());
         }
+        // SAFETY-CAST: `raw_size > i64::MAX as u64` üstünde checked oldu
+        // (yukarıdaki `if raw_size > i64::MAX as u64`). u64 >> 1 high-bit
+        // sıfır → her zaman 0..=i64::MAX. İki cast da wrap yapamaz.
+        #[allow(clippy::cast_possible_wrap)]
+        let size_i64 = raw_size as i64;
+        #[allow(clippy::cast_possible_wrap)]
+        let payload_id_i64 = (rand::thread_rng().next_u64() >> 1) as i64;
         plans.push(PlannedFile {
             path: path.clone(),
             name,
-            size: raw_size as i64,
-            payload_id: (rand::thread_rng().next_u64() >> 1) as i64,
+            size: size_i64,
+            payload_id: payload_id_i64,
         });
     }
     // Multi-file toplamda i64 overflow olmaması için checked_add kullan.
@@ -464,6 +471,8 @@ pub async fn send_text(
     // `TryFromIntError`'ı zincirde korur (ZST ama nedeni belgeler).
     let total_bytes: i64 = i64::try_from(text.len())
         .with_context(|| format!("metin payload çok büyük: {} bayt", text.len()))?;
+    // SAFETY-CAST: u64 >> 1 high-bit sıfır → daima 0..=i64::MAX.
+    #[allow(clippy::cast_possible_wrap)]
     let payload_id = (rand::thread_rng().next_u64() >> 1) as i64;
     // URL şeklinde ise TextKind::Url ile etiketliyoruz: Android/alıcı share
     // sheet'te URL'i "Tarayıcıda aç" aksiyonuyla gösterir. Aksi hâlde düz TEXT.
@@ -855,7 +864,12 @@ async fn send_file_chunks(
         let wrapped = wrap_payload_transfer(payload_id, file_size, offset, 0, body);
         let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
         frame::write_frame(socket, &enc).await?;
-        offset += n as i64;
+        // SAFETY-CAST: `n` AsyncReadExt::read'den geliyor, max CHUNK_SIZE
+        // (4 KiB) ile sınırlı; usize → i64 wrap pratik olarak imkânsız.
+        // Defensive: try_from + unwrap_or yerine allow + comment yeterli.
+        #[allow(clippy::cast_possible_wrap)]
+        let n_i64 = n as i64;
+        offset += n_i64;
 
         // İlerleme yüzdesi: kümülatif (tüm dosyalar toplu).
         // total_bytes == 0 entry point'te bail ediliyor (Bug #30); yine de
