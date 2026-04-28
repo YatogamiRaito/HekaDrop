@@ -210,6 +210,26 @@ pub async fn handle(
     // devreye girer.
     let mut peer_secret_id_hash: Option<[u8; 6]> = None;
 
+    // RFC-0003 §3.3 capabilities exchange — receiver opportunistic.
+    // Peer (sender) HekaDrop-aware ise sender Capabilities frame yollar
+    // (sender mDNS'ten ext=1 görünce); receiver burada handle edip kendi
+    // Capabilities'ini geri yollar. Legacy peer hiç HekaDropFrame yollamaz
+    // → bu alanlar default `legacy()` kalır, transfer normal Quick Share
+    // akışıyla devam eder.
+    //
+    // Receiver proaktif Capabilities GÖNDERMEZ — eski Quick Share peer'ları
+    // (Android Samsung, NearDrop, vb.) HekaDropFrame'i decode edemez ve
+    // bağlantıyı drop eder. Sender initiates pattern (mDNS-aware), receiver
+    // responds on detection.
+    let mut active_capabilities: crate::capabilities::ActiveCapabilities =
+        crate::capabilities::ActiveCapabilities::legacy();
+    // Spec capabilities.md §6: `Capabilities` ikinci kez geldiyse ignore +
+    // warn (downgrade/flip-flop attack vector). İlk frame'i işledikten sonra
+    // bu flag set; sonraki Capabilities frame'leri active_capabilities'i
+    // değiştirmez (PR #114 review, Copilot).
+    let mut peer_capabilities_received = false;
+    let mut our_capabilities_sent = false;
+
     loop {
         // Steady-loop timeout: peer Quick Share spec'i gereği ~30s'de bir
         // KeepAlive gönderir. 60 sn içinde hiçbir frame gelmezse bağlantıyı
@@ -259,6 +279,52 @@ pub async fn handle(
                 break;
             }
         };
+
+        // PR #114 (CRITICAL fix for #112): magic-prefix dispatch — sender
+        // ext=1 peer'a HekaDropFrame yolluyor (RFC-0003 §3.3 capabilities
+        // exchange). Receiver hâlâ ham OfflineFrame::decode yapıyordu →
+        // decode error → connection drop → HekaDrop↔HekaDrop transferleri
+        // bozuk. Opportunistic dispatch: HekaDropFrame ise handle et,
+        // OfflineFrame ise mevcut path.
+        match frame::dispatch_frame_body(inner.as_ref()) {
+            frame::FrameKind::HekaDrop { inner: ext_bytes } => {
+                // PR #114 review (Copilot, capabilities.md §6): magic match
+                // sonrası decode/handler hatası **protocol violation** demek
+                // (peer/version mismatch bug veya MITM). Spec disconnection +
+                // session abort gerektiriyor → log + return Err ile yukarı
+                // propagate, `?` ile drop.
+                if let Err(e) = handle_hekadrop_frame(
+                    ext_bytes,
+                    &peer,
+                    &mut socket,
+                    &mut ctx,
+                    &mut active_capabilities,
+                    &mut peer_capabilities_received,
+                    &mut our_capabilities_sent,
+                )
+                .await
+                {
+                    warn!(
+                        "[{}] HekaDropFrame protocol violation; oturum sonlandırılıyor: {:?}",
+                        peer, e
+                    );
+                    cleanup_transfer_state(
+                        &peer,
+                        &mut assembler,
+                        &mut pending_names,
+                        &mut pending_texts,
+                        state.as_ref(),
+                    );
+                    let _ = send_disconnection(&mut socket, &mut ctx).await;
+                    break;
+                }
+                continue;
+            }
+            frame::FrameKind::Offline { body: _ } => {
+                // Existing path — `inner` zaten OfflineFrame body'si (magic
+                // yok), decode et.
+            }
+        }
 
         let offline = OfflineFrame::decode(inner.as_ref()).context("iç OfflineFrame")?;
         let Some(v1) = offline.v1 else {
@@ -984,6 +1050,108 @@ fn human_size(bytes: i64) -> String {
         format!("{bytes} B")
     } else {
         format!("{:.1} {}", n, UNITS[i])
+    }
+}
+
+/// HekaDrop extension frame'i parse + handle eder. Magic-prefix dispatch
+/// (`frame::dispatch_frame_body`) sonrası caller bu helper'ı çağırır.
+///
+/// Davranış:
+/// - `Capabilities` → peer'ın feature set'i ile bizim `ALL_SUPPORTED`'i
+///   negotiate et, `active_capabilities`'i set et. **İlk Capabilities
+///   alındığında** bizim Capabilities'imizi peer'a yolla (sender initiate
+///   pattern — receiver responds, no blind send to legacy peers).
+/// - `ChunkIntegrity` → şu an no-op + log (full chunk-HMAC verify pipeline
+///   v0.8 sonraki PR'ı; bu PR critical fix kapsamı).
+/// - Bilinmeyen `Payload` varyantı → log + skip (forward-compat).
+///
+/// Hata döner: socket write, ctx.encrypt, prost decode failure'ları.
+async fn handle_hekadrop_frame(
+    bytes: &[u8],
+    peer: &SocketAddr,
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    active_capabilities: &mut crate::capabilities::ActiveCapabilities,
+    peer_capabilities_received: &mut bool,
+    our_capabilities_sent: &mut bool,
+) -> Result<()> {
+    use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, HekaDropFrame};
+    use tracing::debug;
+
+    let frame = HekaDropFrame::decode(bytes)
+        .with_context(|| format!("[{peer}] HekaDropFrame protobuf decode"))?;
+    let Some(payload) = frame.payload else {
+        debug!("[{peer}] HekaDropFrame.payload boş — skip (forward-compat)");
+        return Ok(());
+    };
+
+    match payload {
+        Payload::Capabilities(peer_caps) => {
+            // Spec capabilities.md §6: aynı oturumda ikinci Capabilities frame
+            // ignore + warn. Downgrade/flip-flop attack vector — peer
+            // ilk frame'de tüm özellikleri reklam eder, sonra azaltıp aktif
+            // chunk-HMAC vb.'yi kapatabilir. İlk frame karara bağlanır.
+            if *peer_capabilities_received {
+                warn!(
+                    "[{}] ikinci Capabilities frame yok sayıldı (spec §6 — downgrade engelleme)",
+                    peer
+                );
+                return Ok(());
+            }
+
+            let our_features = crate::capabilities::features::ALL_SUPPORTED;
+            *active_capabilities = crate::capabilities::ActiveCapabilities::negotiate(
+                our_features,
+                peer_caps.features,
+            );
+            *peer_capabilities_received = true;
+            info!(
+                "[{}] active capabilities: 0x{:04x} (chunk_hmac={}, resume={}, folder={})",
+                peer,
+                active_capabilities.raw(),
+                active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1),
+                active_capabilities.has(crate::capabilities::features::RESUME_V1),
+                active_capabilities.has(crate::capabilities::features::FOLDER_STREAM_V1),
+            );
+
+            if !*our_capabilities_sent {
+                let our = crate::capabilities::build_capabilities_frame(
+                    crate::capabilities::build_self_capabilities(),
+                );
+                let pb = our.encode_to_vec();
+                let wrapped = frame::wrap_hekadrop_frame(&pb);
+                let enc = ctx
+                    .encrypt(&wrapped)
+                    .with_context(|| format!("[{peer}] our Capabilities encrypt"))?;
+                frame::write_frame(socket, &enc)
+                    .await
+                    .with_context(|| format!("[{peer}] our Capabilities write"))?;
+                *our_capabilities_sent = true;
+                info!("[{}] receiver Capabilities geri yollandı", peer);
+            }
+            Ok(())
+        }
+        Payload::ChunkTag(ci) => {
+            // RFC-0003 §3.6: chunk tag verify. Şu an stub — full pipeline
+            // PayloadAssembler entegrasyonuyla v0.8 sonraki PR'ı (critical
+            // fix scope dışı). En azından frame'i drop ETMİYORUZ ki bağlantı
+            // hatasız ilerlesin.
+            debug!(
+                "[{}] ChunkTag (integrity) received: payload_id={}, chunk_index={} (verify TODO)",
+                peer, ci.payload_id, ci.chunk_index
+            );
+            Ok(())
+        }
+        // Forward-compat: ResumeHint/ResumeReject (RFC-0004) +
+        // FolderMft (RFC-0005) henüz implement edilmedi; placeholder
+        // varyantları log + skip ile drop'sızca geçilir.
+        Payload::ResumeHint(_) | Payload::ResumeReject(_) | Payload::FolderMft(_) => {
+            debug!(
+                "[{}] HekaDropFrame.Payload: v0.8.1+ varyantı — şu an stub, skip",
+                peer
+            );
+            Ok(())
+        }
     }
 }
 
@@ -1777,5 +1945,80 @@ mod tests {
         assert_eq!(compute_recv_percent(i64::MAX / 2, 0, i64::MAX), None);
         // body_len = usize::MAX (64-bit'te i64'e sığmaz) → try_from None
         assert_eq!(compute_recv_percent(0, usize::MAX, 1000), None);
+    }
+
+    // ─── PR #114 (CRITICAL): receiver dispatch + capabilities response ───
+
+    /// `dispatch_frame_body` HekaDrop magic (`0xA5DEB201`) içeren plaintext
+    /// için `FrameKind::HekaDrop` döner; capabilities exchange wire path
+    /// bunu kullanır. Receiver loop bu varyanta opportunistic handler ile
+    /// cevap verir.
+    #[test]
+    fn dispatch_recognizes_hekadrop_magic_prefix() {
+        use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, Capabilities, HekaDropFrame};
+        use prost::Message;
+
+        let caps = HekaDropFrame {
+            version: 1,
+            payload: Some(Payload::Capabilities(Capabilities {
+                version: 1,
+                features: 0x0007,
+            })),
+        };
+        let pb = caps.encode_to_vec();
+        let wrapped = crate::frame::wrap_hekadrop_frame(&pb);
+
+        match crate::frame::dispatch_frame_body(&wrapped) {
+            crate::frame::FrameKind::HekaDrop { inner } => {
+                let parsed = HekaDropFrame::decode(inner).expect("re-decode");
+                assert_eq!(parsed.version, 1);
+                match parsed.payload.expect("payload") {
+                    Payload::Capabilities(c) => assert_eq!(c.features, 0x0007),
+                    _ => panic!("expected Capabilities payload"),
+                }
+            }
+            crate::frame::FrameKind::Offline { .. } => {
+                panic!("HekaDrop frame should NOT be classified as Offline")
+            }
+        }
+    }
+
+    /// Magic prefix taşımayan ham `OfflineFrame` body'si `Offline` varyantı
+    /// olarak sınıflandırılmalı. PR #114 fix'i bu path'i bozmaz — legacy
+    /// Quick Share peer'ları için mevcut akış aynen çalışır.
+    #[test]
+    fn dispatch_recognizes_offline_frame() {
+        // Magic OLMAYAN bytes — herhangi bir non-magic prefix
+        let body: Vec<u8> = vec![0x08, 0x01, 0x12, 0x00]; // Quick Share OfflineFrame benzeri
+        match crate::frame::dispatch_frame_body(&body) {
+            crate::frame::FrameKind::Offline { body: b } => {
+                assert_eq!(b, &[0x08, 0x01, 0x12, 0x00]);
+            }
+            crate::frame::FrameKind::HekaDrop { .. } => {
+                panic!("non-magic body should be classified as Offline")
+            }
+        }
+    }
+
+    /// Boş body veya 4 byte'tan kısa body Offline varyantı (magic
+    /// karşılaştırması yapılamaz).
+    #[test]
+    fn dispatch_short_body_falls_to_offline() {
+        for short in [
+            &[][..],
+            &[0xA5][..],
+            &[0xA5, 0xDE][..],
+            &[0xA5, 0xDE, 0xB2][..],
+        ] {
+            match crate::frame::dispatch_frame_body(short) {
+                crate::frame::FrameKind::Offline { .. } => {}
+                crate::frame::FrameKind::HekaDrop { .. } => {
+                    panic!(
+                        "short body (<4) should be Offline, got HekaDrop for len={}",
+                        short.len()
+                    )
+                }
+            }
+        }
     }
 }
