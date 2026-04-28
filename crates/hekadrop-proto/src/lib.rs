@@ -92,3 +92,26 @@ pub mod sharing {
         include!(concat!(env!("OUT_DIR"), "/sharing.nearby.rs"));
     }
 }
+
+/// HekaDrop-only protocol extension envelope (RFC-0003 §3.2).
+///
+/// Wire layout: 4-byte big-endian magic (`0xA5DEB201`) — protobuf-DIŞINDA,
+/// raw prefix — ardından `HekaDropFrame` protobuf encoding'i. Magic
+/// dispatcher seviyesinde strip edilir (`hekadrop-core::frame`).
+///
+/// Slot tahsisi: capabilities=10, chunk_tag=11, resume_hint=12,
+/// resume_reject=13, folder_mft=14. 1..9 ve 15..63 reserved.
+///
+/// Wire-byte-exact spec: `docs/protocol/capabilities.md`.
+#[allow(
+    clippy::all,
+    non_snake_case,
+    non_camel_case_types,
+    dead_code,
+    unused_qualifications,
+    rustdoc::invalid_html_tags,
+    rustdoc::broken_intra_doc_links
+)]
+pub mod hekadrop_ext {
+    include!(concat!(env!("OUT_DIR"), "/hekadrop.ext.rs"));
+}
