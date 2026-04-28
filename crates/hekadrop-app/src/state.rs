@@ -12,10 +12,13 @@
 //! state YASAK).
 
 // API: app yüzeyini koru — `hekadrop::state::*` consumer'ları (lib.rs
-// re-export) `TransferGuard`, `RateLimiter`, `DEFAULT_COMPLETED_IDLE_DELAY`
-// sembollerini bekliyor. `cargo machete` style "kullanmayan ihaneti" yerine
-// kasıtlı API genişliği — bin'de doğrudan referans yok ama integration
-// test'leri ve gelecekteki UI tab'ları için açık tutuluyor.
+// `TransferGuard`, `RateLimiter`, `DEFAULT_COMPLETED_IDLE_DELAY` sembollerini
+// app içinden import etmek için bin-private use. PR #107'de `pub use` →
+// `pub(crate) use` indirildi (unreachable_pub cleanup); tests/benches
+// `hekadrop::state::*`'e dokunmadığı için external API daralması olmadı.
+// Gelecekte `Geçmiş` UI sekmesi `HistoryItem`/`RateLimiter`'ı bin
+// içinden referans verir; kullanım eklenince `#[allow(unused_imports)]`
+// kaldırılır.
 #[allow(unused_imports)]
 pub(crate) use hekadrop_core::state::{
     AppState, HistoryItem, ProgressState, RateLimiter, TransferGuard, DEFAULT_COMPLETED_IDLE_DELAY,

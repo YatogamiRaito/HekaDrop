@@ -67,4 +67,8 @@ pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
 // alıyordu — Adım 3 öncesi yüzeyi korumak için aynı seviyede yeniden export.
 pub use hekadrop_core::{process_client_init, validate_server_init, DerivedKeys};
 
-pub mod platform;
+// `platform` modülü uygulamaya özgüdür (Win32 / macOS Cocoa / Linux GTK
+// shim'leri); core'a sızdırılmaz, tests/benches da bu modüle dokunmaz.
+// `pub(crate)` ile lib surface dışına çıkarıldı — PR #107 review (Copilot)
+// `pub mod` + iç items `pub(crate)` tutarsızlığını yakaladı.
+pub(crate) mod platform;
