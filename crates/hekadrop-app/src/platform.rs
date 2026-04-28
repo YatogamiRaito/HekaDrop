@@ -545,8 +545,11 @@ pub(crate) mod win {
             // windows-rs `HRESULT` → `ok()` S_OK/S_FALSE'ı tamam sayar,
             // gerçek hataları `Err` olarak geri verir. RPC_E_CHANGED_MODE da
             // kabul: COM zaten farklı modda init — bizim için OK.
+            // SAFETY-CAST: HRESULT bit pattern kasıtlı u32 → i32 reinterpretation
+            // (high-bit error encoding). `cast_signed()` Rust 1.85+ stable
+            // (MSRV 1.90 ≥ kullanılabilir); `as i32` yerine lint-clean alternatif.
             const RPC_E_CHANGED_MODE: windows::core::HRESULT =
-                windows::core::HRESULT(0x80010106u32 as i32);
+                windows::core::HRESULT(0x80010106u32.cast_signed());
             if hr.is_ok() || hr == RPC_E_CHANGED_MODE {
                 flag.set(true);
             } else {
