@@ -1053,7 +1053,7 @@ fn human_size(bytes: i64) -> String {
     }
 }
 
-/// HekaDrop extension frame'i parse + handle eder. Magic-prefix dispatch
+/// `HekaDrop` extension frame'i parse + handle eder. Magic-prefix dispatch
 /// (`frame::dispatch_frame_body`) sonrası caller bu helper'ı çağırır.
 ///
 /// Davranış:
@@ -1949,7 +1949,7 @@ mod tests {
 
     // ─── PR #114 (CRITICAL): receiver dispatch + capabilities response ───
 
-    /// `dispatch_frame_body` HekaDrop magic (`0xA5DEB201`) içeren plaintext
+    /// `dispatch_frame_body` `HekaDrop` magic (`0xA5DEB201`) içeren plaintext
     /// için `FrameKind::HekaDrop` döner; capabilities exchange wire path
     /// bunu kullanır. Receiver loop bu varyanta opportunistic handler ile
     /// cevap verir.
