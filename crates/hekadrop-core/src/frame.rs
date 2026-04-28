@@ -245,9 +245,13 @@ mod dispatcher_tests {
                 if let Some(Payload::Capabilities(c)) = frame.payload {
                     assert_eq!(c.features, 0x07);
                     let active = ActiveCapabilities::negotiate(features::ALL_SUPPORTED, c.features);
+                    // PR #103 Copilot review: ALL_SUPPORTED yalnızca implementasyonu
+                    // hazır feature'ları içerir (şu an: CHUNK_HMAC_V1). Peer 0x07
+                    // (RESUME + FOLDER + CHUNK) advertise etse de intersection sadece
+                    // CHUNK_HMAC_V1 olur — forward-compat semantiği.
                     assert!(active.has(features::CHUNK_HMAC_V1));
-                    assert!(active.has(features::RESUME_V1));
-                    assert!(active.has(features::FOLDER_STREAM_V1));
+                    assert!(!active.has(features::RESUME_V1));
+                    assert!(!active.has(features::FOLDER_STREAM_V1));
                 } else {
                     panic!("capabilities oneof beklendi");
                 }

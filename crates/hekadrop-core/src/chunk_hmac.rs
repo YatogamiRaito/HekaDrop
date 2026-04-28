@@ -44,19 +44,34 @@ pub fn derive_chunk_hmac_key(next_secret: &[u8]) -> [u8; 32] {
     out
 }
 
+/// `body_len` u32 alanına saturating cast yerine explicit check.
+///
+/// PR #104 Copilot review: önceki implementasyon
+/// `u32::try_from(...).unwrap_or(u32::MAX)` ile silent truncation yapıyordu —
+/// sender `u32::MAX` `body_len` ile non-conforming `ChunkIntegrity` üretip
+/// wire'a koyabilirdi. Şimdi explicit error döner; caller bu chunk'ı reject
+/// etmek zorunda.
+fn checked_body_len_u32(body_len: usize) -> Result<u32, ChunkBuildError> {
+    // INVARIANT (CLAUDE.md I-3): `TryFromIntError`'un içeriği `body_len` ile
+    // redundant — `actual` değeri zaten burada inline. Source error chain'in
+    // ek değeri yok. `with_context` anyhow'a özel; custom error type için
+    // narrow allow + yorum.
+    #[allow(clippy::map_err_ignore)]
+    u32::try_from(body_len).map_err(|_| ChunkBuildError::BodyTooLarge { actual: body_len })
+}
+
 /// HMAC-SHA256 input'unun canonical encoding'ini üret.
 ///
 /// Layout: `payload_id(BE i64) ‖ chunk_index(BE i64) ‖ offset(BE i64) ‖
 ///          body_len(BE u32) ‖ body`. Big-endian seçimi cross-platform
 /// reproducibility içindir (debug log/fuzz corpus tutarlılığı).
-fn build_hmac_input(payload_id: i64, chunk_index: i64, offset: i64, body: &[u8]) -> Vec<u8> {
-    // SAFETY-CAST: body_len u32 alanı — body 4 GiB'i aşmamalı (Quick Share
-    // chunk pratiği 512 KiB; bu bir invariant ama u32 üst sınırı 4 GiB).
-    // Cast'ten önce truncation kontrol et; aşılmışsa caller'a u32::MAX
-    // boyu döner ve verify mismatch ile yakalanır (defensive — hot path
-    // panic kullanmaz, error caller'da raise olur).
-    #[allow(clippy::cast_possible_truncation)]
-    let body_len_u32 = u32::try_from(body.len()).unwrap_or(u32::MAX);
+fn build_hmac_input(
+    payload_id: i64,
+    chunk_index: i64,
+    offset: i64,
+    body: &[u8],
+) -> Result<Vec<u8>, ChunkBuildError> {
+    let body_len_u32 = checked_body_len_u32(body.len())?;
 
     let mut input = Vec::with_capacity(HMAC_INPUT_PREFIX_LEN + body.len());
     input.extend_from_slice(&payload_id.to_be_bytes());
@@ -64,23 +79,25 @@ fn build_hmac_input(payload_id: i64, chunk_index: i64, offset: i64, body: &[u8])
     input.extend_from_slice(&offset.to_be_bytes());
     input.extend_from_slice(&body_len_u32.to_be_bytes());
     input.extend_from_slice(body);
-    input
+    Ok(input)
 }
 
 /// Bir chunk için HMAC-SHA256 tag hesapla.
 ///
 /// Sender bunu `PayloadTransferFrame` gönderdikten hemen sonra
 /// [`build_chunk_integrity`] ile wrap edip envelope'a koyar.
-#[must_use]
+///
+/// Hata: `body.len() > u32::MAX` (4 GiB) → [`ChunkBuildError::BodyTooLarge`].
+/// Quick Share chunk pratiği 512 KiB olduğu için normal akışta tetiklenmez.
 pub fn compute_tag(
     chunk_hmac_key: &[u8; 32],
     payload_id: i64,
     chunk_index: i64,
     offset: i64,
     body: &[u8],
-) -> [u8; 32] {
-    let input = build_hmac_input(payload_id, chunk_index, offset, body);
-    hmac_sha256(chunk_hmac_key, &input)
+) -> Result<[u8; 32], ChunkBuildError> {
+    let input = build_hmac_input(payload_id, chunk_index, offset, body)?;
+    Ok(hmac_sha256(chunk_hmac_key, &input))
 }
 
 /// Receiver-side: peer'ın yolladığı [`ChunkIntegrity`] mesajını local
@@ -116,13 +133,27 @@ pub fn verify_tag(
     // Adım 3: HMAC compute. Tag binding redundant alanları (payload_id,
     // chunk_index, offset) içerdiği için herhangi biri tampered ise
     // verify fail eder.
-    let computed = compute_tag(
+    //
+    // body 4 GiB üstüyse `ChunkBuildError::BodyTooLarge` döner — verify
+    // path'inde bu durumda BodyLenMismatch zaten Adım 2'de yakalanırdı
+    // (body.len() usize > u32::MAX iken claimed != actual), ama defensive
+    // olarak burada da explicit handle edip `BodyLenMismatch` synthesize
+    // ediyoruz (caller tek kategoriden hata görsün).
+    let computed = match compute_tag(
         chunk_hmac_key,
         expected.payload_id,
         expected.chunk_index,
         expected.offset,
         body,
-    );
+    ) {
+        Ok(t) => t,
+        Err(ChunkBuildError::BodyTooLarge { actual }) => {
+            return Err(VerifyError::BodyLenMismatch {
+                claimed: expected.body_len as usize,
+                actual,
+            });
+        }
+    };
 
     // Adım 4: constant-time compare.
     if computed.ct_eq(&expected.tag).into() {
@@ -135,25 +166,26 @@ pub fn verify_tag(
 /// Sender-side helper: hesaplanan tag'i `ChunkIntegrity` protobuf
 /// mesajına paketle. `crate::frame::wrap_hekadrop_frame` ile magic prefix
 /// eklenir, sonra `SecureCtx::encrypt`'e beslenir.
-#[must_use]
+///
+/// Hata: `body_len > u32::MAX` (4 GiB) → [`ChunkBuildError::BodyTooLarge`].
+/// Önceki saturating cast (`unwrap_or(u32::MAX)`) silent corruption riskiydi
+/// (PR #104 Copilot review).
 pub fn build_chunk_integrity(
     payload_id: i64,
     chunk_index: i64,
     offset: i64,
     body_len: usize,
     tag: [u8; 32],
-) -> ChunkIntegrity {
-    // SAFETY-CAST: aynı u32 sınırı `build_hmac_input` ile tutarlı.
-    #[allow(clippy::cast_possible_truncation)]
-    let body_len_u32 = u32::try_from(body_len).unwrap_or(u32::MAX);
+) -> Result<ChunkIntegrity, ChunkBuildError> {
+    let body_len_u32 = checked_body_len_u32(body_len)?;
 
-    ChunkIntegrity {
+    Ok(ChunkIntegrity {
         payload_id,
         chunk_index,
         offset,
         body_len: body_len_u32,
         tag: tag.to_vec().into(),
-    }
+    })
 }
 
 /// `verify_tag` hata kategorileri.
@@ -174,6 +206,19 @@ pub enum VerifyError {
     /// Hata mesajı içerik leak etmez (chunk identifier'lar caller'da loglu).
     #[error("ChunkIntegrity tag eşleşmedi (HMAC mismatch)")]
     TagMismatch,
+}
+
+/// `compute_tag` / `build_chunk_integrity` build-time hata kategorileri.
+///
+/// PR #104 Copilot review: önceden saturating cast ile silent corruption
+/// vardı (4 GiB üstü body → `body_len = u32::MAX` ile non-conforming
+/// `ChunkIntegrity` üretilirdi). Şimdi explicit error.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ChunkBuildError {
+    /// `body.len() > u32::MAX` (4 GiB). Quick Share chunk pratiği 512 KiB
+    /// olduğu için normal akışta tetiklenmez; defensive guard.
+    #[error("chunk body uzunluğu {actual} byte u32 sınırını aşıyor")]
+    BodyTooLarge { actual: usize },
 }
 
 #[cfg(test)]
@@ -230,9 +275,9 @@ mod tests {
     fn compute_then_verify_ok() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         let body = b"the quick brown fox jumps over the lazy dog";
-        let tag = compute_tag(&key, 1234, 5, 0x100, body);
+        let tag = compute_tag(&key, 1234, 5, 0x100, body).unwrap();
 
-        let ci = build_chunk_integrity(1234, 5, 0x100, body.len(), tag);
+        let ci = build_chunk_integrity(1234, 5, 0x100, body.len(), tag).unwrap();
         assert_eq!(verify_tag(&key, &ci, body), Ok(()));
     }
 
@@ -241,11 +286,11 @@ mod tests {
     fn verify_detects_body_tampering() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         let body = b"original".to_vec();
-        let tag = compute_tag(&key, 1, 0, 0, &body);
+        let tag = compute_tag(&key, 1, 0, 0, &body).unwrap();
 
         let mut tampered = body.clone();
         tampered[0] ^= 0x01;
-        let ci = build_chunk_integrity(1, 0, 0, tampered.len(), tag);
+        let ci = build_chunk_integrity(1, 0, 0, tampered.len(), tag).unwrap();
         assert_eq!(
             verify_tag(&key, &ci, &tampered),
             Err(VerifyError::TagMismatch)
@@ -257,7 +302,7 @@ mod tests {
     fn verify_detects_payload_id_rebinding() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         let body = b"data";
-        let tag = compute_tag(&key, 100, 0, 0, body);
+        let tag = compute_tag(&key, 100, 0, 0, body).unwrap();
 
         // Saldırgan ChunkIntegrity'de payload_id'yi 100→200 değiştirmiş gibi
         // — body aynı ama tag 100 için hesaplanmış. Verify yakalamalı.
@@ -276,7 +321,7 @@ mod tests {
     fn verify_detects_chunk_index_rebinding() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         let body = b"x";
-        let tag = compute_tag(&key, 1, 5, 0, body);
+        let tag = compute_tag(&key, 1, 5, 0, body).unwrap();
 
         let ci = ChunkIntegrity {
             payload_id: 1,
@@ -293,7 +338,7 @@ mod tests {
     fn verify_detects_offset_rebinding() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         let body = b"x";
-        let tag = compute_tag(&key, 1, 0, 100, body);
+        let tag = compute_tag(&key, 1, 0, 100, body).unwrap();
 
         let ci = ChunkIntegrity {
             payload_id: 1,
@@ -311,9 +356,9 @@ mod tests {
         let k1 = derive_chunk_hmac_key(&[0x42u8; 32]);
         let k2 = derive_chunk_hmac_key(&[0x43u8; 32]);
         let body = b"x";
-        let tag = compute_tag(&k1, 1, 0, 0, body);
+        let tag = compute_tag(&k1, 1, 0, 0, body).unwrap();
 
-        let ci = build_chunk_integrity(1, 0, 0, 1, tag);
+        let ci = build_chunk_integrity(1, 0, 0, 1, tag).unwrap();
         assert_eq!(verify_tag(&k2, &ci, body), Err(VerifyError::TagMismatch));
     }
 
@@ -322,7 +367,7 @@ mod tests {
     fn verify_rejects_short_tag() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         let body = b"x";
-        let mut ci = build_chunk_integrity(1, 0, 0, 1, [0u8; 32]);
+        let mut ci = build_chunk_integrity(1, 0, 0, 1, [0u8; 32]).unwrap();
         ci.tag = vec![0u8; 16].into(); // çok kısa
         assert_eq!(
             verify_tag(&key, &ci, body),
@@ -334,7 +379,7 @@ mod tests {
     fn verify_rejects_long_tag() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         let body = b"x";
-        let mut ci = build_chunk_integrity(1, 0, 0, 1, [0u8; 32]);
+        let mut ci = build_chunk_integrity(1, 0, 0, 1, [0u8; 32]).unwrap();
         ci.tag = vec![0u8; 64].into(); // çok uzun
         assert_eq!(
             verify_tag(&key, &ci, body),
@@ -346,7 +391,7 @@ mod tests {
     fn verify_rejects_empty_tag() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         let body = b"x";
-        let mut ci = build_chunk_integrity(1, 0, 0, 1, [0u8; 32]);
+        let mut ci = build_chunk_integrity(1, 0, 0, 1, [0u8; 32]).unwrap();
         ci.tag = vec![].into();
         assert_eq!(
             verify_tag(&key, &ci, body),
@@ -359,9 +404,9 @@ mod tests {
     fn verify_rejects_body_len_mismatch() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         let body = b"abcdefgh"; // 8 byte
-        let tag = compute_tag(&key, 1, 0, 0, body);
+        let tag = compute_tag(&key, 1, 0, 0, body).unwrap();
 
-        let mut ci = build_chunk_integrity(1, 0, 0, body.len(), tag);
+        let mut ci = build_chunk_integrity(1, 0, 0, body.len(), tag).unwrap();
         ci.body_len = 4; // claim 4 ama actual 8
         assert_eq!(
             verify_tag(&key, &ci, body),
@@ -377,8 +422,8 @@ mod tests {
     fn empty_body_roundtrip() {
         let key = derive_chunk_hmac_key(&[0u8; 32]);
         let body: &[u8] = &[];
-        let tag = compute_tag(&key, 0, 0, 0, body);
-        let ci = build_chunk_integrity(0, 0, 0, 0, tag);
+        let tag = compute_tag(&key, 0, 0, 0, body).unwrap();
+        let ci = build_chunk_integrity(0, 0, 0, 0, tag).unwrap();
         assert_eq!(verify_tag(&key, &ci, body), Ok(()));
     }
 
@@ -389,7 +434,7 @@ mod tests {
         // payload_id = 0x12345678, chunk_index = 0x03, offset = 0x180000,
         // body_len = 32 (chunk-hmac.md §3.1 örnek değerleri).
         let body = vec![0x41u8; 32]; // 'A' × 32
-        let input = build_hmac_input(0x12345678, 3, 0x180000, &body);
+        let input = build_hmac_input(0x12345678, 3, 0x180000, &body).unwrap();
 
         // Layout: 8B payload_id BE | 8B chunk_index BE | 8B offset BE | 4B body_len BE | body
         assert_eq!(input.len(), 28 + 32);
@@ -412,8 +457,8 @@ mod tests {
     fn different_payload_ids_produce_different_tags_for_same_body() {
         let key = derive_chunk_hmac_key(&[0u8; 32]);
         let body = b"shared body";
-        let t1 = compute_tag(&key, 1, 0, 0, body);
-        let t2 = compute_tag(&key, 2, 0, 0, body);
+        let t1 = compute_tag(&key, 1, 0, 0, body).unwrap();
+        let t2 = compute_tag(&key, 2, 0, 0, body).unwrap();
         assert_ne!(t1, t2);
     }
 
@@ -421,8 +466,8 @@ mod tests {
     #[test]
     fn different_body_produces_different_tag() {
         let key = derive_chunk_hmac_key(&[0u8; 32]);
-        let t1 = compute_tag(&key, 1, 0, 0, b"a");
-        let t2 = compute_tag(&key, 1, 0, 0, b"b");
+        let t1 = compute_tag(&key, 1, 0, 0, b"a").unwrap();
+        let t2 = compute_tag(&key, 1, 0, 0, b"b").unwrap();
         assert_ne!(t1, t2);
     }
 
@@ -430,12 +475,46 @@ mod tests {
     #[test]
     fn build_chunk_integrity_field_mapping() {
         let tag = [0xABu8; 32];
-        let ci = build_chunk_integrity(0x111, 0x222, 0x333, 64, tag);
+        let ci = build_chunk_integrity(0x111, 0x222, 0x333, 64, tag).unwrap();
         assert_eq!(ci.payload_id, 0x111);
         assert_eq!(ci.chunk_index, 0x222);
         assert_eq!(ci.offset, 0x333);
         assert_eq!(ci.body_len, 64);
         assert_eq!(ci.tag.len(), 32);
         assert_eq!(&ci.tag[..], &tag[..]);
+    }
+
+    /// PR #104 Copilot review fix: `body_len > u32::MAX` artık silent
+    /// saturating cast yerine explicit `BodyTooLarge` error döner. 4 GiB
+    /// üstü body 32-bit usize sistemde yaratılamaz; bu testi sadece
+    /// 64-bit hedeflerde koş (CI matrix tüm hedefler 64-bit).
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn build_chunk_integrity_rejects_body_over_u32_max() {
+        let oversize = (u32::MAX as usize) + 1;
+        let result = build_chunk_integrity(1, 0, 0, oversize, [0u8; 32]);
+        assert_eq!(
+            result,
+            Err(ChunkBuildError::BodyTooLarge { actual: oversize })
+        );
+    }
+
+    /// `compute_tag` aynı şekilde 4 GiB üstü body için error döndürmeli.
+    /// Burada gerçek 4 GiB allocation yapmıyoruz — `checked_body_len_u32`'ı
+    /// indirect olarak `build_hmac_input` üzerinden test ediyoruz.
+    #[test]
+    fn checked_body_len_helper_explicit() {
+        // Pratik allocation yok: helper'ı doğrudan test et.
+        assert_eq!(checked_body_len_u32(0), Ok(0));
+        assert_eq!(checked_body_len_u32(64), Ok(64));
+        assert_eq!(checked_body_len_u32(u32::MAX as usize), Ok(u32::MAX));
+        #[cfg(target_pointer_width = "64")]
+        {
+            let oversize = (u32::MAX as usize) + 1;
+            assert_eq!(
+                checked_body_len_u32(oversize),
+                Err(ChunkBuildError::BodyTooLarge { actual: oversize })
+            );
+        }
     }
 }
