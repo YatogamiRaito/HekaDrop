@@ -4,10 +4,10 @@
 //! "Herkes" (Everyone) ayarlı olması gerekir. Aksi halde BLE discovery şart —
 //! bu modül yalnız mDNS/WLAN üzerinden çalışır (BLE ileri bir iterasyonda).
 
-use crate::config;
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use hekadrop_core::config;
 use mdns_sd::{ResolvedService, ServiceDaemon, ServiceEvent};
 use std::net::IpAddr;
 use std::time::Duration;

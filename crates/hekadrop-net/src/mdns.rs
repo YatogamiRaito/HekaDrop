@@ -1,5 +1,5 @@
-use crate::config;
 use anyhow::Result;
+use hekadrop_core::config;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use std::net::IpAddr;
 use tracing::{info, warn};

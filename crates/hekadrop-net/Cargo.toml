@@ -1,0 +1,40 @@
+[package]
+name = "hekadrop-net"
+description = "HekaDrop network adapter — mDNS discovery + peer browse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+# RFC-0001 §5 Adım 6: discovery.rs + mdns.rs core'dan ayrı, network bağımlı
+# adapter'lar buraya. Domain tipleri (`DiscoveredDevice` vb.) core'un
+# `discovery_types` modülünde kalır — net → core kenarı tek yönlü.
+
+[dependencies]
+# Workspace internal — domain tipleri ve config (Adım 4'te core'a taşındı).
+hekadrop-core = { path = "../hekadrop-core", version = "=0.7.0" }
+
+# Async runtime — discovery loop ve task spawn için.
+tokio = { version = "1", features = ["rt", "sync", "time", "net"] }
+
+# mDNS — sadece bu crate kullanır (RFC §5 Adım 6 ile core'dan kaldırıldı).
+mdns-sd = "0.19"
+
+# Local IP enumeration (mDNS interface seçimi için).
+if-addrs = "0.15"
+
+# Base64 — Quick Share endpoint_info encoding (mDNS TXT record'larında).
+base64 = "0.22"
+
+# Logging.
+tracing = "0.1"
+
+# Hata + serde (config tipleri serde derive ile gelir).
+anyhow = "1"
+
+[lints]
+workspace = true

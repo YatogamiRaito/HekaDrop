@@ -19,6 +19,7 @@ categories = ["network-programming", "command-line-utilities"]
 # RFC-0001 §5 Adım 2: hekadrop-proto. Adım 3: hekadrop-core (kripto, frame,
 # UKEY2, secure, error, log_redact, file_size_guard, config taşındı).
 hekadrop-core = { path = "../hekadrop-core", version = "=0.7.0" }
+hekadrop-net = { path = "../hekadrop-net", version = "=0.7.0" }
 hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
 
 # RFC-0001 §5 Adım 5b — `ui_adapter::UiAdapter` core'un `UiPort` trait'ini
@@ -30,12 +31,12 @@ async-trait = "0.1"
 # Cargo feature unification ile hepsi tek build.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-mdns-sd = "0.19"
+# RFC-0001 §5 Adım 6: mdns-sd + if-addrs hekadrop-net crate'ine taşındı —
+# app artık mDNS adapter'larına yalnız re-export ile erişir.
 hex = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-if-addrs = "0.15"
 tray-icon = "0.22"
 tao = "0.35"
 wry = "0.55"

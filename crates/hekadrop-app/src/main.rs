@@ -71,9 +71,11 @@ fn device_kind_label(kind: DeviceKind) -> &'static str {
     }
 }
 
-mod discovery;
+// RFC-0001 §5 Adım 6: discovery + mdns hekadrop-net crate'inde. Mevcut
+// `crate::discovery::*` ve `crate::mdns::*` çağrıları re-export shim ile
+// dokunulmadan derlenir.
+use hekadrop_net::{discovery, mdns};
 mod i18n;
-mod mdns;
 mod paths;
 mod platform;
 mod state;
