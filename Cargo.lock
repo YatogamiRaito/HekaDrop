@@ -1508,6 +1508,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hekadrop-cli"
+version = "0.7.0"
+dependencies = [
+ "hekadrop-core",
+ "hekadrop-net",
+]
+
+[[package]]
 name = "hekadrop-core"
 version = "0.7.0"
 dependencies = [
