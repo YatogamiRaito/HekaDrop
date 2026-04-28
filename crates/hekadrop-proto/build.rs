@@ -9,6 +9,11 @@ fn main() -> Result<()> {
         "proto/sharing_enums.proto",
         "proto/ukey.proto",
         "proto/wire_format.proto",
+        // RFC-0003 §3.2: HekaDrop-only extension envelope
+        // (capabilities, chunk_tag, resume_hint, resume_reject, folder_mft).
+        // Wire layout: 4-byte BE magic (0xA5DEB201) + bu protobuf payload.
+        // Dispatcher: hekadrop-core::frame.
+        "proto/hekadrop_extensions.proto",
     ];
 
     for p in &protos {

@@ -1,0 +1,99 @@
+// HekaDrop protocol extensions — wire-level proto definitions.
+//
+// **Bu file HekaDrop-only**, upstream Quick Share / Nearby Connections
+// proto ağacında YOKTUR. Burada tanımlanan `HekaDropFrame` envelope ve
+// inner mesajları magic-prefixed bir wrapper içinde taşınır
+// (4-byte big-endian `0xA5DEB201`, **protobuf-DIŞINDA**, raw prefix).
+//
+// Wire-byte-exact spec: `docs/protocol/capabilities.md`.
+// Normative RFC:        `docs/rfcs/0003-chunk-hmac.md` §3.2.
+//
+// Slot tahsis politikası (oneof HekaDropFrame.payload):
+//   1..9   — boş (gelecek non-payload core fields için rezerv: correlation_id,
+//             trace_span vb.)
+//   10–14  — bu RFC paketinde sabitlenmiş (capabilities, chunk_tag,
+//             resume_hint, resume_reject, folder_mft)
+//   15..63 — gelecek v0.x minor eklemeler için rezerv
+//
+// `oneof` içinde proto3 `reserved` keyword'ü KULLANILMAZ — `reserved`
+// gelecek kullanımı yasaklar (capabilities.md §3.1). Slot management
+// dokümantasyon-driven.
+
+syntax = "proto3";
+package hekadrop.ext;
+
+// HekaDrop extension envelope.
+//
+// Wire layout: `[4-byte BE magic 0xA5DEB201][bu mesajın protobuf encoding'i]`
+// Magic protobuf field DEĞİL — dispatcher seviyesinde strip edilir.
+message HekaDropFrame {
+  uint32 version = 1;         // monoton; v0.8 = 1
+
+  oneof payload {
+    Capabilities    capabilities  = 10;  // RFC 0003 §3.2
+    ChunkIntegrity  chunk_tag     = 11;  // RFC 0003 §3.2 (ChunkIntegrity)
+    ResumeHint      resume_hint   = 12;  // RFC 0004 (placeholder, v0.8.1)
+    ResumeReject    resume_reject = 13;  // RFC 0004 (placeholder, v0.8.1)
+    FolderManifest  folder_mft    = 14;  // RFC 0005 (placeholder, v0.8.x)
+  }
+}
+
+// Peer-to-peer feature negotiation. Her iki uç PairedKeyEncryption
+// sonrası kendi `Capabilities`'ini gönderir; aktif feature set =
+// `my.features & peer.features`. 2 sn timeout → legacy mode (active=0).
+message Capabilities {
+  uint32 version  = 1;        // Capabilities şeması versiyonu; v0.8.0 = 1
+  uint64 features = 2;        // Bitmask, sabit bit konumları için
+                              // hekadrop-core::capabilities::features modülüne bkz.
+}
+
+// Per-chunk HMAC integrity tag (RFC 0003).
+//
+// Wire-byte-exact spec: `docs/protocol/chunk-hmac.md`.
+// Bu mesaj capabilities.CHUNK_HMAC_V1 (= 0x0001) bit'i her iki uçta
+// aktifse gönderilir; PayloadTransferFrame'den HEMEN sonra, aynı
+// SecureCtx stream'inde.
+message ChunkIntegrity {
+  int64  payload_id  = 1;     // PayloadHeader.id mirror (redundant integrity)
+  int64  chunk_index = 2;     // 0-based monoton per-payload counter
+  int64  offset      = 3;     // PayloadChunk.offset mirror
+  uint32 body_len    = 4;     // len(body) bu değere eşit olmalı
+  bytes  tag         = 5;     // HMAC-SHA256 = 32 bytes; başka uzunluk reject
+}
+
+// Transfer resume hint (RFC 0004 placeholder).
+//
+// Receiver, Introduction frame'inde tanıdığı bir payload_id görüp
+// `~/.hekadrop/partial/<session_id>_<payload_id>.meta` ile eşleşen
+// partial dosyası varsa bu mesajla sender'a "şuradan devam" ipucu verir.
+//
+// **v0.8.0'da boş placeholder.** Tam tanım v0.8.1 implementation'ında
+// `docs/protocol/resume.md` byte-exact spec'inden indirilecek.
+message ResumeHint {
+  int64  payload_id          = 1;
+  int64  offset              = 2;
+  bytes  partial_hash        = 3;   // SHA-256(bytes[0..offset])
+  bytes  last_chunk_tag      = 4;   // RFC-0003 fast-path (32 bytes)
+  uint32 capabilities_version = 5;  // peer Capabilities.version mirror
+}
+
+// Resume reject reasons (RFC 0004).
+message ResumeReject {
+  enum Reason {
+    UNKNOWN          = 0;
+    HASH_MISMATCH    = 1;
+    TTL_EXPIRED      = 2;
+    VERSION_MISMATCH = 3;
+    DISK_BUDGET      = 4;
+  }
+  int64  payload_id = 1;
+  Reason reason     = 2;
+}
+
+// Folder bundle manifest (RFC 0005 placeholder).
+//
+// **v0.8.0'da boş placeholder.** Tam tanım folder-payload.md
+// implementation'ında.
+message FolderManifest {
+  // Sealed during v0.8.x implementation; bu boş slot ABI'yi rezerv eder.
+}
