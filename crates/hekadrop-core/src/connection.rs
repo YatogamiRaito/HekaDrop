@@ -223,6 +223,11 @@ pub async fn handle(
     // responds on detection.
     let mut active_capabilities: crate::capabilities::ActiveCapabilities =
         crate::capabilities::ActiveCapabilities::legacy();
+    // Spec capabilities.md §6: `Capabilities` ikinci kez geldiyse ignore +
+    // warn (downgrade/flip-flop attack vector). İlk frame'i işledikten sonra
+    // bu flag set; sonraki Capabilities frame'leri active_capabilities'i
+    // değiştirmez (PR #114 review, Copilot).
+    let mut peer_capabilities_received = false;
     let mut our_capabilities_sent = false;
 
     loop {
@@ -283,17 +288,35 @@ pub async fn handle(
         // OfflineFrame ise mevcut path.
         match frame::dispatch_frame_body(inner.as_ref()) {
             frame::FrameKind::HekaDrop { inner: ext_bytes } => {
+                // PR #114 review (Copilot, capabilities.md §6): magic match
+                // sonrası decode/handler hatası **protocol violation** demek
+                // (peer/version mismatch bug veya MITM). Spec disconnection +
+                // session abort gerektiriyor → log + return Err ile yukarı
+                // propagate, `?` ile drop.
                 if let Err(e) = handle_hekadrop_frame(
                     ext_bytes,
                     &peer,
                     &mut socket,
                     &mut ctx,
                     &mut active_capabilities,
+                    &mut peer_capabilities_received,
                     &mut our_capabilities_sent,
                 )
                 .await
                 {
-                    warn!("[{}] HekaDropFrame handler hatası: {:?}", peer, e);
+                    warn!(
+                        "[{}] HekaDropFrame protocol violation; oturum sonlandırılıyor: {:?}",
+                        peer, e
+                    );
+                    cleanup_transfer_state(
+                        &peer,
+                        &mut assembler,
+                        &mut pending_names,
+                        &mut pending_texts,
+                        state.as_ref(),
+                    );
+                    let _ = send_disconnection(&mut socket, &mut ctx).await;
+                    break;
                 }
                 continue;
             }
@@ -1049,6 +1072,7 @@ async fn handle_hekadrop_frame(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
     active_capabilities: &mut crate::capabilities::ActiveCapabilities,
+    peer_capabilities_received: &mut bool,
     our_capabilities_sent: &mut bool,
 ) -> Result<()> {
     use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, HekaDropFrame};
@@ -1063,11 +1087,24 @@ async fn handle_hekadrop_frame(
 
     match payload {
         Payload::Capabilities(peer_caps) => {
+            // Spec capabilities.md §6: aynı oturumda ikinci Capabilities frame
+            // ignore + warn. Downgrade/flip-flop attack vector — peer
+            // ilk frame'de tüm özellikleri reklam eder, sonra azaltıp aktif
+            // chunk-HMAC vb.'yi kapatabilir. İlk frame karara bağlanır.
+            if *peer_capabilities_received {
+                warn!(
+                    "[{}] ikinci Capabilities frame yok sayıldı (spec §6 — downgrade engelleme)",
+                    peer
+                );
+                return Ok(());
+            }
+
             let our_features = crate::capabilities::features::ALL_SUPPORTED;
             *active_capabilities = crate::capabilities::ActiveCapabilities::negotiate(
                 our_features,
                 peer_caps.features,
             );
+            *peer_capabilities_received = true;
             info!(
                 "[{}] active capabilities: 0x{:04x} (chunk_hmac={}, resume={}, folder={})",
                 peer,
