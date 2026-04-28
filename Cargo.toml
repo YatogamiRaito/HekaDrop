@@ -21,7 +21,6 @@ homepage = "https://github.com/YatogamiRaito/HekaDrop"
 #   * clippy::pedantic umbrella (~1,228 hit)        — issue #TBD
 #   * clippy::doc_markdown (445 hand + 792 gen)     — issue #TBD
 #   * clippy::must_use_candidate (71 hand)          — issue #TBD
-#   * clippy::match_same_arms (68)                  — issue #TBD
 #   * unused_crate_dependencies                     — false-pos cascade, atlandı
 #
 # v0.7.x ile enforce edilenler (önceki "RED" listesinden):
@@ -76,6 +75,7 @@ redundant_clone = "warn"
 use_self = "warn"
 # Kalite — düşük volüm, anlık temizlik
 uninlined_format_args = "warn"  # PR #87 auto-fix sonrası 110 yeni site birikmişti; auto-fix tekrar uygulandı + lint enforce
+match_same_arms = "warn"        # i18n table + 2 dokümantasyon arm scoped allow ile (PR #87 deferred)
 manual_let_else = "warn"
 ignored_unit_patterns = "warn"
 trivially_copy_pass_by_ref = "warn"

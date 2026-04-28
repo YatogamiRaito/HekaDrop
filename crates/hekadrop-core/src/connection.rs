@@ -587,6 +587,12 @@ async fn handle_sharing_frame(
             send_sharing_frame(socket, ctx, &build_paired_key_result()).await?;
             *sent_paired_result = true;
         }
+        // PROTO: Explicit no-op (catch-all'a düşmesin diye yazılı): biz
+        // `build_paired_key_result()` gönderdik, peer'ın aynısını geri yollayışı
+        // protokol gereği — dokümante edilmiş expected frame, action yok. Match
+        // arm clippy::match_same_arms `_ => {}`'ye birleştir önerirse anlam
+        // kaybı; allow ile koruyoruz.
+        #[allow(clippy::match_same_arms)]
         Some(sh_v1::FrameType::PairedKeyResult) => {}
         Some(sh_v1::FrameType::Introduction) => {
             let intro = v1
@@ -1331,6 +1337,13 @@ pub(crate) fn build_connection_response_accept() -> OfflineFrame {
 fn classify_handshake_error(e: &anyhow::Error) -> &'static str {
     fn map_io_error(io: &std::io::Error) -> &'static str {
         use std::io::ErrorKind::*;
+        // API: Explicit liste DOKÜMANTASYON: tanıdığımız peer-disconnect
+        // semantikli io error variants. Wildcard ile aynı body'ye düşse de
+        // bilinen kindleri ayrı listelemek "şu hatalar = peer disconnect"
+        // anlamını taşır; gelecekte ayrı i18n key ayrımı (network vs. abort)
+        // kolaylaşır. clippy::match_same_arms `_ => ...`'a indirmeyi öneriyor —
+        // anlam kaybı.
+        #[allow(clippy::match_same_arms)]
         match io.kind() {
             TimedOut => "err.peer_timeout",
             ConnectionReset | ConnectionAborted | BrokenPipe | UnexpectedEof | NotConnected => {
