@@ -123,6 +123,24 @@ typos
 
 Tüm yeşilse commit. Bir tanesi sarı/kırmızıysa fix öncesi commit yok.
 
+### Bilinen gap: platform-gated kod lokal lint kapsamında değil
+
+`cargo clippy --fix` veya manuel taramada lokal host platformu (genelde
+macOS) **hangi `#[cfg(target_os = "...")]` blokları derliyorsa onları
+görür** — diğer platform'ların gated kodu (Linux GTK / Windows Win32)
+kapsam dışıdır. Cross-compile setup pratik değildir (GTK system dep'leri).
+
+**Workaround:** Lint enforce eden bir PR push'unun ilk CI run'unda
+Linux + Windows fail edebilir; CI log'larındaki `--> path:line` listesini
+manuel fix + push iterasyonu. Bu pattern PR #93, #107 (uninlined_format_args)
+ve gelecekteki tüm cross-cutting lint enforce PR'larında **beklenmelidir**;
+1 ekstra CI iterasyonu kabul edilebilir maliyet.
+
+İleride elimine etmek için:
+- Cross-platform clippy CI matrix step'i + `cargo clippy --fix` koş
+  → fix önerisini patch olarak çıkar, lokal apply
+- VEYA cross-compile container kur (Docker/devcontainer)
+
 ## Pre-push adversarial review (önerilir)
 
 `git push` ÖNCESİ adversarial review agent çağır — özellikle non-trivial PR'larda:
