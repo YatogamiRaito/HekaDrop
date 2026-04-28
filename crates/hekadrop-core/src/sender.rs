@@ -195,6 +195,9 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     // 7-11) Loop — peer sharing frame'lerini işle, duruma göre sıradaki adımı tetikle
     let mut introduction_sent = false;
     let mut sent_paired_result = false;
+    // RFC-0003 §3.3 — capabilities exchange tek seferlik, PairedKeyResult
+    // arm'ında tetiklenir. Peer `extension_supported = false` ise atlanır.
+    let mut capabilities_exchanged = false;
     let peer_label = req.device.name.clone();
     let transfer_id = format!("out:{}:{}", req.device.addr, req.device.port);
     let _guard = state::TransferGuard::new(Arc::clone(&state), &transfer_id);
@@ -261,6 +264,33 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                     }
                     Some(sh_v1::FrameType::PairedKeyResult) => {
                         info!("[sender] peer PairedKeyResult aldı");
+
+                        // RFC-0003 §3.3 capabilities exchange — peer mDNS
+                        // TXT'te `ext=1` flag'i göndermişse (yani HekaDrop
+                        // extension destekli), Introduction'dan ÖNCE
+                        // capabilities swap yap. Eski Quick Share peer'ları
+                        // (extension_supported=false) için exchange atlanır
+                        // → mevcut Quick Share legacy akışı korunur.
+                        if req.device.extension_supported && !capabilities_exchanged {
+                            let active = crate::negotiation::negotiate_capabilities(
+                                &mut socket,
+                                &mut ctx,
+                                crate::negotiation::DEFAULT_CAPABILITIES_TIMEOUT,
+                            )
+                            .await;
+                            info!(
+                                "[sender] active capabilities: 0x{:04x} (chunk_hmac={}, resume={}, folder={})",
+                                active.raw(),
+                                active.has(crate::capabilities::features::CHUNK_HMAC_V1),
+                                active.has(crate::capabilities::features::RESUME_V1),
+                                active.has(crate::capabilities::features::FOLDER_STREAM_V1),
+                            );
+                            capabilities_exchanged = true;
+                            // NOT: `active` per-bağlantı state'e (chunk-HMAC
+                            // entegrasyonu sıradaki PR'ında kullanılacak)
+                            // taşınmadı; şimdilik log + observability.
+                        }
+
                         if !introduction_sent {
                             let intro = build_introduction_multi(&plans);
                             connection::send_sharing_frame(&mut socket, &mut ctx, &intro).await?;
