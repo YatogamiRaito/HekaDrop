@@ -41,6 +41,14 @@ pub struct DiscoveredDevice {
     pub port: u16,
     pub device_type: u8,
     pub fullname: String,
+    /// `true` ise peer mDNS TXT record'unda `ext=1` flag'i göndermiş —
+    /// HekaDrop extension protocol (capabilities envelope, chunk-HMAC,
+    /// resume, folder) destekli. `false` (eski Quick Share peer):
+    /// HekaDropFrame yollanmamalı; legacy mode kullanılır.
+    ///
+    /// RFC-0003 §3.3 peer-detection signal. Eski Quick Share peer'larında
+    /// `ext` alanı yok → parser default `false` set eder.
+    pub extension_supported: bool,
 }
 
 impl DiscoveredDevice {

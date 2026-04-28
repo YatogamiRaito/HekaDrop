@@ -65,13 +65,19 @@ pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
         return Ok(None);
     }
 
+    // RFC-0003 §3.3 peer-detection signal:
+    //   `ext=1` flag → bu instance HekaDrop extension protocol (capabilities
+    //   envelope, chunk-HMAC, resume, folder) destekli. Eski Quick Share
+    //   peer'ları bu alanı görmezden gelir (sadece "n" endpoint info'yu
+    //   parse ederler). HekaDrop discovery `extension_supported` field'ını
+    //   bu flag'in varlığına göre set eder.
     let info = ServiceInfo::new(
         &service_type,
         &instance,
         &format!("{instance}.local."),
         &addrs[..],
         port,
-        &[("n", endpoint_info_b64.as_str())][..],
+        &[("n", endpoint_info_b64.as_str()), ("ext", "1")][..],
     )?;
 
     let fullname = info.get_fullname().to_string();
