@@ -417,7 +417,7 @@ impl Settings {
 
     /// TTL dolmuş kayıtları listeden siler; dönen sayı silinen kayıt adedi.
     ///
-    /// **v0.6'da startup'ta otomatik çağrılır** (bkz. `main.rs` `run_app)`:
+    /// **v0.6'da startup'ta otomatik çağrılır** (bkz. `main.rs` `run_app`):
     /// eskiden "soft-expire" idi (listede kalırdı), ancak Issue #17 kapsamında
     /// legacy kayıtların kalıcı yaşaması saldırı yüzeyi yarattı — hash-suppress
     /// saldırısıyla peer hash göndermezse `is_trusted_legacy` yoluyla trust
@@ -1470,9 +1470,9 @@ mod tests {
     /// legacy kayda bağlar → kalıcı silent bypass. Bu nedenle strict
     /// hash-first semantic seçildi; OR fallback kabul edilmez.
     ///
-    /// Doğru trust karar mantığı (connection.rs `handle_sharing_frame)`:
+    /// Doğru trust karar mantığı (`connection.rs` `handle_sharing_frame`):
     ///   Some(h) => `is_trusted_by_hash(h)`          // YALNIZ hash
-    ///   None    => `is_trusted_legacy(name`, id)    // pre-v0.6 peer
+    ///   None    => `is_trusted_legacy(name, id)`    // pre-v0.6 peer
     ///
     /// Bu test connection.rs'teki `trusted` ifadesini Settings seviyesinde
     /// simüle eder — tam flow (`prompt_accept`) için test harness yok.
@@ -1726,7 +1726,7 @@ mod tests {
     /// `set_permissions` ile düzeltiliyordu; bu pencerede dosya
     /// world-readable'dı.
     ///
-    /// Assertion fix (PR #35 review, Copilot MED, `discussion_r3107564937)`:
+    /// Assertion fix (PR #35 review, Copilot MED, `discussion_r3107564937`):
     /// Önceki test `mode == 0o600` exact eşitliğini kontrol ediyordu.
     /// `OpenOptionsExt::mode(0o600)` umask ile AND'lenir — yalnız daha
     /// **restrictive** hale gelebilir. Hardened ortamlarda (umask 0o077

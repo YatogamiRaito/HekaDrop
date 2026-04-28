@@ -1077,7 +1077,7 @@ fn zenity_supports_extra_button() -> bool {
 }
 
 /// Bir ikili (binary) PATH'te mevcut mu? Linux-only helper (zenity/kdialog
-/// varlık kontrolü). Windows'ta kullanılmaz — MessageBoxW her zaman var.
+/// varlık kontrolü). Windows'ta kullanılmaz — `MessageBoxW` her zaman var.
 ///
 /// GÜVENLİK: `sh -c` kullanımı şu an sadece bu dosya içinden sabit
 /// binary isimleri ile çağrılıyor ("zenity", "kdialog") — peer-kontrollü
