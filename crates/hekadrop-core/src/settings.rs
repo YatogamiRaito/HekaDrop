@@ -147,7 +147,10 @@ mod hex_hash_opt {
 
     // serde signature kontratı `&Option<T>` ister — pass-by-value yapılamaz.
     #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn serialize<S: Serializer>(value: &Option<[u8; 6]>, s: S) -> Result<S::Ok, S::Error> {
+    pub(super) fn serialize<S: Serializer>(
+        value: &Option<[u8; 6]>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
         match value {
             Some(bytes) => s.serialize_str(&hex::encode(bytes)),
             // skip_serializing_if zaten None'u atlıyor — buraya düşülmez,
@@ -156,7 +159,9 @@ mod hex_hash_opt {
         }
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<[u8; 6]>, D::Error> {
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<[u8; 6]>, D::Error> {
         let opt: Option<String> = Option::deserialize(d)?;
         let Some(raw) = opt else {
             return Ok(None);

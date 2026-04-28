@@ -20,10 +20,10 @@ use hekadrop_core::ui_port::{AcceptDecision, FileSummary, UiNotification, UiPort
 /// platform::open_url` / `crate::platform::copy_to_clipboard`'ı sarar.
 /// Connection core'a taşındıktan sonra `Arc<dyn PlatformOps>` olarak
 /// `accept_loop`'a geçirilir; core'da `crate::platform` referansı olmaz.
-pub struct PlatformAdapter;
+pub(crate) struct PlatformAdapter;
 
 impl PlatformAdapter {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self
     }
 }
@@ -44,10 +44,10 @@ impl hekadrop_core::connection::PlatformOps for PlatformAdapter {
     }
 }
 
-pub struct UiAdapter;
+pub(crate) struct UiAdapter;
 
 impl UiAdapter {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self
     }
 }
