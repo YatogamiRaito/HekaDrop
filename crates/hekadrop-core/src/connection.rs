@@ -65,7 +65,7 @@ pub async fn handle(
     // `TransferGuard::new()` içinde auto clear_cancel — bu bağlantıya özel
     // child token hem taze root'a hem de scope sonunda active_transfers
     // map'inden otomatik temizliğe (early-return yollarında bile) garanti verir.
-    let guard = state::TransferGuard::new(Arc::clone(&state), format!("in:{}", peer));
+    let guard = state::TransferGuard::new(Arc::clone(&state), format!("in:{peer}"));
     let cancel = guard.token.clone();
 
     // 1) plain ConnectionRequest
@@ -839,7 +839,7 @@ async fn handle_sharing_frame(
                 );
                 ui.notify(UiNotification::ToastRaw {
                     title: "HekaDrop".to_string(),
-                    body: format!("{} artık güvenilir cihaz", remote_name),
+                    body: format!("{remote_name} artık güvenilir cihaz"),
                 });
             }
 
@@ -877,7 +877,7 @@ async fn handle_sharing_frame(
                 info!("[{}] ✗ kullanıcı reddetti", peer);
                 ui.notify(UiNotification::ToastRaw {
                     title: "HekaDrop".to_string(),
-                    body: format!("{}: aktarım reddedildi", remote_name),
+                    body: format!("{remote_name}: aktarım reddedildi"),
                 });
                 return Ok(FlowOutcome::Disconnect);
             }
@@ -958,7 +958,7 @@ fn preview(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         let truncated: String = s.chars().take(max).collect();
-        format!("{}…", truncated)
+        format!("{truncated}…")
     }
 }
 
@@ -987,7 +987,7 @@ fn human_size(bytes: i64) -> String {
         i += 1;
     }
     if i == 0 {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     } else {
         format!("{:.1} {}", n, UNITS[i])
     }
@@ -1029,7 +1029,7 @@ fn unique_downloads_path(name: &str, state: &AppState) -> Result<PathBuf> {
     match try_reserve(&candidate) {
         Ok(()) => return Ok(candidate),
         Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
-            return Err(anyhow!("dosya rezerve edilemedi: {}", e));
+            return Err(anyhow!("dosya rezerve edilemedi: {e}"));
         }
         Err(_) => {}
     }
@@ -1038,15 +1038,15 @@ fn unique_downloads_path(name: &str, state: &AppState) -> Result<PathBuf> {
     let mut n = 1;
     loop {
         let filename = if ext.is_empty() {
-            format!("{} ({})", stem, n)
+            format!("{stem} ({n})")
         } else {
-            format!("{} ({}).{}", stem, n, ext)
+            format!("{stem} ({n}).{ext}")
         };
         let next = base.join(filename);
         match try_reserve(&next) {
             Ok(()) => return Ok(next),
             Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
-                return Err(anyhow!("dosya rezerve edilemedi: {}", e));
+                return Err(anyhow!("dosya rezerve edilemedi: {e}"));
             }
             Err(_) => {}
         }
@@ -1124,7 +1124,7 @@ fn sanitize_received_name(name: &str) -> String {
         .iter()
         .any(|r| stem_for_reserved.eq_ignore_ascii_case(r))
     {
-        format!("_{}", cleaned)
+        format!("_{cleaned}")
     } else {
         cleaned
     };

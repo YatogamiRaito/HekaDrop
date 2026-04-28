@@ -184,7 +184,7 @@ fn main() {
                 Err(e) => {
                     ui::fatal_error_dialog(
                         "HekaDrop başlatılamıyor",
-                        &format!("tokio runtime kurulamadı: {}", e),
+                        &format!("tokio runtime kurulamadı: {e}"),
                     );
                     std::process::exit(1);
                 }
@@ -198,7 +198,7 @@ fn main() {
     if let Err(e) = spawn_result {
         ui::fatal_error_dialog(
             "HekaDrop başlatılamıyor",
-            &format!("async thread başlatılamadı: {}", e),
+            &format!("async thread başlatılamadı: {e}"),
         );
         std::process::exit(1);
     }
@@ -251,10 +251,7 @@ fn setup_logging(log_level: settings::LogLevel) {
             // Tracing subscriber henüz kurulmadı — eprintln! tek başvuru.
             #[allow(clippy::print_stderr)]
             {
-                eprintln!(
-                    "[HekaDrop] log appender kurulamadı ({}); stdout-only devam",
-                    e
-                );
+                eprintln!("[HekaDrop] log appender kurulamadı ({e}); stdout-only devam");
             }
             None
         }
@@ -384,7 +381,7 @@ fn run_app() -> ! {
         Err(e) => {
             ui::fatal_error_dialog(
                 "HekaDrop başlatılamıyor",
-                &format!("pencere oluşturulamadı: {}", e),
+                &format!("pencere oluşturulamadı: {e}"),
             );
             // Fatal startup; ?-propagation main()'e tanrı-Result zorlar — exit
             // burada anlamlı: kullanıcı hata gördü, RAII temizliğe gerek yok.
@@ -440,7 +437,7 @@ fn run_app() -> ! {
             Err(e) => {
                 ui::fatal_error_dialog(
                     "HekaDrop başlatılamıyor",
-                    &format!("webview oluşturulamadı: {}", e),
+                    &format!("webview oluşturulamadı: {e}"),
                 );
                 // Fatal startup; bkz. yukarı.
                 #[allow(clippy::exit)]
@@ -454,7 +451,7 @@ fn run_app() -> ! {
         Err(e) => {
             ui::fatal_error_dialog(
                 "HekaDrop başlatılamıyor",
-                &format!("webview oluşturulamadı: {}", e),
+                &format!("webview oluşturulamadı: {e}"),
             );
             // Fatal startup; bkz. yukarı.
             #[allow(clippy::exit)]
@@ -790,7 +787,7 @@ fn graceful_quit() -> ! {
     #[cfg(target_os = "macos")]
     {
         if let Ok(home) = std::env::var("HOME") {
-            let plist_path = format!("{}/Library/LaunchAgents/com.sourvice.hekadrop.plist", home);
+            let plist_path = format!("{home}/Library/LaunchAgents/com.sourvice.hekadrop.plist");
             if std::path::Path::new(&plist_path).exists() {
                 info!("launchd agent unload: {}", plist_path);
                 let _ = std::process::Command::new("launchctl")
@@ -872,7 +869,7 @@ fn handle_settings_save(json: &str) {
                 tracing::warn!("[ui] download_dir geçersiz: {}", e);
                 ui::notify(
                     i18n::t("notify.app_name"),
-                    &format!("download_dir geçersiz: {}", e),
+                    &format!("download_dir geçersiz: {e}"),
                 );
                 return;
             }
@@ -995,10 +992,7 @@ fn push_i18n_to_ui() {
     // fonksiyonu script block içinde tanımlı — bu push ondan sonra geldiğinde
     // doğrudan çağrılır; öncesinde geldiyse window.__I18N__ setlenir, script
     // tag'i load olunca boot path'i yakalar.
-    let js = format!(
-        "window.__I18N__ = {}; window.applyI18n && window.applyI18n();",
-        payload
-    );
+    let js = format!("window.__I18N__ = {payload}; window.applyI18n && window.applyI18n();");
     state::enqueue_js(js);
 }
 
@@ -1058,7 +1052,7 @@ fn push_settings_to_ui() {
         "disable_update_check": s.disable_update_check,
     });
     drop(s);
-    let js = format!("window.applySettings && window.applySettings({})", payload);
+    let js = format!("window.applySettings && window.applySettings({payload})");
     state::enqueue_js(js);
 }
 
@@ -1113,10 +1107,7 @@ fn push_stats_to_ui() {
         "top_rx": top_rx,
         "top_tx": top_tx,
     });
-    state::enqueue_js(format!(
-        "window.applyStats && window.applyStats({})",
-        payload
-    ));
+    state::enqueue_js(format!("window.applyStats && window.applyStats({payload})"));
 }
 
 fn st_settings_resolved_name() -> String {
@@ -1154,7 +1145,7 @@ fn push_trusted_to_ui() {
         .collect();
     drop(s);
     let payload = serde_json::Value::Array(items);
-    let js = format!("window.applyTrusted && window.applyTrusted({})", payload);
+    let js = format!("window.applyTrusted && window.applyTrusted({payload})");
     state::enqueue_js(js);
 }
 
@@ -1215,8 +1206,8 @@ fn progress_signature(p: &state::ProgressState) -> String {
             device,
             file,
             percent,
-        } => format!("recv:{}:{}:{}", device, file, percent),
-        state::ProgressState::Completed { file } => format!("done:{}", file),
+        } => format!("recv:{device}:{file}:{percent}"),
+        state::ProgressState::Completed { file } => format!("done:{file}"),
     }
 }
 
@@ -1225,7 +1216,7 @@ fn js_string(s: &str) -> String {
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n");
-    format!("\"{}\"", escaped)
+    format!("\"{escaped}\"")
 }
 
 fn push_progress_to_ui(webview: &wry::WebView, p: &state::ProgressState) {
@@ -1240,11 +1231,11 @@ fn push_progress_to_ui(webview: &wry::WebView, p: &state::ProgressState) {
         } => format!(
             "window.updateProgress && window.updateProgress({}, {})",
             percent,
-            js_string(&format!("{} • {} ({}%)", device, file, percent))
+            js_string(&format!("{device} • {file} ({percent}%)"))
         ),
         state::ProgressState::Completed { file } => format!(
             "window.updateProgress && window.updateProgress(100, {}); setTimeout(() => window.updateProgress(-1, ''), 2500)",
-            js_string(&format!("✓ {}", file))
+            js_string(&format!("✓ {file}"))
         ),
     };
     let _ = webview.evaluate_script(&js);
@@ -1284,7 +1275,7 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
     let devices = match discovery::scan(Duration::from_secs(3), own_port).await {
         Ok(v) => v,
         Err(e) => {
-            ui::show_info(i18n::t("send.discovery_error"), &format!("{:#}", e));
+            ui::show_info(i18n::t("send.discovery_error"), &format!("{e:#}"));
             return;
         }
     };
@@ -1338,7 +1329,7 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
         }
         Err(e) => {
             tracing::warn!("send hatası: {:#}", e);
-            ui::show_info(i18n::t("send.send_error"), &format!("{:#}", e));
+            ui::show_info(i18n::t("send.send_error"), &format!("{e:#}"));
         }
     }
 }
@@ -1360,7 +1351,7 @@ async fn initiate_text_send_flow(text: String) {
     let devices = match discovery::scan(Duration::from_secs(3), own_port).await {
         Ok(v) => v,
         Err(e) => {
-            ui::show_info(i18n::t("send.discovery_error"), &format!("{:#}", e));
+            ui::show_info(i18n::t("send.discovery_error"), &format!("{e:#}"));
             return;
         }
     };
@@ -1411,7 +1402,7 @@ async fn initiate_text_send_flow(text: String) {
         }
         Err(e) => {
             tracing::warn!("send_text hatası: {:#}", e);
-            ui::show_info(i18n::t("send.send_error"), &format!("{:#}", e));
+            ui::show_info(i18n::t("send.send_error"), &format!("{e:#}"));
         }
     }
 }
@@ -1536,17 +1527,17 @@ async fn check_update_async() {
                 }
                 // Body'yi 200 char ile sınırla (char-safe, UTF-8 boundary sağlam).
                 let snippet: String = body.chars().take(200).collect();
-                return UpdateCheckOutcome::ApiError(format!("403: {}", snippet));
+                return UpdateCheckOutcome::ApiError(format!("403: {snippet}"));
             }
             "200" => {}
             other if !other.is_empty() => {
-                return UpdateCheckOutcome::ApiError(format!("HTTP {}", other));
+                return UpdateCheckOutcome::ApiError(format!("HTTP {other}"));
             }
             _ => return UpdateCheckOutcome::NetworkError,
         }
         let json: serde_json::Value = match serde_json::from_str(body) {
             Ok(j) => j,
-            Err(e) => return UpdateCheckOutcome::ApiError(format!("JSON: {}", e)),
+            Err(e) => return UpdateCheckOutcome::ApiError(format!("JSON: {e}")),
         };
         let tag = match json.get("tag_name").and_then(|v| v.as_str()) {
             Some(t) => t.to_string(),
@@ -1603,7 +1594,7 @@ fn render_update_outcome(outcome: UpdateCheckOutcome) {
             let msg = i18n::tf("update.status.new_version", &[&tag]);
             // URL'yi mesaja iliştiriyoruz — i18n string'i sürüm taglına odaklı,
             // link satır içi bilgi olarak kalıyor.
-            push_update_status(&format!("{} — {}", msg, url), "success");
+            push_update_status(&format!("{msg} — {url}"), "success");
         }
         UpdateCheckOutcome::NetworkError => {
             push_update_status(i18n::t("update.error.network"), "error");
@@ -1708,7 +1699,7 @@ fn human_size(bytes: i64) -> String {
         i += 1;
     }
     if i == 0 {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     } else {
         format!("{:.1} {}", n, UNITS[i])
     }
@@ -1720,7 +1711,7 @@ fn toggle_login_item() {
         ui::notify("HekaDrop", "HOME bulunamadı");
         return;
     };
-    let plist_path = format!("{}/Library/LaunchAgents/com.sourvice.hekadrop.plist", home);
+    let plist_path = format!("{home}/Library/LaunchAgents/com.sourvice.hekadrop.plist");
     let plist_exists = std::path::Path::new(&plist_path).exists();
 
     if plist_exists {
@@ -1740,8 +1731,7 @@ fn toggle_login_item() {
         ui::show_info(
             "HekaDrop — otomatik başlatma",
             &format!(
-                "Önce HekaDrop.app'i {} dizinine kopyalayın.\n\nTerminal'den:  make install",
-                app_path
+                "Önce HekaDrop.app'i {app_path} dizinine kopyalayın.\n\nTerminal'den:  make install"
             ),
         );
         return;
@@ -1779,7 +1769,7 @@ fn toggle_login_item() {
     if let Err(e) = std::fs::write(&plist_path, plist_template) {
         ui::show_info(
             "HekaDrop",
-            &format!("plist yazılamadı: {}\nKonum: {}", e, plist_path),
+            &format!("plist yazılamadı: {e}\nKonum: {plist_path}"),
         );
         return;
     }
@@ -1882,7 +1872,7 @@ fn toggle_login_item() {
                 } else {
                     ui::show_info(
                         "HekaDrop",
-                        &format!("Registry değeri silinemedi (err={:?})", del_rc),
+                        &format!("Registry değeri silinemedi (err={del_rc:?})"),
                     );
                 }
                 return;
@@ -1907,7 +1897,7 @@ fn toggle_login_item() {
         Err(e) => {
             ui::show_info(
                 "HekaDrop — otomatik başlatma",
-                &format!("current_exe alınamadı: {}", e),
+                &format!("current_exe alınamadı: {e}"),
             );
             return;
         }
@@ -1940,7 +1930,7 @@ fn toggle_login_item() {
         if rc != ERROR_SUCCESS {
             ui::show_info(
                 "HekaDrop",
-                &format!("Registry Run anahtarı açılamadı (err={:?})", rc),
+                &format!("Registry Run anahtarı açılamadı (err={rc:?})"),
             );
             return;
         }
@@ -1963,7 +1953,7 @@ fn toggle_login_item() {
         } else {
             ui::show_info(
                 "HekaDrop",
-                &format!("Registry değeri yazılamadı (err={:?})", set_rc),
+                &format!("Registry değeri yazılamadı (err={set_rc:?})"),
             );
         }
     }
@@ -2009,7 +1999,7 @@ fn toggle_login_item() {
         Err(e) => {
             ui::show_info(
                 "HekaDrop — otomatik başlatma",
-                &format!("current_exe alınamadı: {}", e),
+                &format!("current_exe alınamadı: {e}"),
             );
             return;
         }
@@ -2068,7 +2058,7 @@ fn toggle_login_item() {
                 String::from_utf8_lossy(&o.stderr).trim()
             ),
         ),
-        Err(e) => ui::show_info("HekaDrop", &format!("systemctl çalıştırılamadı: {}", e)),
+        Err(e) => ui::show_info("HekaDrop", &format!("systemctl çalıştırılamadı: {e}")),
     }
 }
 

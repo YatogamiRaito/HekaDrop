@@ -20,12 +20,14 @@ homepage = "https://github.com/YatogamiRaito/HekaDrop"
 # Kapsam dışı bırakılanlar (RED-tier — ayrı tracking issue'larla cleanup):
 #   * clippy::pedantic umbrella (~1,228 hit)        — issue #TBD
 #   * clippy::doc_markdown (445 hand + 792 gen)     — issue #TBD
-#   * unreachable_pub (349)                         — issue #TBD
-#   * clippy::uninlined_format_args (225)           — bu PR'da --fix uygulandı
 #   * clippy::must_use_candidate (71 hand)          — issue #TBD
 #   * clippy::match_same_arms (68)                  — issue #TBD
-#   * clippy::cast_possible_wrap (36, security)     — issue #TBD (audit gerekiyor)
 #   * unused_crate_dependencies                     — false-pos cascade, atlandı
+#
+# v0.7.x ile enforce edilenler (önceki "RED" listesinden):
+#   * clippy::cast_possible_wrap (36)               — PR #101 audit + enforce
+#   * clippy::uninlined_format_args (auto-fix +110) — PR #105 enforce
+#   * unreachable_pub (workspace refactor sonrası 58 hit) — bu PR cleanup + enforce
 #
 # Konsensus referans: Embark, uv, ruff. Top-tier (tokio/ripgrep/rustls/hyper)
 # minimal config tercih ediyor; biz crypto/protocol surface taşıyan bir desktop
@@ -37,6 +39,11 @@ trivial_numeric_casts = "warn"
 single_use_lifetimes = "warn"
 unused_lifetimes = "warn"
 unused_macro_rules = "warn"
+# Public API hijyeni — pub item bir tüketici tarafından erişilemiyorsa
+# pub(crate)'e dönmeli. Workspace refactor (Adım 5) sonrası app→core
+# split ile çoğu mu eski-pub items pub(crate) olabilir hâle geldi.
+# PR #87'de 349 hit'tən refactor sonrası 58'e düştü; cleanup + enforce.
+unreachable_pub = "warn"
 
 [workspace.lints.clippy]
 # Ship-blocker'lar — production'a sızmamalı
@@ -68,6 +75,7 @@ get_unwrap = "warn"
 redundant_clone = "warn"
 use_self = "warn"
 # Kalite — düşük volüm, anlık temizlik
+uninlined_format_args = "warn"  # PR #87 auto-fix sonrası 110 yeni site birikmişti; auto-fix tekrar uygulandı + lint enforce
 manual_let_else = "warn"
 ignored_unit_patterns = "warn"
 trivially_copy_pass_by_ref = "warn"

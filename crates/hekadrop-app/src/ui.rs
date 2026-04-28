@@ -18,13 +18,13 @@ use tokio::task;
 #[allow(unused_imports)]
 use std::path::PathBuf;
 
-pub struct FileSummary {
+pub(crate) struct FileSummary {
     pub name: String,
     pub size: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcceptResult {
+pub(crate) enum AcceptResult {
     Reject,
     Accept,
     AcceptAndTrust,
@@ -34,7 +34,7 @@ pub enum AcceptResult {
 ///   - Reddet
 ///   - Kabul et
 ///   - Kabul + güven (device_name ileride otomatik kabul edilir)
-pub async fn prompt_accept(
+pub(crate) async fn prompt_accept(
     device_name: &str,
     pin_code: &str,
     files: &[FileSummary],
@@ -53,7 +53,7 @@ pub async fn prompt_accept(
 
     task::spawn_blocking(move || prompt_accept_blocking(&device, &pin, &files, text_count))
         .await
-        .map_err(|e| anyhow::anyhow!("UI task join: {}", e))
+        .map_err(|e| anyhow::anyhow!("UI task join: {e}"))
 }
 
 /// Tek bir peer-kontrollü alan (cihaz adı, dosya adı, PIN) için sıkı
@@ -188,7 +188,7 @@ fn prompt_accept_blocking(
         crate::i18n::t("accept.accept"),
         crate::i18n::t("accept.reject"),
     );
-    let message = sanitize_display_text(&format!("{}{}", body_main, hint));
+    let message = sanitize_display_text(&format!("{body_main}{hint}"));
     let title = crate::i18n::t("accept.title");
     let msg_w = to_wide(&message);
     let title_w = to_wide(title);
@@ -249,11 +249,11 @@ fn prompt_accept_blocking(
             let out = Command::new("zenity")
                 .args([
                     "--question",
-                    &format!("--title={}", title),
-                    &format!("--text={}", message),
-                    &format!("--ok-label={}", lbl_accept),
-                    &format!("--cancel-label={}", lbl_reject),
-                    &format!("--extra-button={}", lbl_trust),
+                    &format!("--title={title}"),
+                    &format!("--text={message}"),
+                    &format!("--ok-label={lbl_accept}"),
+                    &format!("--cancel-label={lbl_reject}"),
+                    &format!("--extra-button={lbl_trust}"),
                     "--width=420",
                 ])
                 .stderr(Stdio::null())
@@ -279,10 +279,10 @@ fn prompt_accept_blocking(
             let accept = Command::new("zenity")
                 .args([
                     "--question",
-                    &format!("--title={}", title),
-                    &format!("--text={}", message),
-                    &format!("--ok-label={}", lbl_accept),
-                    &format!("--cancel-label={}", lbl_reject),
+                    &format!("--title={title}"),
+                    &format!("--text={message}"),
+                    &format!("--ok-label={lbl_accept}"),
+                    &format!("--cancel-label={lbl_reject}"),
                     "--width=420",
                 ])
                 .stderr(Stdio::null())
@@ -293,7 +293,7 @@ fn prompt_accept_blocking(
             let trust = Command::new("zenity")
                 .args([
                     "--question",
-                    &format!("--title={}", title),
+                    &format!("--title={title}"),
                     &format!(
                         "--text={}",
                         sanitize_display_text(&crate::i18n::tf("accept.trust_prompt", &[device]))
@@ -322,7 +322,7 @@ fn prompt_accept_blocking(
                 "--title",
                 title,
                 "--yesnocancel",
-                &format!("{}\n\n({})", message, hint),
+                &format!("{message}\n\n({hint})"),
             ])
             .status();
         match out {
@@ -348,7 +348,7 @@ fn prompt_accept_blocking(
 /// butona bastığında dosya `xdg-open` ile, klasör ise file-manager ile açılır.
 /// macOS'ta aksiyon butonu desteklenmez — düz bildirim + tıklanınca Finder'da
 /// açma için fallback uygulanır (bkz. `NotificationCenter` gelecek iş).
-pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
+pub(crate) fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
     #[cfg(target_os = "macos")]
     {
         let _ = path; // macOS'ta aksiyon butonlu notify henüz yok.
@@ -428,7 +428,7 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
 }
 
 /// Kısa bildirim. Başarı/hata mesajları için.
-pub fn notify(title: &str, body: &str) {
+pub(crate) fn notify(title: &str, body: &str) {
     #[cfg(target_os = "macos")]
     {
         let script = format!(
@@ -473,7 +473,7 @@ pub fn notify(title: &str, body: &str) {
 ///
 /// Dialog aracı yoksa (headless) sadece log'a yazılır — zaten log dosyası
 /// da açılamamış olabilir, ama `tracing` stdout layer'ı çalışmaya devam eder.
-pub fn fatal_error_dialog(title: &str, body: &str) {
+pub(crate) fn fatal_error_dialog(title: &str, body: &str) {
     tracing::error!("fatal: {} — {}", title, body);
     #[cfg(target_os = "macos")]
     {
@@ -490,8 +490,8 @@ pub fn fatal_error_dialog(title: &str, body: &str) {
             let _ = Command::new("zenity")
                 .args([
                     "--error",
-                    &format!("--title={}", title),
-                    &format!("--text={}", body),
+                    &format!("--title={title}"),
+                    &format!("--text={body}"),
                     "--width=420",
                 ])
                 .stderr(Stdio::null())
@@ -506,7 +506,7 @@ pub fn fatal_error_dialog(title: &str, body: &str) {
             // henüz initialize olmamış olabilir (startup-fatal).
             #[allow(clippy::print_stderr)]
             {
-                eprintln!("[HekaDrop] {}: {}", title, body);
+                eprintln!("[HekaDrop] {title}: {body}");
             }
         }
     }
@@ -537,7 +537,7 @@ pub fn fatal_error_dialog(title: &str, body: &str) {
 }
 
 /// Bilgi diyaloğu (blocking değil, fire-and-forget).
-pub fn show_info(title: &str, body: &str) {
+pub(crate) fn show_info(title: &str, body: &str) {
     #[cfg(target_os = "macos")]
     {
         let script = format!(
@@ -553,8 +553,8 @@ pub fn show_info(title: &str, body: &str) {
             let _ = Command::new("zenity")
                 .args([
                     "--info",
-                    &format!("--title={}", title),
-                    &format!("--text={}", body),
+                    &format!("--title={title}"),
+                    &format!("--text={body}"),
                     "--width=420",
                 ])
                 .stderr(Stdio::null())
@@ -603,12 +603,12 @@ pub fn show_info(title: &str, body: &str) {
 
 /// `choose file` dialog → seçilen dosyanın tam yolu veya None (tek dosya).
 #[allow(dead_code)]
-pub async fn choose_file() -> Option<std::path::PathBuf> {
+pub(crate) async fn choose_file() -> Option<std::path::PathBuf> {
     choose_files().await.and_then(|mut v| v.pop())
 }
 
 /// Çoklu dosya seçim dialog'u → seçilen tüm path'lerin listesi.
-pub async fn choose_files() -> Option<Vec<std::path::PathBuf>> {
+pub(crate) async fn choose_files() -> Option<Vec<std::path::PathBuf>> {
     task::spawn_blocking(choose_files_blocking)
         .await
         .ok()
@@ -697,7 +697,7 @@ fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
                 "--file-selection",
                 "--multiple",
                 "--separator=\n",
-                &format!("--title={}", title),
+                &format!("--title={title}"),
             ])
             .stderr(Stdio::null())
             .output()
@@ -751,7 +751,7 @@ fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
 }
 
 /// `choose folder` dialog → seçilen klasörün path'i.
-pub async fn choose_folder() -> Option<std::path::PathBuf> {
+pub(crate) async fn choose_folder() -> Option<std::path::PathBuf> {
     task::spawn_blocking(choose_folder_blocking)
         .await
         .ok()
@@ -790,11 +790,10 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-$dlg.Description = '{}'
+$dlg.Description = '{desc}'
 $dlg.ShowNewFolderButton = $true
 if ($dlg.ShowDialog() -eq 'OK') {{ $dlg.SelectedPath }}
-"#,
-        desc
+"#
     );
     let out = Command::new("powershell")
         .args([
@@ -827,7 +826,7 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
             .args([
                 "--file-selection",
                 "--directory",
-                &format!("--title={}", title),
+                &format!("--title={title}"),
             ])
             .stderr(Stdio::null())
             .output()
@@ -861,7 +860,7 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
 }
 
 /// Listeden cihaz seçim dialog'u. `labels` içindeki etiket indeks'i döner.
-pub async fn choose_device(labels: Vec<String>) -> Option<usize> {
+pub(crate) async fn choose_device(labels: Vec<String>) -> Option<usize> {
     if labels.is_empty() {
         return None;
     }
@@ -1019,7 +1018,7 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
             crate::i18n::t("send.device_prompt").into(),
         ];
         for (i, l) in labels.iter().enumerate() {
-            args.push(format!("{}", i));
+            args.push(format!("{i}"));
             args.push(l.clone());
             args.push(if i == 0 { "on".into() } else { "off".into() });
         }
@@ -1038,8 +1037,8 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
 /// Dosya keşif sırasında basit bir ilerleme/bildirim dialog'u olmadığı için
 /// notify kullanıyoruz.
 #[allow(dead_code)]
-pub fn send_progress_notify(device: &str, file: &str) {
-    notify("HekaDrop", &format!("Gönderiliyor: {} → {}", file, device));
+pub(crate) fn send_progress_notify(device: &str, file: &str) {
+    notify("HekaDrop", &format!("Gönderiliyor: {file} → {device}"));
 }
 
 #[cfg(target_os = "macos")]
@@ -1096,7 +1095,7 @@ fn have(bin: &str) -> bool {
     }
     Command::new("sh")
         .arg("-c")
-        .arg(format!("command -v {} >/dev/null 2>&1", bin))
+        .arg(format!("command -v {bin} >/dev/null 2>&1"))
         .status()
         .map(|s| s.success())
         .unwrap_or(false)

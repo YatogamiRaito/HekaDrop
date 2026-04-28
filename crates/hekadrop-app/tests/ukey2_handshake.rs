@@ -182,7 +182,7 @@ fn pin_code_her_zaman_4_basamak() {
     for key_seed in [0u8, 1, 42, 0xFF, 0x80, 0x7F] {
         let key = [key_seed; 32];
         let pin = pin_code_from_auth_key(&key);
-        assert_eq!(pin.len(), 4, "PIN her zaman 4 karakter olmalı: '{}'", pin);
+        assert_eq!(pin.len(), 4, "PIN her zaman 4 karakter olmalı: '{pin}'");
         assert!(pin.chars().all(|c| c.is_ascii_digit()), "PIN sadece digit");
     }
 }

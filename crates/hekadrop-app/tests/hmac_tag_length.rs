@@ -88,11 +88,10 @@ fn decrypt_rejects_short_hmac_tag() {
     let err = b
         .decrypt(&short_bytes)
         .expect_err("31-bayt tag reddedilmeli");
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert!(
         msg.contains("HMAC tag") || msg.contains("tag uzunluğu"),
-        "uzunluk hatası beklenir, alınan: {}",
-        msg
+        "uzunluk hatası beklenir, alınan: {msg}"
     );
 
     // İstemci seq'i advance etmemeli — state bozulmamalı, retry desteklenebilir.

@@ -27,7 +27,7 @@
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Lang {
+pub(crate) enum Lang {
     Tr,
     En,
 }
@@ -35,7 +35,7 @@ pub enum Lang {
 static LANG: OnceLock<Lang> = OnceLock::new();
 
 /// Uygulamanın kullanacağı dili döner. İlk çağrıda detect edilir ve cache'lenir.
-pub fn current() -> Lang {
+pub(crate) fn current() -> Lang {
     *LANG.get_or_init(detect)
 }
 
@@ -70,7 +70,7 @@ fn parse_lang(raw: &str) -> Option<Lang> {
 /// `key` `&'static str` — çağrı siteleri literal olduğundan (`t("tray.xxx")`)
 /// bu kısıt sorun değil ve fallback olarak key'i dönmeyi güvenli kılar.
 /// Eksik çeviri varsa UI'da key string'i görünür, dev fark eder.
-pub fn t(key: &'static str) -> &'static str {
+pub(crate) fn t(key: &'static str) -> &'static str {
     let lang = current();
     match lang {
         Lang::Tr => lookup_tr(key).or_else(|| lookup_en(key)).unwrap_or(key),
@@ -88,7 +88,7 @@ pub fn t(key: &'static str) -> &'static str {
 ///
 /// Placeholder olmayan `{` karakterleri literal bırakılır (kullanıcıya
 /// gösterilen metinde `{X}` geçmesi tipik değil ama güvenli).
-pub fn tf(key: &'static str, args: &[&str]) -> String {
+pub(crate) fn tf(key: &'static str, args: &[&str]) -> String {
     apply_args(t(key), args)
 }
 
@@ -771,8 +771,8 @@ mod tests {
             "onboarding.cta_dismiss",
         ];
         for k in &sample_keys {
-            assert!(lookup_tr(k).is_some(), "Türkçe çeviri eksik: {}", k);
-            assert!(lookup_en(k).is_some(), "English translation missing: {}", k);
+            assert!(lookup_tr(k).is_some(), "Türkçe çeviri eksik: {k}");
+            assert!(lookup_en(k).is_some(), "English translation missing: {k}");
         }
     }
 }

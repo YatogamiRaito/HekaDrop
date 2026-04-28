@@ -99,7 +99,7 @@ fn frame_too_large_reddedilir() {
         FrameError::TooLarge(n) => {
             assert_eq!(n, MAX_FRAME_SIZE + 1);
         }
-        other => panic!("TooLarge beklendi, aldı: {:?}", other),
+        other => panic!("TooLarge beklendi, aldı: {other:?}"),
     }
 
     // Tam sınır değer (16 MiB) kabul — bu davranışı da pin'le.
@@ -123,8 +123,7 @@ fn truncated_frame_eof_doner() {
     let err = read_frame(&mut cur).expect_err("truncated body EOF döndürmeli");
     assert!(
         matches!(err, FrameError::Eof),
-        "Eof bekleniyor, aldı: {:?}",
-        err
+        "Eof bekleniyor, aldı: {err:?}"
     );
 
     // Length-prefix bile tam gelmezse (2/4 bayt) yine EOF.
@@ -133,8 +132,7 @@ fn truncated_frame_eof_doner() {
     let err = read_frame(&mut cur).expect_err("prefix truncated");
     assert!(
         matches!(err, FrameError::Eof),
-        "Eof bekleniyor, aldı: {:?}",
-        err
+        "Eof bekleniyor, aldı: {err:?}"
     );
 }
 
@@ -166,8 +164,8 @@ fn huge_length_u32_max_reddedilir() {
         FrameError::TooLarge(n) => {
             // 32-bit: n == u32::MAX as usize. 64-bit: aynı. Her iki yönde de
             // MAX_FRAME_SIZE'ın çok üstündedir.
-            assert!(n > MAX_FRAME_SIZE, "absürt değer: {}", n);
+            assert!(n > MAX_FRAME_SIZE, "absürt değer: {n}");
         }
-        other => panic!("TooLarge beklendi, aldı: {:?}", other),
+        other => panic!("TooLarge beklendi, aldı: {other:?}"),
     }
 }

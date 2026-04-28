@@ -138,7 +138,7 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     uncompressed.extend_from_slice(&peer_x);
     uncompressed.extend_from_slice(&peer_y);
     let encoded =
-        EncodedPoint::from_bytes(&uncompressed).map_err(|e| anyhow!("peer pubkey parse: {}", e))?;
+        EncodedPoint::from_bytes(&uncompressed).map_err(|e| anyhow!("peer pubkey parse: {e}"))?;
     let peer_pk = PublicKey::from_encoded_point(&encoded);
     let peer_pk = Option::<PublicKey>::from(peer_pk)
         .ok_or_else(|| anyhow!("peer pubkey geçersiz eğri noktası"))?;
@@ -249,8 +249,7 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
     // 2 = CLIENT_INIT
     if message_type != 2 {
         return Err(HekaError::ProtocolState(format!(
-            "beklenen CLIENT_INIT, alınan {}",
-            message_type
+            "beklenen CLIENT_INIT, alınan {message_type}"
         ))
         .into());
     }
@@ -271,7 +270,7 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
     let next_protocol = ci.next_protocol();
     if next_protocol != "AES_256_CBC-HMAC_SHA256" {
         return Err(
-            HekaError::Ukey2(format!("desteklenmeyen next_protocol: {}", next_protocol)).into(),
+            HekaError::Ukey2(format!("desteklenmeyen next_protocol: {next_protocol}")).into(),
         );
     }
 
@@ -389,8 +388,7 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
         .ok_or_else(|| HekaError::Protocol("mesaj verisi yok".into()))?;
     if message_type != 4 {
         return Err(HekaError::ProtocolState(format!(
-            "beklenen CLIENT_FINISH, alınan {}",
-            message_type
+            "beklenen CLIENT_FINISH, alınan {message_type}"
         ))
         .into());
     }
@@ -424,7 +422,7 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
     uncompressed.extend_from_slice(&peer_x);
     uncompressed.extend_from_slice(&peer_y);
     let encoded =
-        EncodedPoint::from_bytes(&uncompressed).map_err(|e| anyhow!("peer pubkey parse: {}", e))?;
+        EncodedPoint::from_bytes(&uncompressed).map_err(|e| anyhow!("peer pubkey parse: {e}"))?;
     let peer_pk = PublicKey::from_encoded_point(&encoded);
     let peer_pk = Option::<PublicKey>::from(peer_pk)
         .ok_or_else(|| anyhow!("peer pubkey geçersiz eğri noktası"))?;
