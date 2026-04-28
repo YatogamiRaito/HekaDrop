@@ -41,7 +41,7 @@ each `SecureCtx`-encrypted frame is structured as:
 ```
 +---------------------+----------------------------------------+
 |   magic (4 bytes)   |        HekaDropFrame protobuf          |
-|   0xA5 0xDE 0xB2 01 |   (varint-delimited proto3 fields)     |
+|   0xA5 0xDE 0xB2 0x01 |   (varint-delimited proto3 fields)   |
 +---------------------+----------------------------------------+
         ▲                              ▲
         │                              │
@@ -344,7 +344,9 @@ A5 DE B2 01 08 01 52 04 08 01 10 07
 
 Same 12 bytes; only the last byte differs (`0x00` → `0x07`).
 
-The full KAT corpus lives at `docs/protocol/captures/capabilities-kat-*.txt`.
+The full KAT corpus is planned for the implementation phase at
+`docs/protocol/captures/capabilities-kat-*.txt`; that directory is not yet
+present in this repo.
 
 ---
 

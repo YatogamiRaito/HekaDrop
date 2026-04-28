@@ -170,10 +170,19 @@ Negotiated `active_caps = my_caps & peer_caps`. Bit-AND seçimi: bir taraf bir �
 
 ```
 IKM  = next_secret          # mevcut UKEY2 türevi, src/crypto.rs Level-2 (§6.3 threat-model)
-salt = sha256("hekadrop:chunk-hmac:v1")
+salt = empty                # zero-length salt; domain separation `info` etiketinden geliyor
 info = b"hekadrop chunk-hmac v1"
-chunk_hmac_key = HKDF-Expand(HKDF-Extract(salt, IKM), info, 32)
+chunk_hmac_key = HKDF-SHA256(IKM, salt, info, 32)
 ```
+
+> **Salt seçimi notu (PR #102 Copilot review reconciliation):** Önceki taslak
+> `salt = sha256("hekadrop:chunk-hmac:v1")` öneriyordu, ancak wire-byte
+> spec (`docs/protocol/chunk-hmac.md` §4) ve referans implementasyon
+> (`hekadrop-core::chunk_hmac::derive_chunk_hmac_key`) **empty salt + `info`
+> etiketi** ile domain separation sağlıyor. RFC ve spec birlikte tek
+> derivasyona kilitli; KAT'lar bu derivasyon ile üretilir. v1.x cycle'ında
+> derivasyon değişirse `chunk_hmac_v2` capability bit'i ile yeni RFC
+> revizyonu açılır.
 
 Her iki yön için **aynı** `chunk_hmac_key` kullanılır (dosya transferi tek yönlüdür; ama simetri korunur). `next_secret` halihazırda `DerivedKeys` içinde yaşıyor (bkz. threat-model §6.3 Level-1); yeni bir UKEY2 round-trip gerekmez.
 

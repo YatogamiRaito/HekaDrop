@@ -301,9 +301,11 @@ in [`docs/protocol/capabilities.md`](capabilities.md). Summary:
 
 ## 7. Test vectors (KAT)
 
-The implementation MUST pass these known-answer tests. Vectors are derived
-from a reference Python port of the algorithm (independent of the Rust
-implementation, to catch regressions where "wrong is wrong consistently").
+These known-answer tests are **provisional** until the vectors are finalized
+and committed with concrete expected outputs. Once finalized, implementations
+MUST pass them. The vectors are derived from a reference Python port of the
+algorithm (independent of the Rust implementation, to catch regressions where
+"wrong is wrong consistently").
 
 ### KAT-1 — Empty body, all-zero key
 
@@ -323,11 +325,13 @@ hmac_input      = 00 00 00 00 00 00 00 00     (payload_id BE i64)
 
 tag             = HMAC-SHA256(0x00*32, hmac_input)
                 = b613679a 0814d9ec 772f95d7 78c35fc5
-                  ff1697c4 93715653 c6c712 14429192
+                  ff1697c4 93715653 c6c71200 14429192
                   ↑ Note: this exact value pending verification with the
                     reference impl during v0.8 implementation phase. Treat
-                    as placeholder until KAT-1 is signed off in
-                    docs/protocol/captures/chunk-hmac-kat-1.txt.
+                    as placeholder (uzunluk: 32 byte = 64 hex char) until
+                    KAT-1 is signed off in
+                    docs/protocol/captures/chunk-hmac-kat-1.txt (planned
+                    for the implementation phase; not yet committed).
 ```
 
 ### KAT-2 — Single chunk full body, deterministic key
@@ -351,8 +355,10 @@ tag             = (computed; written to docs/protocol/captures/chunk-hmac-kat-2.
                    during implementation; binds the spec to the wire format)
 ```
 
-The full KAT corpus lives at `docs/protocol/captures/chunk-hmac-kat-*.txt`
-and is shared with `fuzz_chunk_hmac_verify` as a golden seed.
+During implementation, the full KAT corpus will be added at
+`docs/protocol/captures/chunk-hmac-kat-*.txt`; once added, it will be shared
+with `fuzz_chunk_hmac_verify` as a golden seed. The directory does not yet
+exist in the repo.
 
 ---
 
@@ -385,7 +391,7 @@ concurrently with the next chunk's read.
 | Tag verify fails (constant-time `ct_eq` returns false) | Abort, remove `.part`/`.meta`, send Disconnection, log `IntegrityFailure` (no body, no tag) | Reconnect with `offset = 0`; user notified of "transfer corrupted" | None — partial state untrusted |
 | Out-of-order: chunk N+1 body before chunk N tag | Abort, treat as protocol violation | Sender bug — should not happen | None |
 | Receiver expects tag (capability set) but sender omits | Abort after a 5 second post-body grace period | Sender bug or downgrade attack | None |
-| Sender sends tag but receiver lacks capability | Receiver receives an unexpected `HekaDropFrame` and ignores it (frame routing layer); transfer continues without chunk-HMAC verify | Sender bug — should not have negotiated `CHUNK_HMAC_V1` | N/A |
+| Sender sends tag but receiver lacks capability | Abort, treat as protocol violation, remove `.part`/`.meta`, send Disconnection; receiver MUST NOT silently ignore the unexpected `HekaDropFrame` (consistent with §6 capability-mismatch handling) | Sender bug — should not have negotiated `CHUNK_HMAC_V1` | None |
 
 ---
 
