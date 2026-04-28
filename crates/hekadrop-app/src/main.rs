@@ -437,7 +437,7 @@ fn run_app() -> ! {
             Err(e) => {
                 ui::fatal_error_dialog(
                     "HekaDrop başlatılamıyor",
-                    &format!("webview oluşturulamadı: {}", e),
+                    &format!("webview oluşturulamadı: {e}"),
                 );
                 // Fatal startup; bkz. yukarı.
                 #[allow(clippy::exit)]
@@ -1872,7 +1872,7 @@ fn toggle_login_item() {
                 } else {
                     ui::show_info(
                         "HekaDrop",
-                        &format!("Registry değeri silinemedi (err={:?})", del_rc),
+                        &format!("Registry değeri silinemedi (err={del_rc:?})"),
                     );
                 }
                 return;
@@ -1897,7 +1897,7 @@ fn toggle_login_item() {
         Err(e) => {
             ui::show_info(
                 "HekaDrop — otomatik başlatma",
-                &format!("current_exe alınamadı: {}", e),
+                &format!("current_exe alınamadı: {e}"),
             );
             return;
         }
@@ -1930,7 +1930,7 @@ fn toggle_login_item() {
         if rc != ERROR_SUCCESS {
             ui::show_info(
                 "HekaDrop",
-                &format!("Registry Run anahtarı açılamadı (err={:?})", rc),
+                &format!("Registry Run anahtarı açılamadı (err={rc:?})"),
             );
             return;
         }
@@ -1953,7 +1953,7 @@ fn toggle_login_item() {
         } else {
             ui::show_info(
                 "HekaDrop",
-                &format!("Registry değeri yazılamadı (err={:?})", set_rc),
+                &format!("Registry değeri yazılamadı (err={set_rc:?})"),
             );
         }
     }
@@ -1999,7 +1999,7 @@ fn toggle_login_item() {
         Err(e) => {
             ui::show_info(
                 "HekaDrop — otomatik başlatma",
-                &format!("current_exe alınamadı: {}", e),
+                &format!("current_exe alınamadı: {e}"),
             );
             return;
         }
@@ -2058,7 +2058,7 @@ fn toggle_login_item() {
                 String::from_utf8_lossy(&o.stderr).trim()
             ),
         ),
-        Err(e) => ui::show_info("HekaDrop", &format!("systemctl çalıştırılamadı: {}", e)),
+        Err(e) => ui::show_info("HekaDrop", &format!("systemctl çalıştırılamadı: {e}")),
     }
 }
 

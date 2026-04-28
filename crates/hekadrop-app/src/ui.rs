@@ -188,7 +188,7 @@ fn prompt_accept_blocking(
         crate::i18n::t("accept.accept"),
         crate::i18n::t("accept.reject"),
     );
-    let message = sanitize_display_text(&format!("{}{}", body_main, hint));
+    let message = sanitize_display_text(&format!("{body_main}{hint}"));
     let title = crate::i18n::t("accept.title");
     let msg_w = to_wide(&message);
     let title_w = to_wide(title);
@@ -249,11 +249,11 @@ fn prompt_accept_blocking(
             let out = Command::new("zenity")
                 .args([
                     "--question",
-                    &format!("--title={}", title),
-                    &format!("--text={}", message),
-                    &format!("--ok-label={}", lbl_accept),
-                    &format!("--cancel-label={}", lbl_reject),
-                    &format!("--extra-button={}", lbl_trust),
+                    &format!("--title={title}"),
+                    &format!("--text={message}"),
+                    &format!("--ok-label={lbl_accept}"),
+                    &format!("--cancel-label={lbl_reject}"),
+                    &format!("--extra-button={lbl_trust}"),
                     "--width=420",
                 ])
                 .stderr(Stdio::null())
@@ -279,10 +279,10 @@ fn prompt_accept_blocking(
             let accept = Command::new("zenity")
                 .args([
                     "--question",
-                    &format!("--title={}", title),
-                    &format!("--text={}", message),
-                    &format!("--ok-label={}", lbl_accept),
-                    &format!("--cancel-label={}", lbl_reject),
+                    &format!("--title={title}"),
+                    &format!("--text={message}"),
+                    &format!("--ok-label={lbl_accept}"),
+                    &format!("--cancel-label={lbl_reject}"),
                     "--width=420",
                 ])
                 .stderr(Stdio::null())
@@ -293,7 +293,7 @@ fn prompt_accept_blocking(
             let trust = Command::new("zenity")
                 .args([
                     "--question",
-                    &format!("--title={}", title),
+                    &format!("--title={title}"),
                     &format!(
                         "--text={}",
                         sanitize_display_text(&crate::i18n::tf("accept.trust_prompt", &[device]))
@@ -322,7 +322,7 @@ fn prompt_accept_blocking(
                 "--title",
                 title,
                 "--yesnocancel",
-                &format!("{}\n\n({})", message, hint),
+                &format!("{message}\n\n({hint})"),
             ])
             .status();
         match out {
@@ -490,8 +490,8 @@ pub(crate) fn fatal_error_dialog(title: &str, body: &str) {
             let _ = Command::new("zenity")
                 .args([
                     "--error",
-                    &format!("--title={}", title),
-                    &format!("--text={}", body),
+                    &format!("--title={title}"),
+                    &format!("--text={body}"),
                     "--width=420",
                 ])
                 .stderr(Stdio::null())
@@ -506,7 +506,7 @@ pub(crate) fn fatal_error_dialog(title: &str, body: &str) {
             // henüz initialize olmamış olabilir (startup-fatal).
             #[allow(clippy::print_stderr)]
             {
-                eprintln!("[HekaDrop] {}: {}", title, body);
+                eprintln!("[HekaDrop] {title}: {body}");
             }
         }
     }
@@ -553,8 +553,8 @@ pub(crate) fn show_info(title: &str, body: &str) {
             let _ = Command::new("zenity")
                 .args([
                     "--info",
-                    &format!("--title={}", title),
-                    &format!("--text={}", body),
+                    &format!("--title={title}"),
+                    &format!("--text={body}"),
                     "--width=420",
                 ])
                 .stderr(Stdio::null())
@@ -697,7 +697,7 @@ fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
                 "--file-selection",
                 "--multiple",
                 "--separator=\n",
-                &format!("--title={}", title),
+                &format!("--title={title}"),
             ])
             .stderr(Stdio::null())
             .output()
@@ -827,7 +827,7 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
             .args([
                 "--file-selection",
                 "--directory",
-                &format!("--title={}", title),
+                &format!("--title={title}"),
             ])
             .stderr(Stdio::null())
             .output()
@@ -1096,7 +1096,7 @@ fn have(bin: &str) -> bool {
     }
     Command::new("sh")
         .arg("-c")
-        .arg(format!("command -v {} >/dev/null 2>&1", bin))
+        .arg(format!("command -v {bin} >/dev/null 2>&1"))
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
