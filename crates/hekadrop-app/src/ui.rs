@@ -1019,7 +1019,7 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
             crate::i18n::t("send.device_prompt").into(),
         ];
         for (i, l) in labels.iter().enumerate() {
-            args.push(format!("{}", i));
+            args.push(format!("{i}"));
             args.push(l.clone());
             args.push(if i == 0 { "on".into() } else { "off".into() });
         }

@@ -145,14 +145,14 @@ pub(crate) fn device_name() -> String {
         if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
             let t = h.trim();
             if !t.is_empty() {
-                return format!("HekaDrop {}", t);
+                return format!("HekaDrop {t}");
             }
         }
         if let Ok(out) = Command::new("hostname").output() {
             if let Ok(s) = String::from_utf8(out.stdout) {
                 let t = s.trim();
                 if !t.is_empty() {
-                    return format!("HekaDrop {}", t);
+                    return format!("HekaDrop {t}");
                 }
             }
         }
@@ -162,12 +162,12 @@ pub(crate) fn device_name() -> String {
     #[cfg(target_os = "windows")]
     {
         if let Some(name) = win::computer_name() {
-            return format!("HekaDrop {}", name);
+            return format!("HekaDrop {name}");
         }
         if let Ok(v) = std::env::var("COMPUTERNAME") {
             let t = v.trim();
             if !t.is_empty() {
-                return format!("HekaDrop {}", t);
+                return format!("HekaDrop {t}");
             }
         }
         "HekaDrop PC".to_string()
@@ -210,7 +210,7 @@ pub(crate) fn reveal_path(path: &Path) {
                 "--type=method_call",
                 "/org/freedesktop/FileManager1",
                 "org.freedesktop.FileManager1.ShowItems",
-                &format!("array:string:{}", uri),
+                &format!("array:string:{uri}"),
                 "string:",
             ])
             .status();
@@ -249,7 +249,7 @@ fn path_to_file_uri(path: &Path) -> String {
         if unreserved {
             out.push(b as char);
         } else {
-            out.push_str(&format!("%{:02X}", b));
+            out.push_str(&format!("%{b:02X}"));
         }
     }
     out
