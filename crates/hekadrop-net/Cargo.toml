@@ -18,8 +18,10 @@ publish = false
 # Workspace internal — domain tipleri ve config (Adım 4'te core'a taşındı).
 hekadrop-core = { path = "../hekadrop-core", version = "=0.7.0" }
 
-# Async runtime — discovery loop ve task spawn için.
-tokio = { version = "1", features = ["rt", "sync", "time", "net"] }
+# Async runtime — yalnız `tokio::task::spawn_blocking` (discovery.rs:39)
+# kullanılıyor; başka tokio API'sı yok. `rt` feature spawn için yeterli.
+# (Gemini PR #100 review: minimal feature set.)
+tokio = { version = "1", features = ["rt"] }
 
 # mDNS — sadece bu crate kullanır (RFC §5 Adım 6 ile core'dan kaldırıldı).
 mdns-sd = "0.19"
@@ -33,7 +35,7 @@ base64 = "0.22"
 # Logging.
 tracing = "0.1"
 
-# Hata + serde (config tipleri serde derive ile gelir).
+# Hata yönetimi.
 anyhow = "1"
 
 [lints]

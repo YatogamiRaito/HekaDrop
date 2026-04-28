@@ -71,9 +71,11 @@ fn device_kind_label(kind: DeviceKind) -> &'static str {
     }
 }
 
-// RFC-0001 §5 Adım 6: discovery + mdns hekadrop-net crate'inde. Mevcut
-// `crate::discovery::*` ve `crate::mdns::*` çağrıları re-export shim ile
-// dokunulmadan derlenir.
+// RFC-0001 §5 Adım 6: discovery + mdns hekadrop-net crate'inde. Bu `use`
+// crate root'ta yalnız crate-içi alias oluşturur (in-tree
+// `crate::discovery::*` ve `crate::mdns::*` çağrıları dokunulmadan derlenir).
+// Dış tüketiciler için re-export değildir; öyle bir surface gerekirse
+// `pub use` ile lib.rs'e ayrıca eklenmelidir. (Copilot PR #100 review.)
 use hekadrop_net::{discovery, mdns};
 mod i18n;
 mod paths;
