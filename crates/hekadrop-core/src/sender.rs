@@ -272,12 +272,13 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                         // (extension_supported=false) için exchange atlanır
                         // → mevcut Quick Share legacy akışı korunur.
                         if req.device.extension_supported && !capabilities_exchanged {
-                            let active = crate::negotiation::negotiate_capabilities(
+                            let outcome = crate::negotiation::negotiate_capabilities(
                                 &mut socket,
                                 &mut ctx,
                                 crate::negotiation::DEFAULT_CAPABILITIES_TIMEOUT,
                             )
                             .await;
+                            let active = outcome.active;
                             info!(
                                 "[sender] active capabilities: 0x{:04x} (chunk_hmac={}, resume={}, folder={})",
                                 active.raw(),
@@ -285,6 +286,17 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                 active.has(crate::capabilities::features::RESUME_V1),
                                 active.has(crate::capabilities::features::FOLDER_STREAM_V1),
                             );
+                            // Frame loss önlemi (PR #110 high yorumu): peer
+                            // extension_supported=true demiş ama legacy
+                            // OfflineFrame yolladıysa plain bytes leftover'a
+                            // düşer. Şimdilik state machine entegrasyonu yok
+                            // → warn + skip (görünür ol, sessiz yutma).
+                            if let Some(leftover) = outcome.leftover_plain {
+                                tracing::warn!(
+                                    "[sender] capabilities exchange — beklenmedik non-HekaDrop frame ({} byte plain) yutuldu; peer state drift riski",
+                                    leftover.len(),
+                                );
+                            }
                             capabilities_exchanged = true;
                             // NOT: `active` per-bağlantı state'e (chunk-HMAC
                             // entegrasyonu sıradaki PR'ında kullanılacak)
