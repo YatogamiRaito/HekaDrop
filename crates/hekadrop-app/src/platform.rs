@@ -435,7 +435,7 @@ pub(crate) mod win {
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     /// UTF-16 LE null-terminated vektör üretir.
-    /// `pub(crate)` — ui.rs (MessageBoxW) ve main.rs (Registry) de kullanır.
+    /// `pub(crate)` — ui.rs (`MessageBoxW`) ve main.rs (Registry) de kullanır.
     pub(crate) fn to_wide(s: &str) -> Vec<u16> {
         let mut v: Vec<u16> = s.encode_utf16().collect();
         v.push(0);
@@ -451,7 +451,7 @@ pub(crate) mod win {
         v
     }
 
-    /// `SHGetKnownFolderPath` → PathBuf. Çıktı bellek `CoTaskMemFree` ile serbest
+    /// `SHGetKnownFolderPath` → `PathBuf`. Çıktı bellek `CoTaskMemFree` ile serbest
     /// bırakılır (aksi halde leak). Bellek tahsisi başarısızsa `None`.
     pub(super) fn known_folder(folder: &GUID) -> Option<PathBuf> {
         // SAFETY: `folder` is a valid GUID reference from the caller.
@@ -609,10 +609,10 @@ pub(crate) mod win {
 
     /// Clipboard'a UTF-16 metin koyar.
     ///
-    /// Akış: OpenClipboard → EmptyClipboard → GlobalAlloc+Lock → copy →
-    /// Unlock → SetClipboardData(CF_UNICODETEXT) → CloseClipboard.
+    /// Akış: `OpenClipboard` → `EmptyClipboard` → `GlobalAlloc`+Lock → copy →
+    /// Unlock → `SetClipboardData(CF_UNICODETEXT)` → `CloseClipboard`.
     ///
-    /// SetClipboardData başarılıysa hafızanın sahipliği clipboard'a geçer —
+    /// `SetClipboardData` başarılıysa hafızanın sahipliği clipboard'a geçer —
     /// biz free ETMEYİZ. Her hata yolunda `GlobalFree` ile kaynak serbest
     /// bırakılır; `OpenClipboard` başarısız olursa da alloc'u temizleriz.
     pub(super) fn clipboard_set(text: &str) -> Result<()> {
@@ -690,12 +690,12 @@ pub(crate) mod win {
     /// ile çevirir.
     ///
     /// Dönüş semantiği:
-    ///   - `Ok(Some(s))`: Clipboard'da CF_UNICODETEXT formatı var ve başarıyla okundu.
+    ///   - `Ok(Some(s))`: Clipboard'da `CF_UNICODETEXT` formatı var ve başarıyla okundu.
     ///   - `Ok(None)`: Pano metin formatı içermiyor (`GetClipboardData` başarısız).
     ///   - `Err(_)`: `OpenClipboard`/`GlobalLock`/`GlobalSize` gibi Win32 API
     ///     hataları — caller handle'layabilsin.
     ///
-    /// SECURITY: CF_UNICODETEXT MSDN spec'i gereği NUL-terminated, ama yine
+    /// SECURITY: `CF_UNICODETEXT` MSDN spec'i gereği NUL-terminated, ama yine
     /// de `GlobalSize` ile hafıza blokunun gerçek üst sınırını alıp okumayı
     /// buraya clamp ediyoruz (malformed/oob handle'da buffer over-read yok).
     pub(super) fn clipboard_get() -> Result<Option<String>> {
