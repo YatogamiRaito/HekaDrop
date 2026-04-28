@@ -1482,12 +1482,11 @@ dependencies = [
  "criterion",
  "elliptic-curve",
  "hekadrop-core",
+ "hekadrop-net",
  "hekadrop-proto",
  "hex",
  "hkdf",
  "hmac",
- "if-addrs",
- "mdns-sd",
  "notify-rust",
  "p256",
  "parking_lot",
@@ -1506,6 +1505,14 @@ dependencies = [
  "tray-icon",
  "windows",
  "wry",
+]
+
+[[package]]
+name = "hekadrop-cli"
+version = "0.7.0"
+dependencies = [
+ "hekadrop-core",
+ "hekadrop-net",
 ]
 
 [[package]]
@@ -1537,6 +1544,19 @@ dependencies = [
  "tokio-util",
  "tracing",
  "windows",
+]
+
+[[package]]
+name = "hekadrop-net"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "hekadrop-core",
+ "if-addrs",
+ "mdns-sd",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

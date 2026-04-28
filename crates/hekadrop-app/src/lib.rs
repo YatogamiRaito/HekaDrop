@@ -34,14 +34,22 @@
     )
 )]
 
-// RFC-0001 §5 Adım 3 — `hekadrop-core` shim'i.
+// RFC-0001 §5 — workspace refactor implementation tamamlandı (Adım 1-8):
+//   1. Cargo workspace iskele (#85)
+//   2. hekadrop-proto crate (#86)
+//   3. hekadrop-core pure-crypto core iskele (#89)
+//   4. identity/stats/settings/payload core'a (#90)
+//   5a. AppState plain struct (#91)
+//   5b. UiPort trait + UiNotification (#92)
+//   5c. state/connection/sender/server core'a (#93)
+//   6. hekadrop-net crate (mdns/discovery adapter) (bu PR)
+//   7. hekadrop-cli stub (bu PR)
+//   8. lib.rs shim'in kalıcı dokümantasyonu (bu blok)
 //
-// 8 leaf modül (`crypto`, `secure`, `frame`, `ukey2`, `error`,
-// `file_size_guard`, `log_redact`, `config`) artık `hekadrop-core` crate'inde.
-// `crate::crypto::xxx`, `use crate::secure::SecureCtx` gibi yüzlerce
-// in-tree çağrı noktası bu re-export'lar sayesinde dokunulmadan derlenir.
-// `tests/*.rs` ve `benches/*.rs` ise `hekadrop::crypto::xxx` formuyla bu
-// shim üzerinden core'a ulaşır.
+// Bu re-export'lar `tests/*.rs`, `benches/*.rs` ve fuzz harness'larının
+// `hekadrop::xxx` formuyla core sembollerine erişebilmesi için kalır
+// (binary `src/main.rs` direkt `hekadrop_core::xxx` kullanır; lib bağımsız
+// derlenir). Yeni core sembolü eklendiğinde tek mecburi update buradadır.
 pub use hekadrop_core::{
     config, connection, crypto, discovery_types, error, file_size_guard, frame, identity,
     log_redact, payload, secure, sender, server, settings, stats, ui_port, ukey2,

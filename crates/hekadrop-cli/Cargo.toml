@@ -1,0 +1,33 @@
+[package]
+name = "hekadrop-cli"
+description = "HekaDrop CLI — headless send/receive entry point (v0.10.0+ icin stub)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+# RFC-0001 §5 Adım 7: bu crate v0.7'de yalnız stub'tur. ROADMAP §Q1 v0.10.0
+# `hekadrop-cli`'in send/receive/list-peers/trust/doctor komutlarıyla
+# şişeceğini öngörür; o zaman bu Cargo.toml'a clap + IPC + per-command
+# subcrate'ler eklenir. Şimdilik path-dep'leri ileri-bağlantı kontrolü
+# (workspace çevriminde core+net erişilebilir, build doğru sıralanır)
+# için tutuyoruz.
+
+[[bin]]
+name = "hekadrop-cli"
+path = "src/main.rs"
+
+[dependencies]
+hekadrop-core = { path = "../hekadrop-core", version = "=0.7.0" }
+hekadrop-net = { path = "../hekadrop-net", version = "=0.7.0" }
+
+[lints]
+workspace = true
+
+# v0.10.0'da CLI komutları core+net'e dokunduğunda kaldırılır.
+[package.metadata.cargo-machete]
+ignored = ["hekadrop-core", "hekadrop-net"]

@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Added — Workspace Refactor (RFC-0001 §5, Adım 1-8 tamamlandı)
+- **5 üyeli Cargo workspace**: `hekadrop-proto` (leaf, prost wire types) →
+  `hekadrop-core` (protocol engine: crypto, frame, UKEY2, secure, payload,
+  state, connection, sender, server, identity, stats, settings, error,
+  log_redact, file_size_guard, config, discovery_types, ui_port) →
+  `hekadrop-net` (mDNS keşif + advertise) → `hekadrop-cli` (v0.10.0 stub) →
+  `hekadrop-app` (binary + UI/tao+wry/tray-icon + platform shims + i18n).
+- **`UiPort` trait + `UiNotification` channel** (Adım 5b): `hekadrop-core`
+  artık UI bağımsız; eski `crate::ui::*` çağrıları async trait üzerinden
+  geçiyor. `ui_adapter` (app) trait'i implement eder.
+- **`AppState` plain struct** (Adım 5a): `OnceLock<AppState>` singleton
+  app'te kaldı, gerçek tipler core'da; `Arc<AppState>` parametre olarak gezer.
+- **`hekadrop-cli` binary stub**: `cargo run --bin hekadrop-cli` "coming in
+  v0.10.0" basar. Workspace topology + build sırası doğrulayan ileri-bağlantı.
+- **Strict workspace lint policy** (PR #87): `[workspace.lints]` enforce —
+  `unwrap_used`, `expect_used`, `panic`, `dbg_macro`, `cast_possible_truncation`,
+  `undocumented_unsafe_blocks`, `redundant_clone` vb. 23 lint warn/deny.
+  Mevcut codebase 0 violation; yeni kod CI ile bloklanır.
+- **CLAUDE.md kuruluş prensipleri** + pre-commit kontrol listesi (PR #91 sonrası).
+
+### Added — v0.7 öncesi
 - **24 aylık yol haritası**: `docs/ROADMAP.md`, `docs/MILESTONES.md` — v1.0.0 hedef
   2028-04-24. Paket yöneticisi (Homebrew Cask, Winget, Scoop, Flathub, Snap, AUR,
   Nixpkgs) yayınları v1.0.0'a ertelendi; süre boyunca GitHub Releases beta kanal.
