@@ -49,6 +49,10 @@ pub mod file_size_guard;
 pub mod frame;
 pub mod identity;
 pub mod log_redact;
+// Capabilities exchange runtime helper; `connection` ve `sender` zaten tokio
+// bağımlısı olduğundan core'a yeni dep gelmiyor. State machine entegrasyonu
+// peer-detection logic ile birlikte ayrı PR'da gelecek.
+pub mod negotiation;
 pub mod payload;
 pub mod secure;
 pub mod settings;
