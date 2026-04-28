@@ -156,7 +156,48 @@ fn main() {
     // varsa o öncelikli (geliştirici kaçış vanası). Settings'i logger'dan
     // ÖNCE yüklememiz lazım → state::init'ten önce lokal load yapıp iki
     // kere okumamak için aynı instance'ı state'e taşıyoruz.
-    let settings = settings::Settings::load(&paths::config_path());
+    //
+    // SECURITY: Bozuk config'te trusted device listesi kaybedilmemeli;
+    // `load_or_default` bozuk dosyayı tespit edip default ile döner ama dosya
+    // korunur (caller backup'lar). Bir sonraki save default'ı yazar = veri
+    // kaybı. Burada bozuk dosyayı `<path>.corrupt-<unix>` backup'la, default
+    // kullan, kullanıcı log'tan görsün. UI logger henüz kurulmadığı için
+    // (chicken-and-egg) eprintln + tracing'e duplicate basıyoruz.
+    let config_path = paths::config_path();
+    let (settings, settings_load_err) = settings::Settings::load_or_default(&config_path);
+    if let Some(err) = settings_load_err {
+        // Tracing subscriber henüz kurulmadı; kullanıcının fark etmesi için
+        // stderr'e bas. Sonra setup_logging tracing channel'ını da açar.
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!("[HekaDrop] config yüklenirken hata: {err}");
+        }
+        if matches!(err, settings::LoadError::Corrupt { .. }) {
+            match settings::backup_corrupt_file(&config_path) {
+                Ok(backup) => {
+                    #[allow(clippy::print_stderr)]
+                    {
+                        eprintln!(
+                            "[HekaDrop] bozuk config yedeklendi: {} — varsayılan ile devam",
+                            backup.display()
+                        );
+                    }
+                }
+                Err(e) => {
+                    // Backup başarısız → default'u DİSKE YAZMA tehlikesi var:
+                    // settings::save() çağrılırsa kullanıcının trust listesi
+                    // kalıcı olarak silinir. Default'la başla ama explicit save
+                    // çağrısı kullanıcı eylemine bağlı (UI tarafı).
+                    #[allow(clippy::print_stderr)]
+                    {
+                        eprintln!(
+                            "[HekaDrop] UYARI: bozuk config yedeklenemedi ({e}) — varsayılan ayarlar kullanılıyor; AYAR DEĞİŞİKLİĞİ YAPMAYIN, mevcut config.json'u manuel kurtarmaya çalışın"
+                        );
+                    }
+                }
+            }
+        }
+    }
     setup_logging(settings.log_level);
 
     state::init(settings);
@@ -992,7 +1033,11 @@ fn push_i18n_to_ui() {
     // fonksiyonu script block içinde tanımlı — bu push ondan sonra geldiğinde
     // doğrudan çağrılır; öncesinde geldiyse window.__I18N__ setlenir, script
     // tag'i load olunca boot path'i yakalar.
-    let js = format!("window.__I18N__ = {payload}; window.applyI18n && window.applyI18n();");
+    // SECURITY: js_safe_json XSS escape (PR #109 — Gemini medium).
+    let js = format!(
+        "window.__I18N__ = {}; window.applyI18n && window.applyI18n();",
+        js_safe_json(&payload)
+    );
     state::enqueue_js(js);
 }
 
@@ -1052,7 +1097,10 @@ fn push_settings_to_ui() {
         "disable_update_check": s.disable_update_check,
     });
     drop(s);
-    let js = format!("window.applySettings && window.applySettings({payload})");
+    let js = format!(
+        "window.applySettings && window.applySettings({})",
+        js_safe_json(&payload)
+    );
     state::enqueue_js(js);
 }
 
@@ -1107,7 +1155,10 @@ fn push_stats_to_ui() {
         "top_rx": top_rx,
         "top_tx": top_tx,
     });
-    state::enqueue_js(format!("window.applyStats && window.applyStats({payload})"));
+    state::enqueue_js(format!(
+        "window.applyStats && window.applyStats({})",
+        js_safe_json(&payload)
+    ));
 }
 
 fn st_settings_resolved_name() -> String {
@@ -1145,7 +1196,10 @@ fn push_trusted_to_ui() {
         .collect();
     drop(s);
     let payload = serde_json::Value::Array(items);
-    let js = format!("window.applyTrusted && window.applyTrusted({payload})");
+    let js = format!(
+        "window.applyTrusted && window.applyTrusted({})",
+        js_safe_json(&payload)
+    );
     state::enqueue_js(js);
 }
 
@@ -1171,7 +1225,7 @@ fn push_history_to_ui() {
         .collect();
     let js = format!(
         "window.applyHistory && window.applyHistory({})",
-        serde_json::Value::Array(json_items)
+        js_safe_json(&serde_json::Value::Array(json_items))
     );
     state::enqueue_js(js);
 }
@@ -1211,12 +1265,61 @@ fn progress_signature(p: &state::ProgressState) -> String {
     }
 }
 
+/// Bir Rust `&str`'ı JS source code içine güvenli embed etmek için
+/// double-quote'lu literal'e çevirir. **Kullanım:** `format!("setX({})", js_string(&val))`.
+///
+/// SECURITY: Aşağıdaki escape'ler eklendi (PR #109 — Gemini medium):
+///   * `\\` → `\\\\` (backslash önce — sıralama önemli)
+///   * `"` → `\"`
+///   * `\n` `\r` `\t` → `\n` `\r` `\t` (literal control'lar JS source'unda
+///     newline yaratır, yapısal hata)
+///   * `</` → `<\/` (script tag closure injection — `</script>` içinde
+///     ise browser'ı script tag'i kapatmaya zorlar, ardından gelen
+///     attacker-controlled içerik HTML olarak değerlendirilir → XSS)
+///   * `U+2028` `U+2029` → unicode escape (eski JS engine'da line
+///     terminator sayılır, syntax error)
 fn js_string(s: &str) -> String {
-    let escaped = s
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n");
-    format!("\"{escaped}\"")
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            // Ctrl chars 0x00-0x1F (except already-handled \n\r\t) — strip yerine escape
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04X}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    // </ → <\/ : `</script>` injection engelleme. Bu pattern JS source'da
+    // serbest ama browser HTML parser script tag'i kapatır. JSON spec
+    // forward-slash'i normalde escape etmez; biz ekstra güvenlik ekliyoruz.
+    out.replace("</", "<\\/")
+}
+
+/// Bir `serde_json::Value`'yu JS source'a güvenli inline JSON literal olarak
+/// gömer. JSON spec'e uygun çıktı (Display) genelde valid JS literal'dir
+/// AMA edge case'ler: `</script>` substring (HTML parser script kapatır),
+/// U+2028/U+2029 (eski JS line terminator). Bu helper `serde_json::to_string`
+/// + ek escape ile OWASP "Output Encoding" patternine uyar.
+///
+/// **Kullanım:** `format!("window.applyX({})", js_safe_json(&value))`.
+/// **Doğrudan `format!("...{value}...")` KULLANMAYIN** — `Display` impl'i
+/// </script> ve U+2028/U+2029'ı escape etmez.
+fn js_safe_json(v: &serde_json::Value) -> String {
+    // Infallible: serde_json::Value zaten valid JSON; serialize panic etmez.
+    #[allow(clippy::expect_used)]
+    let s = serde_json::to_string(v).expect("serde_json::Value serialize infallible");
+    s.replace("</", "<\\/")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }
 
 fn push_progress_to_ui(webview: &wry::WebView, p: &state::ProgressState) {
@@ -2158,5 +2261,82 @@ mod tests {
         let fake = std::path::PathBuf::from("/tmp/hekadrop-nonexistent-xyzzy-123");
         let out = expand_folder_drops(vec![fake]);
         assert!(out.is_empty());
+    }
+
+    // ─── PR #109: JS escape (XSS koruması) ────────────────────────────────
+
+    #[test]
+    fn js_string_escapes_basic_special_chars() {
+        assert_eq!(js_string("hello"), r#""hello""#);
+        assert_eq!(js_string("a\"b"), r#""a\"b""#);
+        assert_eq!(js_string("a\\b"), r#""a\\b""#);
+        assert_eq!(js_string("a\nb"), r#""a\nb""#);
+        assert_eq!(js_string("a\rb"), r#""a\rb""#);
+        assert_eq!(js_string("a\tb"), r#""a\tb""#);
+    }
+
+    #[test]
+    fn js_string_escapes_script_tag_closure() {
+        // </script> XSS injection — browser HTML parser script tag'i
+        // kapatır, sonrasındaki içerik HTML olarak değerlendirilir
+        let out = js_string("</script><img src=x onerror=alert(1)>");
+        assert!(!out.contains("</"), "</ should be escaped to <\\/: {out}");
+        assert!(out.contains("<\\/script>"), "got: {out}");
+    }
+
+    #[test]
+    fn js_string_escapes_unicode_line_terminators() {
+        // U+2028 LINE SEPARATOR + U+2029 PARAGRAPH SEPARATOR
+        // Eski JS engine'da line break sayılır → syntax error
+        let out = js_string("a\u{2028}b\u{2029}c");
+        assert!(out.contains("\\u2028"), "U+2028 should escape: {out}");
+        assert!(out.contains("\\u2029"), "U+2029 should escape: {out}");
+    }
+
+    #[test]
+    fn js_string_escapes_control_chars() {
+        // 0x00..0x1F (newline/tab/cr hariç) — JS source'ta visible olmayan
+        // chars zaten parser confused eder; defensive escape.
+        let out = js_string("\x00\x01\x1F");
+        assert!(out.contains("\\u0000"));
+        assert!(out.contains("\\u0001"));
+        assert!(out.contains("\\u001F"));
+    }
+
+    #[test]
+    fn js_safe_json_escapes_script_tag_closure() {
+        let v = serde_json::json!({"text": "</script><img src=x onerror=alert(1)>"});
+        let out = js_safe_json(&v);
+        assert!(!out.contains("</"), "</ should be escaped: {out}");
+        assert!(out.contains("<\\/script>"), "got: {out}");
+    }
+
+    #[test]
+    fn js_safe_json_escapes_unicode_line_terminators() {
+        let v = serde_json::json!({"text": "line1\u{2028}line2\u{2029}line3"});
+        let out = js_safe_json(&v);
+        assert!(out.contains("\\u2028"), "U+2028 should escape: {out}");
+        assert!(out.contains("\\u2029"), "U+2029 should escape: {out}");
+        // Display impl raw codepoint geçirmemeli
+        assert!(!out.contains('\u{2028}'));
+        assert!(!out.contains('\u{2029}'));
+    }
+
+    #[test]
+    fn js_safe_json_preserves_valid_json_structure() {
+        // Normal payload → escape sonrası hâlâ valid JSON
+        let v = serde_json::json!({"name": "Pixel", "count": 42, "items": ["a", "b"]});
+        let out = js_safe_json(&v);
+        let reparsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(reparsed, v);
+    }
+
+    #[test]
+    fn js_safe_json_handles_strings_with_quotes_and_backslashes() {
+        let v = serde_json::json!({"text": "she said \"hi\\there\""});
+        let out = js_safe_json(&v);
+        // Round-trip korunmalı
+        let reparsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(reparsed, v);
     }
 }

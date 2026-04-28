@@ -193,12 +193,12 @@ fn log_level_serde_lowercase_enum_variant() {
 #[test]
 fn log_level_gecersiz_deger_settings_parse_fail_load_default_fallback() {
     // `LogLevel` `untagged`/`other` olmadığından geçersiz variant serde
-    // hatası verir. `Settings::load` bu durumda `unwrap_or_default()` ile
-    // tamamen default döner — `load()` path'inin sessiz fallback davranışı
-    // (config.json crash yerine).
+    // hatası verir.
     //
-    // Bu test Settings::load kullanmadan, parse error'un tespit edilebilir
-    // olduğunu doğrular (load katmanı yoksa direkt error propagate eder).
+    // PR #109 sonrası `Settings::load` Result<Self, LoadError> döner
+    // (corrupt detection + backup workflow). Bu test parse error'un
+    // serde katmanında tespit edilebilir olduğunu doğrular — load
+    // wrapper'ı bunu `LoadError::Corrupt` olarak rapor eder.
     let bad = r#"{"log_level": "trace"}"#;
     let r: Result<Settings, _> = serde_json::from_str(bad);
     assert!(r.is_err(), "bilinmeyen LogLevel variant serde fail");

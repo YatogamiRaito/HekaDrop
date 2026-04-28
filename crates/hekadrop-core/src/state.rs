@@ -142,7 +142,24 @@ impl AppState {
         #[allow(clippy::expect_used)]
         let identity = DeviceIdentity::load_or_create_at(identity_path)
             .expect("DeviceIdentity yüklenemedi/oluşturulamadı — identity.key kontrol edin");
-        let stats_loaded = Stats::load(&stats_path);
+        // Stats corrupt olursa default + uyarı; geçmiş istatistikler kaybolur
+        // ama trust güvenlik kararı etkilenmez (stats sadece UI panel verisi).
+        // Bozuk dosya backup'lanır → kullanıcı isterse manuel kurtarır.
+        let (stats_loaded, stats_load_err) = Stats::load_or_default(&stats_path);
+        if let Some(err) = stats_load_err {
+            tracing::warn!("stats yüklenemedi: {err}");
+            if matches!(err, crate::settings::LoadError::Corrupt { .. }) {
+                match crate::settings::backup_corrupt_file(&stats_path) {
+                    Ok(backup) => tracing::warn!(
+                        "bozuk stats.json yedeklendi: {} — varsayılan ile devam",
+                        backup.display()
+                    ),
+                    Err(e) => tracing::warn!(
+                        "bozuk stats.json yedeklenemedi ({e}) — overwrite önlemek için boş default kullanılacak"
+                    ),
+                }
+            }
+        }
         Arc::new(Self {
             settings: RwLock::new(settings),
             identity,

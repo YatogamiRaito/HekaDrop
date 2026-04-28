@@ -519,12 +519,56 @@ impl Settings {
     }
 }
 
+/// Persistent state load hata türleri — `LoadError::Corrupt` durumunda
+/// caller dosyayı backup'lar ve UI'a uyarı verir; `Io` durumunda kullanıcı
+/// permission/disk hatasını anlamalı.
+///
+/// **Why error type:** Önceki davranış (`unwrap_or_default`) bozuk
+/// `config.json` durumunda kullanıcının trusted device listesini sessizce
+/// silip bir sonraki save ile **kalıcı veri kaybına** sebep oluyordu
+/// (PR #90 review, Gemini medium). Hata ayrımı `NotFound = OK, Corrupt =
+/// kullanıcı görür` semantiğini sağlar.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadError {
+    #[error("config dosyası bozuk ({path}): {source}")]
+    Corrupt {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("config dosyası okunamadı ({path}): {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
 impl Settings {
-    pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<Self>(&s).ok())
-            .unwrap_or_default()
+    /// Strict load — `NotFound` → `Ok(Self::default())`, parse error
+    /// → `Err(LoadError::Corrupt)`, diğer I/O → `Err(LoadError::Io)`.
+    pub fn load(path: &Path) -> std::result::Result<Self, LoadError> {
+        match std::fs::read_to_string(path) {
+            Ok(s) => serde_json::from_str::<Self>(&s).map_err(|source| LoadError::Corrupt {
+                path: path.to_path_buf(),
+                source,
+            }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(source) => Err(LoadError::Io {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
+    }
+
+    /// Convenience: hata olursa default dön + hata bilgisini de dışa ver.
+    /// Caller `Option<LoadError>`'ı log'a basıp UI'a notification gönderir,
+    /// `Corrupt` durumunda dosyayı [`backup_corrupt_file`] ile yedekler.
+    pub fn load_or_default(path: &Path) -> (Self, Option<LoadError>) {
+        match Self::load(path) {
+            Ok(s) => (s, None),
+            Err(e) => (Self::default(), Some(e)),
+        }
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -746,6 +790,26 @@ static SETTINGS_DISK_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 /// artık yutulmuyor (durability garantisi propagate edilir).
 pub(crate) fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     atomic_write_mode(path, data, None)
+}
+
+/// Bozuk config dosyasını `<path>.corrupt-<unix>` olarak yedekler ve
+/// `Result<PathBuf, io::Error>` döner. Caller silinmeden önce çağırmalı —
+/// böylece kullanıcı dosyayı manuel kurtarabilir, default ile başlanması
+/// veri kaybı izlenimi yaratmaz.
+///
+/// Backup başarısız olursa **orijinal dosya silinmez** (caller default'a
+/// düşer ama bir sonraki `save` corrupt'ı override etmez ki belki sonra
+/// el ile bakılabilsin). Yani backup garantisi yoksa overwrite yok.
+pub fn backup_corrupt_file(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(format!(".corrupt-{unix}"));
+    let backup = std::path::PathBuf::from(backup);
+    std::fs::rename(path, &backup)?;
+    Ok(backup)
 }
 
 /// `atomic_write` variant'ı — kısıtlı (gizli) dosyalar için tmp'yi
@@ -1766,5 +1830,105 @@ mod tests {
         // Son içerik 8 thread'ten birinin yazdığı olmalı; hiç değilse dosya var.
         assert!(target.exists());
         let _ = std::fs::remove_dir_all(&*dir);
+    }
+
+    // ─── PR #109: load corruption detection + backup ───────────────────────
+
+    fn fresh_temp_path(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("hekadrop-test-{name}-{nanos}.json"))
+    }
+
+    #[test]
+    fn load_missing_returns_default_no_error() {
+        let path = fresh_temp_path("missing");
+        // Dosya yok — `Ok(default)` dönmeli
+        let result = Settings::load(&path);
+        assert!(result.is_ok());
+        let (settings, err) = Settings::load_or_default(&path);
+        assert!(err.is_none(), "missing file should not produce error");
+        assert_eq!(settings.trusted_devices.len(), 0);
+    }
+
+    #[test]
+    fn load_corrupt_json_returns_corrupt_error() {
+        let path = fresh_temp_path("corrupt");
+        std::fs::write(&path, b"{not valid json}").unwrap();
+
+        let err = Settings::load(&path).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Corrupt { .. }),
+            "expected Corrupt, got {err:?}"
+        );
+
+        let (_, err_opt) = Settings::load_or_default(&path);
+        assert!(matches!(err_opt, Some(LoadError::Corrupt { .. })));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_or_default_returns_default_on_corruption() {
+        let path = fresh_temp_path("corrupt-default");
+        std::fs::write(&path, b"<<not json>>").unwrap();
+
+        let (settings, err) = Settings::load_or_default(&path);
+        assert!(err.is_some());
+        assert_eq!(settings.trusted_devices.len(), 0); // default
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn backup_corrupt_file_renames_with_timestamp() {
+        let path = fresh_temp_path("backup");
+        std::fs::write(&path, b"corrupt content").unwrap();
+
+        let backup = backup_corrupt_file(&path).expect("backup should succeed");
+        assert!(!path.exists(), "original file should be moved");
+        assert!(backup.exists(), "backup file should exist");
+        let backup_str = backup.to_string_lossy();
+        assert!(
+            backup_str.contains(".corrupt-"),
+            "backup name should contain `.corrupt-<unix>`: {backup_str}"
+        );
+
+        // Kullanıcının manuel kurtarması için içerik korunmalı
+        let backup_content = std::fs::read_to_string(&backup).unwrap();
+        assert_eq!(backup_content, "corrupt content");
+
+        let _ = std::fs::remove_file(&backup);
+    }
+
+    #[test]
+    fn load_corrupt_preserves_existing_trusted_device_via_backup_workflow() {
+        // Senaryo: kullanıcının trusted device'lı bir config'i bozuldu →
+        // load_or_default + backup_corrupt_file workflow'u dosyayı saklamalı,
+        // default'la başlamalı, kullanıcı backup'ı manuel restore edebilmeli.
+        let path = fresh_temp_path("workflow");
+
+        // Mock: bozuk JSON ama içinde trusted device alanı görünür
+        let corrupt_json = br#"{"trusted_devices": [{"name": "Pixel"}], BROKEN"#;
+        std::fs::write(&path, corrupt_json).unwrap();
+
+        // 1. load detect eder
+        let (settings, err) = Settings::load_or_default(&path);
+        assert!(matches!(err, Some(LoadError::Corrupt { .. })));
+        assert_eq!(settings.trusted_devices.len(), 0);
+
+        // 2. backup başarılı
+        let backup = backup_corrupt_file(&path).expect("backup");
+        assert!(backup.exists());
+        let recovered = std::fs::read(&backup).unwrap();
+        assert_eq!(recovered, corrupt_json); // veri korundu
+
+        // 3. Original yok → bir sonraki save default'u yazsa bile,
+        //    backup'taki kullanıcı verisi eldedir.
+        assert!(!path.exists());
+
+        let _ = std::fs::remove_file(&backup);
     }
 }

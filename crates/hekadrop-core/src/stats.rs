@@ -49,11 +49,31 @@ fn now_epoch() -> u64 {
 }
 
 impl Stats {
-    pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<Self>(&s).ok())
-            .unwrap_or_default()
+    /// Strict load — `NotFound` → `Ok(default)`, parse error
+    /// → `Err(LoadError::Corrupt)`, diğer I/O → `Err(LoadError::Io)`.
+    /// Bkz. [`crate::settings::LoadError`] — aynı semantic.
+    pub fn load(path: &Path) -> std::result::Result<Self, crate::settings::LoadError> {
+        match std::fs::read_to_string(path) {
+            Ok(s) => serde_json::from_str::<Self>(&s).map_err(|source| {
+                crate::settings::LoadError::Corrupt {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(source) => Err(crate::settings::LoadError::Io {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
+    }
+
+    /// Convenience: hata olursa default + hata bilgisi.
+    pub fn load_or_default(path: &Path) -> (Self, Option<crate::settings::LoadError>) {
+        match Self::load(path) {
+            Ok(s) => (s, None),
+            Err(e) => (Self::default(), Some(e)),
+        }
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
