@@ -1968,7 +1968,7 @@ fn toggle_login_item() {
 }
 
 /// Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` Registry
-/// anahtarına "HekaDrop" değerini yazar ya da kaldırır. Binary yolu
+/// anahtarına `"HekaDrop"` değerini yazar ya da kaldırır. Binary yolu
 /// `current_exe()` ile alınır (tırnak içine alınarak; Program Files gibi
 /// boşluklu yollara dayanıklı).
 #[cfg(target_os = "windows")]
