@@ -23,7 +23,7 @@
 
 //! Secure message (AES-256-CBC + HMAC-SHA256 + sequence counter) uyumluluğu.
 //!
-//! HekaDrop `src/secure.rs` davranışının bağımsız bir protokol-uyumlu implementasyonu
+//! `HekaDrop` `src/secure.rs` davranışının bağımsız bir protokol-uyumlu implementasyonu
 //! üzerinden roundtrip, replay, HMAC tampering ve out-of-order senaryoları doğrulanır.
 
 mod common;
@@ -73,7 +73,7 @@ fn decode_sm(buf: &[u8]) -> Option<(Vec<u8>, [u8; 16], [u8; 32])> {
     Some((ct, iv, tag))
 }
 
-/// Secure context — HekaDrop `SecureCtx` karşılığı. Sequence counter monoton artar;
+/// Secure context — `HekaDrop` `SecureCtx` karşılığı. Sequence counter monoton artar;
 /// eksik ya da geri giden sequence reddedilir.
 struct SecureCtx {
     encrypt_key: [u8; 32],
@@ -218,7 +218,7 @@ fn sequence_counter_monoton_artar() {
 }
 
 /// Replay attack: aynı ciphertext ikinci kez gönderilirse reject.
-/// HekaDrop `SecureCtx::decrypt` fonksiyonu `client_seq`'i advance ettikten sonra
+/// `HekaDrop` `SecureCtx::decrypt` fonksiyonu `client_seq`'i advance ettikten sonra
 /// aynı frame'i yine almaya çalışırsak sequence "beklenen" ile uyuşmaz.
 #[test]
 fn replay_saldirisi_ayni_seq_ikinci_kez_rejected() {
@@ -270,7 +270,7 @@ fn basarisiz_decrypt_sonrasi_state_bozulmaz() {
 }
 
 /// HMAC tampering: cipher text'in son byte'ı değiştirilirse HMAC patlamalı.
-/// Bu testin var oluş sebebi: HekaDrop secure layer subtle::ConstantTimeEq
+/// Bu testin var oluş sebebi: `HekaDrop` secure layer `subtle::ConstantTimeEq`
 /// kullanıyor, bu doğrulanırken constant-time olsa bile yanlış tag *reddedilmeli*.
 #[test]
 fn tampered_hmac_reddedilir() {
@@ -298,7 +298,7 @@ fn tampered_ciphertext_hmac_ile_yakalanir() {
     assert!(r.is_err());
 }
 
-/// 2 yönlü (A↔B) çift yönlü trafik. A'nın send_seq'i ile B'nin send_seq'i
+/// 2 yönlü (A↔B) çift yönlü trafik. A'nın `send_seq`'i ile B'nin `send_seq`'i
 /// bağımsız — her yön kendi sayacını yönetmeli.
 #[test]
 fn cift_yonlu_trafik_seq_bagimsiz() {

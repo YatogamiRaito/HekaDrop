@@ -1,13 +1,13 @@
 //! Inbound Nearby/Quick Share bağlantı state machine'i.
 //!
 //! Akış:
-//!   1) Plain ConnectionRequest                       (peer → us)
-//!   2) UKEY2 ClientInit                              (peer → us)
-//!   3) UKEY2 ServerInit                              (us   → peer)
-//!   4) UKEY2 ClientFinished                          (peer → us)    [anahtarlar türetilir]
-//!   5) Plain ConnectionResponse                      (peer → us)
-//!   6) Plain ConnectionResponse (Accept)             (us   → peer)
-//!   7) Şifreli loop — tüm sonraki frame'ler SecureMessage katmanından geçer.
+//!   1) Plain `ConnectionRequest`                       (peer → us)
+//!   2) UKEY2 `ClientInit`                              (peer → us)
+//!   3) UKEY2 `ServerInit`                              (us   → peer)
+//!   4) UKEY2 `ClientFinished`                          (peer → us)    [anahtarlar türetilir]
+//!   5) Plain `ConnectionResponse`                      (peer → us)
+//!   6) Plain `ConnectionResponse` (Accept)             (us   → peer)
+//!   7) Şifreli loop — tüm sonraki frame'ler `SecureMessage` katmanından geçer.
 
 use crate::error::HekaError;
 use crate::frame;
@@ -44,7 +44,7 @@ use tracing::{info, warn};
 /// platform-bağımlı yardımcılar.
 ///
 /// I-1 (CLAUDE.md): connection core'a taşınınca `crate::platform`
-/// (open_url / copy_to_clipboard) referansı sızmasın diye trait üzerinden
+/// (`open_url` / `copy_to_clipboard`) referansı sızmasın diye trait üzerinden
 /// dispatch ediyoruz. App-side `PlatformShim` minimal `Send + Sync` impl'i
 /// `crate::platform::*` çağrılarına forward eder.
 pub trait PlatformOps: Send + Sync {
@@ -467,7 +467,7 @@ pub async fn handle(
 /// Reject, kullanıcı Cancel, peer Disconnect, I/O hatası veya socket
 /// kopması durumlarının hepsinde güvenli biçimde çağrılır; idempotent'tir.
 /// Yaptığı işler:
-///   * `pending_names` içindeki her payload_id için `PayloadAssembler::cancel`
+///   * `pending_names` içindeki her `payload_id` için `PayloadAssembler::cancel`
 ///     çağrılır — yarım yazılmış dosyalar ve açık dosya kulpları temizlenir,
 ///     disk sızıntısı önlenir.
 ///   * `pending_texts` ve `pending_names` tamamen boşaltılır.
@@ -1319,7 +1319,7 @@ pub(crate) fn build_connection_response_accept() -> OfflineFrame {
 /// [`crate::error::HekaError`] variant'ları (tip-safe ayrım), sonra
 /// `std::io::Error` (generic I/O). String-match son çare değil — düşmüyoruz,
 /// fallback kasıtlı olarak `err.pin_mismatch`: UKEY2 handshake spec'inde
-/// handshake tamamlansa ama ClientFinished commitment reddedilse bu noktada
+/// handshake tamamlansa ama `ClientFinished` commitment reddedilse bu noktada
 /// `Ukey2CommitmentMismatch` downcast yakalar; bilinmeyen generic hata
 /// kullanıcı için de pratikte "PIN eşleşmedi" olarak yorumlanır (en sık neden).
 fn classify_handshake_error(e: &anyhow::Error) -> &'static str {
@@ -1382,7 +1382,7 @@ fn parse_remote_name(endpoint_info: &[u8]) -> Option<String> {
 ///
 /// **Why checked aritmetik:** Üç giriş alanı da unvalidated peer data. Naïve
 /// `(offset + body_len) * 100 / total` hesabı i64 overflow ile (debug panic /
-/// release wrap) yanlış progress veya DoS açar. Overflow ya da geçersiz `total`
+/// release wrap) yanlış progress veya `DoS` açar. Overflow ya da geçersiz `total`
 /// (0/negatif) → `None` (caller progress update'ini sessizce atlar).
 ///
 /// Bkz. [`crate::sender::compute_percent`] sender tarafı muadili (`bytes_before`

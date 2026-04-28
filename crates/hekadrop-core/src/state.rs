@@ -6,9 +6,9 @@
 //! katmanda — `crates/hekadrop-app/src/state.rs` — yer alır.
 //!
 //! Public surface:
-//! - `AppState` (RwLock'lu state container)
+//! - `AppState` (`RwLock`'lu state container)
 //! - `ProgressState`, `HistoryItem` (POD enum/struct)
-//! - `RateLimiter` (sliding-window IP-bazlı limiter, AppState alanı)
+//! - `RateLimiter` (sliding-window IP-bazlı limiter, `AppState` alanı)
 //! - `TransferGuard` (RAII; `Arc<AppState>` tutar, Drop'ta unregister)
 //! - `DEFAULT_COMPLETED_IDLE_DELAY` (Completed → Idle gecikme sabiti)
 
@@ -100,11 +100,11 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     /// Kalıcı kullanım istatistikleri.
     pub stats: RwLock<Stats>,
-    /// Settings persistence yolu — app crate'inde resolve edilir, AppState
+    /// Settings persistence yolu — app crate'inde resolve edilir, `AppState`
     /// burada cache'ler. Connection trusted-list update'leri bu yolu
     /// doğrudan kullanır (paths app-only).
     pub config_path: PathBuf,
-    /// Stats persistence yolu — app crate'inde resolve edilir, AppState
+    /// Stats persistence yolu — app crate'inde resolve edilir, `AppState`
     /// burada cache'ler. Sender ve connection RX path bu yolu doğrudan
     /// kullanır (paths app-only).
     pub stats_path: PathBuf,
@@ -377,7 +377,7 @@ impl AppState {
     /// araya giremez. Bu fonksiyon Tokio runtime context'i içinde
     /// çağrılmalıdır.
     ///
-    /// `Weak` referans saklanır — sleep sırasında AppState drop edilirse
+    /// `Weak` referans saklanır — sleep sırasında `AppState` drop edilirse
     /// (test teardown / process shutdown) reset task no-op'lar.
     ///
     /// `Handle::try_current()` ile mevcut Tokio runtime detect edilir; runtime
@@ -484,7 +484,7 @@ impl RateLimiter {
 
     /// Bu IP için kaydedilmiş son timestamp'i siler. Trusted hash
     /// doğrulandıktan sonra geriye-dönük muafiyet uygulamak için kullanılır
-    /// (gate'de hash yoktu, PairedKey sonrası kanıt geldi → sayacı düzelt).
+    /// (gate'de hash yoktu, `PairedKey` sonrası kanıt geldi → sayacı düzelt).
     /// Issue #17.
     pub fn forget_most_recent(&self, ip: IpAddr) {
         let mut windows = self.windows.write();

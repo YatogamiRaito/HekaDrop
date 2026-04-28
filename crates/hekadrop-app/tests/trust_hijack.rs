@@ -37,7 +37,7 @@
 //! Bu test, full handshake yerine `Settings::is_trusted_by_hash` katmanında
 //! senaryoyu doğrular — tasarım 017 §7.2'nin karar kurallarını birebir
 //! karşılayan unit-harness. Full connection-level integration testi
-//! (socket + UKEY2 + PayloadAssembler) bu PR için aşırı kapsamlı; burada
+//! (socket + UKEY2 + `PayloadAssembler`) bu PR için aşırı kapsamlı; burada
 //! yalnız trust-karar mekaniği izole edilmiştir.
 
 use serde_json::json;

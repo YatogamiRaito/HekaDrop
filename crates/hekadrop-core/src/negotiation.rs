@@ -1,15 +1,15 @@
 //! Capabilities exchange — runtime helper (RFC-0003 §3.3).
 //!
-//! [`negotiate_capabilities`] PairedKeyEncryption sonrası, herhangi bir
-//! HekaDrop extension frame'i emit edilmeden önce çağrılır. Send + receive
+//! [`negotiate_capabilities`] `PairedKeyEncryption` sonrası, herhangi bir
+//! `HekaDrop` extension frame'i emit edilmeden önce çağrılır. Send + receive
 //! + 2 sn timeout fallback semantiğini tek async fn içine paketler.
 //!
 //! Wire-byte-exact spec: [`docs/protocol/capabilities.md`] §5.
 //!
 //! **State machine entegrasyon notu (v0.8):** Bu helper henüz `sender.rs`
 //! veya `connection.rs` ana akışına bağlı değildir; eski Quick Share peer'ları
-//! HekaDropFrame'i decode edemediğinde davranışları bilinmez (büyük olasılık
-//! connection drop). Peer-detection logic (HekaDrop extension flag'i mDNS
+//! `HekaDropFrame`'i decode edemediğinde davranışları bilinmez (büyük olasılık
+//! connection drop). Peer-detection logic (`HekaDrop` extension flag'i mDNS
 //! TXT'te) eklendikten sonra ayrı bir PR ile sender + receiver akışlarına
 //! entegre edilir.
 
@@ -28,7 +28,7 @@ use prost::Message;
 /// §5.1 spec değeri (2 sn).
 pub const DEFAULT_CAPABILITIES_TIMEOUT: Duration = Duration::from_millis(2000);
 
-/// PairedKeyEncryption sonrası HekaDrop extension capabilities exchange'ini
+/// `PairedKeyEncryption` sonrası `HekaDrop` extension capabilities exchange'ini
 /// gerçekleştir.
 ///
 /// Akış:
@@ -44,7 +44,7 @@ pub const DEFAULT_CAPABILITIES_TIMEOUT: Duration = Duration::from_millis(2000);
 /// = legacy mode (no extension features). Kullanıcıya hata gösterilmez;
 /// transfer normal Quick Share akışıyla devam edebilir.
 ///
-/// Caller bu helper'ı PairedKeyResult swap'tan sonra, Introduction gönderme/
+/// Caller bu helper'ı `PairedKeyResult` swap'tan sonra, Introduction gönderme/
 /// alma öncesinde çağırmalıdır (state machine entegrasyonu için bkz. modül
 /// dokümantasyonu).
 pub async fn negotiate_capabilities(
@@ -125,7 +125,7 @@ mod tests {
         )
     }
 
-    /// İki HekaDrop peer'ı paralel `negotiate_capabilities` çağırırsa ikisi
+    /// İki `HekaDrop` peer'ı paralel `negotiate_capabilities` çağırırsa ikisi
     /// de `ALL_SUPPORTED` aktif kümeyi döndürmeli (loopback genuine path).
     #[tokio::test]
     async fn loopback_negotiate_all_features_active() {
@@ -204,7 +204,7 @@ mod tests {
         assert_eq!(active.raw(), 0);
     }
 
-    /// Peer geçersiz bytes yollarsa (HekaDrop magic'siz, decrypt fails veya
+    /// Peer geçersiz bytes yollarsa (`HekaDrop` magic'siz, decrypt fails veya
     /// protobuf decode fails) helper legacy'ye düşmeli — exception leak yok.
     #[tokio::test]
     async fn peer_garbage_falls_back_to_legacy() {

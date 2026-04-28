@@ -24,9 +24,9 @@
 //! UKEY2 handshake protokolü uyumluluğu — P-256 ECDH + HKDF + Java-uyumlu
 //! signed byte encoding'i tam simülasyon ile doğrular.
 //!
-//! Bu test crate'i HekaDrop binary'sine bağlamaz: aynı dış crate'leri
+//! Bu test crate'i `HekaDrop` binary'sine bağlamaz: aynı dış crate'leri
 //! ([p256], [hkdf], [sha2], [prost]) kullanarak "Alice ↔ Bob" senaryosu kurar.
-//! Amaç: HekaDrop tarafının ürettiği anahtarları başka bir peer'ın aynı
+//! Amaç: `HekaDrop` tarafının ürettiği anahtarları başka bir peer'ın aynı
 //! formülle yeniden türetebilmesini garanti etmek.
 
 mod common;
@@ -37,7 +37,7 @@ use p256::{ecdh::diffie_hellman, PublicKey, SecretKey};
 use rand::rngs::OsRng;
 
 /// İki taraf için HKDF ile türetilen 4+ anahtarı kapsayan yardımcı.
-/// HekaDrop `DerivedKeys` yapısıyla aynı alanlar.
+/// `HekaDrop` `DerivedKeys` yapısıyla aynı alanlar.
 #[derive(Debug)]
 struct DerivedKeys {
     client_aes: [u8; 32],
@@ -111,7 +111,7 @@ fn ecdh_iki_taraf_ayni_shared_secret_uretir() {
 }
 
 /// Full handshake simülasyonu: Alice (client) ve Bob (server) aynı transcript
-/// üzerinden aynı 4 AES/HMAC anahtarı + aynı auth_key + aynı PIN'i türetmeli.
+/// üzerinden aynı 4 AES/HMAC anahtarı + aynı `auth_key` + aynı PIN'i türetmeli.
 #[test]
 fn alice_bob_handshake_ayni_derived_keys_uretir() {
     let alice_sk = SecretKey::random(&mut OsRng);
@@ -148,7 +148,7 @@ fn alice_bob_handshake_ayni_derived_keys_uretir() {
     assert_eq!(alice_keys.pin_code, bob_keys.pin_code);
 }
 
-/// client_init ya da server_init transcript'i farklıysa (MITM birinin mesajını
+/// `client_init` ya da `server_init` transcript'i farklıysa (MITM birinin mesajını
 /// değiştirmiş) türetilen anahtarlar ayrışmalı — bu yüzden MITM tespiti olabilir.
 #[test]
 fn transcript_binding_farkli_transcript_farkli_anahtar() {
@@ -187,7 +187,7 @@ fn pin_code_her_zaman_4_basamak() {
     }
 }
 
-/// NearDrop referansı ile aynı PIN algoritması — Java BigInteger signed-byte
+/// `NearDrop` referansı ile aynı PIN algoritması — Java `BigInteger` signed-byte
 /// davranışı burada önemli. 0x80'lik bir byte Java'da -128 olmalı, Rust'ta
 /// `b as i8 as i64` = -128 çıkmalı.
 #[test]
@@ -235,7 +235,7 @@ fn to_signed_bytes_bos_slice_bos_kalir() {
 }
 
 /// P-256 public key encode → `to_signed_bytes(X) || to_signed_bytes(Y)`.
-/// Gerçek Android peer'ları bu formatı zorunlu olarak bekler (Java BigInteger).
+/// Gerçek Android peer'ları bu formatı zorunlu olarak bekler (Java `BigInteger`).
 #[test]
 fn p256_public_key_signed_encoding_java_uyumlu() {
     let sk = SecretKey::random(&mut OsRng);
@@ -262,7 +262,7 @@ fn p256_public_key_signed_encoding_java_uyumlu() {
 }
 
 /// HKDF-SHA256 RFC 5869 A.1 vektörü — crypto modülünün hkdf çağrısı standart.
-/// Bizim common::hkdf_sha256 yardımcımız doğru çalışıyor mu?
+/// Bizim `common::hkdf_sha256` yardımcımız doğru çalışıyor mu?
 #[test]
 fn hkdf_sha256_rfc5869_a1_test_vector() {
     let ikm = hex::decode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b").unwrap();
@@ -276,9 +276,9 @@ fn hkdf_sha256_rfc5869_a1_test_vector() {
     assert_eq!(okm, expected);
 }
 
-/// Derived keys'in "rol simetrisi": client taraf encrypt_key olarak client_aes'i
-/// kullanırsa, server taraf decrypt_key olarak aynı key'i kullanmalı. Bu test
-/// HekaDrop `DerivedKeys` doldurmasının simetrik olduğunu doğrular.
+/// Derived keys'in "rol simetrisi": client taraf `encrypt_key` olarak `client_aes`'i
+/// kullanırsa, server taraf `decrypt_key` olarak aynı key'i kullanmalı. Bu test
+/// `HekaDrop` `DerivedKeys` doldurmasının simetrik olduğunu doğrular.
 #[test]
 fn rol_simetrisi_client_enc_eq_server_dec() {
     let alice_sk = SecretKey::random(&mut OsRng);

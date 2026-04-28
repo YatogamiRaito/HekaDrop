@@ -1,10 +1,10 @@
 //! UKEY2 handshake — Quick Share'in P-256 + HKDF tabanlı anahtar değişim protokolü.
 //!
 //! Akış (receiver/server rolü):
-//!   1) İstemci → ConnectionRequest (offline_wire_formats)
-//!   2) İstemci → Ukey2ClientInit  (bu modül ele alır)
-//!   3) Biz    → Ukey2ServerInit   (P-256 public key ile)
-//!   4) İstemci → Ukey2ClientFinished (cipher commitment ile doğrulanır)
+//!   1) İstemci → `ConnectionRequest` (`offline_wire_formats`)
+//!   2) İstemci → `Ukey2ClientInit`  (bu modül ele alır)
+//!   3) Biz    → `Ukey2ServerInit`   (P-256 public key ile)
+//!   4) İstemci → `Ukey2ClientFinished` (cipher commitment ile doğrulanır)
 //!   5) ECDH → HKDF ile 4 anahtar + 4-haneli PIN
 
 use crate::crypto;
@@ -38,10 +38,10 @@ pub struct DerivedKeys {
 }
 
 /// Gönderici (client) rolünde tam UKEY2 handshake.
-/// Socket üzerinde: biz ClientInit → peer ServerInit → biz ClientFinished → ECDH + HKDF.
+/// Socket üzerinde: biz `ClientInit` → peer `ServerInit` → biz `ClientFinished` → ECDH + HKDF.
 ///
-/// Döndürülen DerivedKeys **client perspektifinde** doldurulur:
-///   encrypt/send_hmac = client_* (bizden peer'a), decrypt/recv_hmac = server_* (peer'den bize)
+/// Döndürülen `DerivedKeys` **client perspektifinde** doldurulur:
+///   `encrypt/send_hmac` = client_* (bizden peer'a), `decrypt/recv_hmac` = server_* (peer'den bize)
 pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     use sha2::{Digest, Sha512};
 
@@ -195,7 +195,7 @@ fn normalize_32(v: &[u8]) -> Vec<u8> {
 }
 
 /// Java `BigInteger.toByteArray()` ile uyumlu: MSB ≥ 0x80 ise başına 0x00 ekler.
-/// Aksi halde peer Java tarafında değeri negatif yorumlar ve ServerInit'i reddeder.
+/// Aksi halde peer Java tarafında değeri negatif yorumlar ve `ServerInit`'i reddeder.
 fn to_signed_bytes(v: &[u8]) -> Vec<u8> {
     if !v.is_empty() && v[0] >= 0x80 {
         let mut out = Vec::with_capacity(v.len() + 1);
@@ -212,12 +212,12 @@ fn to_signed_bytes(v: &[u8]) -> Vec<u8> {
 /// Saldırgan bir peer, daha zayıf ya da tanımsız bir cipher (örneğin
 /// `CurveCurve25519_Sha512`, `Unknown`, ya da dağıtımdan önce kaldırılmış
 /// algoritmalar) dönerek handshake'i bilinen-zayıf bir alana yönlendirmeye
-/// çalışabilir. ClientInit sadece `P256_SHA512` öneriyor — ServerInit farklı
+/// çalışabilir. `ClientInit` sadece `P256_SHA512` öneriyor — `ServerInit` farklı
 /// değer dönerse hatasız kabul etmek regression olurdu.
 ///
 /// `client_handshake` çağrısında inline olarak yapılıyordu; testlenebilir
 /// olması için saf fonksiyona ayrıldı (mutation survivor #10 — research-v2
-/// raporundaki "ServerInit cipher downgrade" kontrolü artık unit test ile
+/// raporundaki "`ServerInit` cipher downgrade" kontrolü artık unit test ile
 /// kapatılıyor).
 pub fn validate_server_init(s: &Ukey2ServerInit) -> Result<()> {
     if s.handshake_cipher != Some(Ukey2HandshakeCipher::P256Sha512 as i32) {

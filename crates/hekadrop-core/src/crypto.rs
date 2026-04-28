@@ -35,9 +35,9 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 }
 
 /// Quick Share 4-haneli PIN: authKey 32 bayttan türetilir.
-/// NearDrop algoritması birebir:
+/// `NearDrop` algoritması birebir:
 ///   hash=0, mult=1
-///   for b in key: hash = (hash + b_signed * mult) % 9973, mult = (mult * 31) % 9973
+///   for b in key: hash = (hash + `b_signed` * mult) % 9973, mult = (mult * 31) % 9973
 ///   pin = abs(hash) 4 hane
 pub fn pin_code_from_auth_key(key: &[u8]) -> String {
     let mut hash: i64 = 0;
@@ -131,9 +131,9 @@ mod tests {
         assert_eq!(pin.len(), 4);
     }
 
-    /// NearDrop referans PIN algoritmasına birebir KAT (known-answer test).
+    /// `NearDrop` referans PIN algoritmasına birebir KAT (known-answer test).
     ///
-    /// Beklenen değerler NearDrop spec'indeki aynı akışı Python ile bağımsız
+    /// Beklenen değerler `NearDrop` spec'indeki aynı akışı Python ile bağımsız
     /// olarak koşturup çıkarıldı:
     /// ```python
     /// def pin(key):
@@ -177,17 +177,17 @@ mod tests {
     /// Known-answer golden vector: 32-baytlık sabit bir `auth_key` → sabit 4-haneli PIN.
     ///
     /// Kapsam: yalnız `pin_code_from_auth_key` regression guard'ı — HKDF burada
-    /// çalıştırılmıyor, test doğrudan sabit bir auth_key besliyor. Amaç, gelecekte
+    /// çalıştırılmıyor, test doğrudan sabit bir `auth_key` besliyor. Amaç, gelecekte
     /// `MOD=9973`, `mult*=31` çarpanı, `rem_euclid` ya da signed-byte yorumlaması
     /// **sessizce** değişirse bu testin kırılmasıyla fark edilsin. Mutation testing
     /// survivor'larını da kapatır (operatör flip, sabit değişikliği, signedness kaybı).
     ///
-    /// HKDF → auth_key → PIN uçtan uca KAT testi ayrı bir vektör olarak eklenebilir;
+    /// HKDF → `auth_key` → PIN uçtan uca KAT testi ayrı bir vektör olarak eklenebilir;
     /// bu test özellikle PIN derivation adımını izole tutar.
     ///
-    /// Kaynak: NearDrop referans algoritmasının Python'a birebir port'u ile bağımsız
+    /// Kaynak: `NearDrop` referans algoritmasının Python'a birebir port'u ile bağımsız
     /// olarak türetildi (vektörü değiştirmek = algoritmayı değiştirmek).
-    ///   https://github.com/grishka/NearDrop (PIN türetme Android paketinde benzer akış)
+    ///   <https://github.com/grishka/NearDrop> (PIN türetme Android paketinde benzer akış)
     ///
     /// **Bu vektör bir kez kaydedildi — gelecekte değişirse PIN derivation algoritması
     /// değişti demek, incele.** Değişiklik kasıtlıysa yeni beklenen PIN'i güncelle

@@ -1,4 +1,4 @@
-//! HekaDrop core protocol engine — UKEY2 handshake, kripto primitive'leri,
+//! `HekaDrop` core protocol engine — UKEY2 handshake, kripto primitive'leri,
 //! frame codec ve guard'lar. (Payload assembler RFC-0001 Adım 4'te taşınacak.)
 //!
 //! RFC-0001 §5 Adım 3 ile `hekadrop-app`'tan ayrıştırıldı. Hedef: protocol

@@ -1,8 +1,8 @@
 //! UI port — connection/sender/server modüllerinin UI'a yönlenmesi
-//! için abstract interface. Implementation app crate'inde (UiAdapter).
+//! için abstract interface. Implementation app crate'inde (`UiAdapter`).
 //!
 //! RFC-0001 §5 Adım 5b — RFC §9 R1 önerisi: connection handler'ın UI
-//! modülüne doğrudan bağımlılığı kırılır; UiPort trait üzerinden
+//! modülüne doğrudan bağımlılığı kırılır; `UiPort` trait üzerinden
 //! caller (app) UI yönlendirmesini sağlar. Bu sayede core'a taşınınca
 //! UI (tao/wry/notify-rust) sızmaz.
 //!

@@ -21,11 +21,11 @@
     clippy::map_err_ignore
 )]
 
-//! UKEY2 ServerInit downgrade regression — wire-format seviyesi.
+//! UKEY2 `ServerInit` downgrade regression — wire-format seviyesi.
 //!
 //! `src/ukey2.rs::validate_server_init` happy-path dışında mutation-survivor
-//! riski taşıyordu (saldırgan peer, ClientInit'te teklif etmediğimiz zayıf bir
-//! cipher — örn. `CURVE25519_SHA512` ya da `RESERVED` — ile ServerInit dönerse
+//! riski taşıyordu (saldırgan peer, `ClientInit`'te teklif etmediğimiz zayıf bir
+//! cipher — örn. `CURVE25519_SHA512` ya da `RESERVED` — ile `ServerInit` dönerse
 //! validator BAIL etmeli, yoksa sessizce düşülmüş bir handshake olur).
 //!
 //! Bu integration test:
@@ -35,9 +35,9 @@
 //!      üretim tarafıyla paylaşılır.
 //!   2) Aynı byte dizisini decode edip `hekadrop::validate_server_init`'e
 //!      besler — üretim kodunun çağırdığı fonksiyonun aynısı.
-//!   3) P256_SHA512 dışı her cipher için hata mesajı `cipher downgrade` içerir.
+//!   3) `P256_SHA512` dışı her cipher için hata mesajı `cipher downgrade` içerir.
 //!   4) Version 1 dışı her değer için `yalnız V1` hata yolu çalışır.
-//!   5) Happy path (V1 + P256_SHA512) regresyona karşı yeşil kalır.
+//!   5) Happy path (V1 + `P256_SHA512`) regresyona karşı yeşil kalır.
 //!
 //! Neden integration (binary-external)? Üretim decode pipeline'ı `prost`
 //! varsayılanlarının (absent = `None`) doğru yorumlanmasına bağlı; bu test
@@ -59,7 +59,7 @@ fn wrap_server_init_to_wire(si: &Ukey2ServerInit) -> Vec<u8> {
     msg.encode_to_vec()
 }
 
-/// Wire bytes'tan ServerInit'i decode edip validator'a besleyen uçtan uca
+/// Wire bytes'tan `ServerInit`'i decode edip validator'a besleyen uçtan uca
 /// pipeline — gerçek ağ frame'inin yaşayacağı yol.
 fn decode_and_validate(wire: &[u8]) -> Result<Ukey2ServerInit> {
     let outer = Ukey2Message::decode(wire)?;

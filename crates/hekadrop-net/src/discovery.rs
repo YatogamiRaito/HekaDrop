@@ -115,12 +115,12 @@ fn parse(info: &ResolvedService) -> Option<DiscoveredDevice> {
     })
 }
 
-/// RFC-0003 §3.3 peer-detection — TXT record'undaki `ext` alanından HekaDrop
+/// RFC-0003 §3.3 peer-detection — TXT record'undaki `ext` alanından `HekaDrop`
 /// extension destek flag'ini parse et.
 ///
 /// Eski Quick Share peer'larında (Pixel/Samsung/NearDrop/rquickshare) `ext`
 /// alanı yoktur → `None` → `false` (legacy mode).
-/// HekaDrop peer'ları `ext=1` yollar → `Some("1")` → `true`.
+/// `HekaDrop` peer'ları `ext=1` yollar → `Some("1")` → `true`.
 /// Beklenmeyen değerler (`"0"`, `"true"`, vb.) → `false` (defensive — yalnız
 /// "1" tam pozitif sinyal sayılır).
 #[must_use]
@@ -138,7 +138,7 @@ mod tests {
         assert!(!parse_extension_flag(None));
     }
 
-    /// HekaDrop peer — `ext=1` spec değeri.
+    /// `HekaDrop` peer — `ext=1` spec değeri.
     #[test]
     fn ext_one_signals_extension_support() {
         assert!(parse_extension_flag(Some("1")));

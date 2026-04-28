@@ -67,17 +67,17 @@
 //!   korele olur → assertion patlar.
 //!
 //! ## Referans call-site'lar (pattern uygulanmış yerler)
-//!   * `src/connection.rs:302-313` (stats.record_received)
-//!   * `src/connection.rs:578-586` (touch_trusted_by_hash)
-//!   * `src/connection.rs:622-629` (add_trusted_with_hash upgrade)
-//!   * `src/connection.rs:638-660` (AcceptAndTrust kayıt)
-//!   * `src/sender.rs:285-295` (stats.record_sent)
-//!   * `src/main.rs:425-432` (auto_accept toggle)
-//!   * `src/main.rs:464-471` (trust_remove)
-//!   * `src/main.rs:497-503` (stats_reset)
-//!   * `src/main.rs:515-522` (trusted_clear)
-//!   * `src/main.rs:565-574` (handle_settings_save)
-//!   * `src/main.rs:801-806` (open_config_file — H#2'de düzeltildi)
+//!   * `src/connection.rs:302-313` (`stats.record_received`)
+//!   * `src/connection.rs:578-586` (`touch_trusted_by_hash`)
+//!   * `src/connection.rs:622-629` (`add_trusted_with_hash` upgrade)
+//!   * `src/connection.rs:638-660` (`AcceptAndTrust` kayıt)
+//!   * `src/sender.rs:285-295` (`stats.record_sent`)
+//!   * `src/main.rs:425-432` (`auto_accept` toggle)
+//!   * `src/main.rs:464-471` (`trust_remove`)
+//!   * `src/main.rs:497-503` (`stats_reset`)
+//!   * `src/main.rs:515-522` (`trusted_clear`)
+//!   * `src/main.rs:565-574` (`handle_settings_save`)
+//!   * `src/main.rs:801-806` (`open_config_file` — H#2'de düzeltildi)
 
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};

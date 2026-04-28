@@ -6,13 +6,13 @@ use tokio::net::TcpStream;
 
 const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
-/// Handshake fazında (ConnectionRequest, UKEY2) slow-loris saldırılarına karşı
+/// Handshake fazında (`ConnectionRequest`, UKEY2) slow-loris saldırılarına karşı
 /// frame okuma süresinin üst sınırı. 30 sn gerçek peer için fazlasıyla yeter;
 /// bu sürede tek bir frame bile gelmezse saldırgan ya da ağ arızası varsayılır.
 pub const HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Şifreli loop (PayloadTransfer / KeepAlive) fazında idle üst sınır.
-/// Quick Share peer'ları periyodik KeepAlive gönderdiği için 60 sn sessizlik
+/// Şifreli loop (`PayloadTransfer` / `KeepAlive`) fazında idle üst sınır.
+/// Quick Share peer'ları periyodik `KeepAlive` gönderdiği için 60 sn sessizlik
 /// ölü bağlantı olarak kabul edilir; slow-loris tokio task sızıntısı
 /// engellenir.
 pub const STEADY_READ_TIMEOUT: Duration = Duration::from_secs(60);
@@ -70,7 +70,7 @@ pub async fn write_frame(stream: &mut TcpStream, data: &[u8]) -> Result<(), Heka
 /// Wire-byte-exact spec: `docs/protocol/capabilities.md` §2.
 pub const HEKADROP_MAGIC_BE: [u8; 4] = [0xA5, 0xDE, 0xB2, 0x01];
 
-/// `dispatch_frame_body`'nin döndürdüğü ayrım — caller frame'in HekaDrop
+/// `dispatch_frame_body`'nin döndürdüğü ayrım — caller frame'in `HekaDrop`
 /// extension mı yoksa upstream Quick Share mi olduğunu bilir.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameKind<'a> {
@@ -87,7 +87,7 @@ pub enum FrameKind<'a> {
 /// 4-byte magic prefix kontrolü O(1) memcmp'tir; protobuf parse maliyeti
 /// yoktur. Eski Quick Share peer'ı bizim magic'i içeren bir frame görürse
 /// `OfflineFrame::decode` hatası alır ve drop eder — bu zaten capabilities
-/// gate aktif değilken HekaDrop'un GÖNDERMEMESİ gereken bir frame'dir;
+/// gate aktif değilken `HekaDrop`'un GÖNDERMEMESİ gereken bir frame'dir;
 /// dispatcher defense-in-depth.
 #[must_use]
 pub fn dispatch_frame_body(body: &[u8]) -> FrameKind<'_> {

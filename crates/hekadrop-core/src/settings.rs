@@ -7,7 +7,7 @@
 //!
 //! ## Güven kaydı — v0.6 hardening (Issue #17 / design 017)
 //!
-//! v0.5.x `TrustedDevice { name, id }` ile "ad + endpoint_id" çifti üzerinden
+//! v0.5.x `TrustedDevice { name, id }` ile "ad + `endpoint_id`" çifti üzerinden
 //! güven kararı veriyordu. `endpoint_id` 4 ASCII bayt — her oturumda rastgele
 //! ve kriptografik olarak bağlayıcı değil. v0.6:
 //!
@@ -95,7 +95,7 @@ impl LogLevel {
         }
     }
 
-    /// UI'dan gelen serbest string değeri LogLevel'e çevirir; bilinmeyen
+    /// UI'dan gelen serbest string değeri `LogLevel`'e çevirir; bilinmeyen
     /// değerler `Info` default'una düşer (invalid input'ta sessiz güven).
     pub fn parse_or_default(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
@@ -111,7 +111,7 @@ impl LogLevel {
 ///
 /// v0.6'dan itibaren güven kararı **`secret_id_hash`** (cihaz-kalıcı HKDF
 /// türetmesi) üzerinden verilir. `name` UI'da gösterilen insan-okunur ad,
-/// `id` endpoint_id — yalnızca legacy kayıtlar için trust anahtarı, yeni
+/// `id` `endpoint_id` — yalnızca legacy kayıtlar için trust anahtarı, yeni
 /// kayıtlarda yardımcı (ör. UI'da kısa etiket). `trusted_at_epoch` sliding
 /// TTL için kullanılır.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -417,7 +417,7 @@ impl Settings {
 
     /// TTL dolmuş kayıtları listeden siler; dönen sayı silinen kayıt adedi.
     ///
-    /// **v0.6'da startup'ta otomatik çağrılır** (bkz. `main.rs` run_app):
+    /// **v0.6'da startup'ta otomatik çağrılır** (bkz. `main.rs` `run_app)`:
     /// eskiden "soft-expire" idi (listede kalırdı), ancak Issue #17 kapsamında
     /// legacy kayıtların kalıcı yaşaması saldırı yüzeyi yarattı — hash-suppress
     /// saldırısıyla peer hash göndermezse `is_trusted_legacy` yoluyla trust
@@ -490,7 +490,7 @@ impl Settings {
 
     /// Yalnızca isme göre tüm eşleşen kayıtları siler.
     ///
-    /// UI katmanı (main.rs) "trust_remove::NAME" IPC mesajıyla sadece adı
+    /// UI katmanı (main.rs) "`trust_remove::NAME`" IPC mesajıyla sadece adı
     /// iletir; geriye dönük uyum için bu imza korunur. Aynı adın birden çok
     /// id ile kaydı varsa hepsi silinir. ID tabanlı hassas silme için
     /// [`Self::remove_trusted_by_id`] kullanın.
@@ -508,7 +508,7 @@ impl Settings {
             .retain(|d| !(d.name == device_name && d.id == id));
     }
 
-    /// UI için her kaydın "Ad (id_kisa)" formatında görünüm listesini döner.
+    /// UI için her kaydın "Ad (`id_kisa`)" formatında görünüm listesini döner.
     ///
     /// v0.6'da zengin UI (TTL rozeti) kullanılmaya başlandığından ana UI
     /// yolu `push_trusted_to_ui` içindeki yapılandırılmış JSON'u tercih
@@ -674,7 +674,7 @@ static DEBOUNCE_TASK: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>> =
 /// kalabilir ama adı sabit değil, re-probe doğru davranır).
 ///
 /// Public API: `main.rs::handle_settings_save` doğrudan da çağırabilir
-/// (Settings::save zaten kullanıyor, ikinci doğrulama idempotent).
+/// (`Settings::save` zaten kullanıyor, ikinci doğrulama idempotent).
 pub fn validate_download_dir(path: &Path) -> Result<()> {
     let meta = std::fs::metadata(path).map_err(|e| HekaError::DownloadDirInvalid {
         path: path.display().to_string(),
@@ -730,7 +730,7 @@ impl Drop for TmpCleanup {
 }
 
 /// Cross-platform atomik replace. Unix'te `fs::rename` zaten atomik
-/// (O_RENAME) ve destination mevcutsa üzerine yazar. Windows'ta
+/// (`O_RENAME`) ve destination mevcutsa üzerine yazar. Windows'ta
 /// `std::fs::rename` **destination varsa hata verir** — her `save()` ikinci
 /// çağrıdan itibaren sessizce başarısız olurdu. `MoveFileExW` +
 /// `MOVEFILE_REPLACE_EXISTING` bu durumu çözer; `MOVEFILE_WRITE_THROUGH`
@@ -774,7 +774,7 @@ fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 /// İki concurrent `save()` çağrısı (ör. connection.rs Stats + sender.rs Stats
 /// aynı anda) diske yazılırken, yazım sırası ters dönebilirdi: geç başlayan
 /// save önce bitip eski snapshot'ı diske bırakabilirdi (kernel scheduler,
-/// disk I/O queue vb.). Settings RwLock'u artık lock dışında save yaptığımız
+/// disk I/O queue vb.). Settings `RwLock`'u artık lock dışında save yaptığımız
 /// için koruma sağlamıyor. Bu mutex her `save()`'i FIFO sırasına sokar.
 /// Settings ve Stats ayrı hot-path ancak tek bir lock yeterli ve kolay.
 static SETTINGS_DISK_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
@@ -1461,7 +1461,7 @@ mod tests {
         assert!(s.is_trusted_by_hash(&[0xAA; 6]));
     }
 
-    /// PR #35 review (Copilot HIGH, discussion_r3107564927) regression:
+    /// PR #35 review (Copilot HIGH, `discussion_r3107564927`) regression:
     /// Legacy `(name, id)` kaydı olan cihaz **unknown/mismatched** bir hash
     /// ile bağlandığında trusted sayılMAMALI — dialog ZORUNLU. Aksi halde
     /// legacy spoofing vektörü açıktır: attacker kurbanın (name, id)'sini
@@ -1470,12 +1470,12 @@ mod tests {
     /// legacy kayda bağlar → kalıcı silent bypass. Bu nedenle strict
     /// hash-first semantic seçildi; OR fallback kabul edilmez.
     ///
-    /// Doğru trust karar mantığı (connection.rs handle_sharing_frame):
-    ///   Some(h) => is_trusted_by_hash(h)          // YALNIZ hash
-    ///   None    => is_trusted_legacy(name, id)    // pre-v0.6 peer
+    /// Doğru trust karar mantığı (connection.rs `handle_sharing_frame)`:
+    ///   Some(h) => `is_trusted_by_hash(h)`          // YALNIZ hash
+    ///   None    => `is_trusted_legacy(name`, id)    // pre-v0.6 peer
     ///
     /// Bu test connection.rs'teki `trusted` ifadesini Settings seviyesinde
-    /// simüle eder — tam flow (prompt_accept) için test harness yok.
+    /// simüle eder — tam flow (`prompt_accept`) için test harness yok.
     ///
     /// Legacy kullanıcı migration UX: ilk v0.6 bağlantısında one-time
     /// dialog kullanıcıya gösterilir; Accept sonrası connection.rs'in
@@ -1723,10 +1723,10 @@ mod tests {
     /// tmp dosyayı baştan `O_EXCL | mode(0o600)` ile açmalı ve rename sonucu
     /// final path da group/world-accessible OLMAMALI — umask ne olursa olsun.
     /// Önceki akışta tmp default (0644) ile açılıp rename SONRASI
-    /// set_permissions ile düzeltiliyordu; bu pencerede dosya
+    /// `set_permissions` ile düzeltiliyordu; bu pencerede dosya
     /// world-readable'dı.
     ///
-    /// Assertion fix (PR #35 review, Copilot MED, discussion_r3107564937):
+    /// Assertion fix (PR #35 review, Copilot MED, `discussion_r3107564937)`:
     /// Önceki test `mode == 0o600` exact eşitliğini kontrol ediyordu.
     /// `OpenOptionsExt::mode(0o600)` umask ile AND'lenir — yalnız daha
     /// **restrictive** hale gelebilir. Hardened ortamlarda (umask 0o077

@@ -37,9 +37,9 @@ pub fn instance_name(endpoint_id: [u8; 4]) -> String {
 
 pub const DEVICE_TYPE_COMPUTER: u8 = 3;
 
-/// EndpointInfo yapısı — TXT record `n=` değerinin base64'ten öncesi.
+/// `EndpointInfo` yapısı — TXT record `n=` değerinin base64'ten öncesi.
 /// Yerleşim:
-///   `[0]`      bitmap: (sürüm<<5)|(görünürlük<<4)|(cihaz_tipi<<1)|rez
+///   `[0]`      bitmap: (sürüm<<5)|(görünürlük<<`4)|(cihaz_tipi`<<1)|rez
 ///   `[1..17]`  16 bayt rastgele
 ///   `[17]`     ad uzunluğu (u8)
 ///   `[18..]`   UTF-8 cihaz adı

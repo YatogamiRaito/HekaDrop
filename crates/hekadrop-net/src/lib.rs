@@ -1,4 +1,4 @@
-//! HekaDrop network adapter — mDNS discovery + peer browse.
+//! `HekaDrop` network adapter — mDNS discovery + peer browse.
 //!
 //! Bu crate, Quick Share'in keşif katmanı için tek noktadır. Domain tipleri
 //! (`DiscoveredDevice` vb.) `hekadrop-core::discovery_types` içindedir; bu

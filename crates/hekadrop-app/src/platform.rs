@@ -114,9 +114,9 @@ pub(crate) fn default_download_dir() -> PathBuf {
 /// mDNS / UI için gösterilecek cihaz adı.
 ///
 /// - macOS: `scutil --get ComputerName`
-/// - Linux: `/etc/hostname` → `hostname` komutu → fallback "HekaDrop Linux"
+/// - Linux: `/etc/hostname` → `hostname` komutu → fallback "`HekaDrop` Linux"
 /// - Windows: `GetComputerNameExW(ComputerNameDnsHostname)` → fallback
-///   `%COMPUTERNAME%` → "HekaDrop PC"
+///   `%COMPUTERNAME%` → "`HekaDrop` PC"
 pub(crate) fn device_name() -> String {
     if let Ok(v) = std::env::var("HEKADROP_NAME") {
         if !v.is_empty() {

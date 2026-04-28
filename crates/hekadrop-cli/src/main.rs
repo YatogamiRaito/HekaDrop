@@ -1,4 +1,4 @@
-//! HekaDrop CLI — v0.7'de yalnız stub. v0.10.0'da `send`, `receive`,
+//! `HekaDrop` CLI — v0.7'de yalnız stub. v0.10.0'da `send`, `receive`,
 //! `daemon`, `list-peers`, `trust`, `doctor`, `version`, `gui` komutları
 //! ile şişecek (ROADMAP §Q1 v0.10.0).
 //!
