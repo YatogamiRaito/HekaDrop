@@ -11,6 +11,7 @@
         clippy::print_stderr,
         clippy::redundant_clone,
         clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
         clippy::cast_sign_loss,
         clippy::cast_lossless,
         clippy::cast_precision_loss,
@@ -1082,13 +1083,18 @@ fn push_stats_to_ui() {
         i18n::t("time.none").to_string()
     };
 
+    // SAFETY-CAST: stat counter `b: u64`. `human_size` legacy `i64` alıyor
+    // (3 yerde duplicate fn — DRY temizliği ayrı PR). u64 → i64 büyük
+    // değerlerde wrap eder; saturating: 8 EiB üstü "ulaşılamaz" zaten,
+    // i64::MAX "—" göstergesinden iyi UI sinyali.
+    let to_i64_sat = |b: u64| -> i64 { i64::try_from(b).unwrap_or(i64::MAX) };
     let top_rx = s
         .top_rx_device()
-        .map(|(n, b)| format!("{} ({})", n, human_size(b as i64)))
+        .map(|(n, b)| format!("{} ({})", n, human_size(to_i64_sat(b))))
         .unwrap_or_else(|| "—".to_string());
     let top_tx = s
         .top_tx_device()
-        .map(|(n, b)| format!("{} ({})", n, human_size(b as i64)))
+        .map(|(n, b)| format!("{} ({})", n, human_size(to_i64_sat(b))))
         .unwrap_or_else(|| "—".to_string());
 
     let payload = serde_json::json!({
@@ -1098,8 +1104,8 @@ fn push_stats_to_ui() {
         "port": state::listen_port(),
         "log_dir": platform::logs_dir().to_string_lossy(),
         "config_path": paths::config_path().to_string_lossy(),
-        "bytes_received": human_size(s.bytes_received as i64),
-        "bytes_sent": human_size(s.bytes_sent as i64),
+        "bytes_received": human_size(to_i64_sat(s.bytes_received)),
+        "bytes_sent": human_size(to_i64_sat(s.bytes_sent)),
         "files_received": s.files_received,
         "files_sent": s.files_sent,
         "first_use": first_use_human,

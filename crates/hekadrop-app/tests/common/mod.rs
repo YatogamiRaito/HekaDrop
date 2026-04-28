@@ -12,7 +12,10 @@
 //! açabilir. `#[allow(dead_code)]` her yardımcıyı bireysel olarak bu beklenen
 //! durumdan muaf tutar.
 
-#![allow(dead_code)]
+// Test-only allow set — production lint'leri test idiom'unu engellemesin.
+// `cast_possible_wrap` PIN hash helper'ı (`b as i8`) için kasıtlı, NearDrop
+// algoritma uyumu (bkz. `hekadrop_core::crypto::pin_code_from_auth_key`).
+#![allow(dead_code, clippy::cast_possible_wrap)]
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;

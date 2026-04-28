@@ -11,6 +11,7 @@
     clippy::missing_panics_doc,
     clippy::redundant_clone,
     clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
     clippy::cast_lossless,
     clippy::cast_precision_loss,

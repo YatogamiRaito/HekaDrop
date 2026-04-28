@@ -387,7 +387,13 @@ impl PayloadAssembler {
                 .ok_or_else(|| anyhow!("file_sink kayıp: id={}", id))?;
             // SECURITY: Cumulative overrun koruması — saldırgan `total_size=10`
             // deklare edip gigabaytlarca chunk yollayarak disk doldurabilir.
-            let body_len = body.len() as i64;
+            // usize → i64: pratikte body 4 MiB ile sınırlı (CHUNK_SIZE),
+            // i64::MAX'e ulaşmak imkânsız ama saldırgan-controlled length
+            // değerini try_from ile defensive sınırlıyoruz. Orijinal
+            // `TryFromIntError` mesaja eklenir.
+            let body_len = i64::try_from(body.len()).map_err(|e| {
+                HekaError::PayloadIo(format!("chunk body i64'a sığmıyor (id={id}): {e}"))
+            })?;
             let new_written = sink
                 .written
                 .checked_add(body_len)
@@ -484,6 +490,7 @@ fn remove_partial_file(path: &std::path::Path) {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_wrap)]
 mod tests {
     use super::*;
     use hekadrop_proto::location::nearby::connections::payload_transfer_frame::{
