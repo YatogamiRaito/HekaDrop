@@ -68,7 +68,7 @@ pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
     let info = ServiceInfo::new(
         &service_type,
         &instance,
-        &format!("{}.local.", instance),
+        &format!("{instance}.local."),
         &addrs[..],
         port,
         &[("n", endpoint_info_b64.as_str())][..],

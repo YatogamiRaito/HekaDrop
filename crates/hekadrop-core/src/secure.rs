@@ -126,7 +126,7 @@ impl SecureCtx {
         iv.copy_from_slice(&iv_vec);
 
         let plaintext = crypto::aes256_cbc_decrypt(&self.decrypt_key, &iv, &hb.body)
-            .map_err(|e| anyhow!("AES decrypt: {:?}", e))?;
+            .map_err(|e| anyhow!("AES decrypt: {e:?}"))?;
 
         let d2d = DeviceToDeviceMessage::decode(&plaintext[..])?;
         let seq = d2d
@@ -183,7 +183,7 @@ mod tests {
     fn sequence_number_artar() {
         let (mut a, mut b) = make_pair();
         for i in 1..=5 {
-            let msg = format!("mesaj {}", i);
+            let msg = format!("mesaj {i}");
             let enc = a.encrypt(msg.as_bytes()).unwrap();
             let dec = b.decrypt(&enc).expect("decrypt");
             assert_eq!(dec.as_ref(), msg.as_bytes());

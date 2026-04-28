@@ -735,13 +735,13 @@ async fn send_text_bytes(
         let body = data[offset..end].to_vec();
         let last_flag = 0;
         let offset_i64 = i64::try_from(offset)
-            .with_context(|| format!("metin payload offset'i çok büyük: {}", offset))?;
+            .with_context(|| format!("metin payload offset'i çok büyük: {offset}"))?;
         let wrapped = wrap_bytes_payload_transfer(payload_id, total, offset_i64, last_flag, body);
         let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
         frame::write_frame(socket, &enc).await?;
         offset = end;
         let offset_i64 = i64::try_from(offset)
-            .with_context(|| format!("metin payload offset'i çok büyük: {}", offset))?;
+            .with_context(|| format!("metin payload offset'i çok büyük: {offset}"))?;
         if let Some(percent) = compute_percent(0, offset_i64, total) {
             state.set_progress(ProgressState::Receiving {
                 device: peer_label.to_string(),

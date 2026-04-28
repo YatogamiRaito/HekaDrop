@@ -208,7 +208,7 @@ fn secure_roundtrip_ab_a_dan_b_ye() {
 fn sequence_counter_monoton_artar() {
     let (mut a, mut b) = make_pair();
     for i in 1..=5 {
-        let msg = format!("msg #{}", i);
+        let msg = format!("msg #{i}");
         let enc = a.encrypt(msg.as_bytes());
         let dec = b.decrypt(&enc).expect("decrypt");
         assert_eq!(dec, msg.as_bytes());
@@ -232,7 +232,7 @@ fn replay_saldirisi_ayni_seq_ikinci_kez_rejected() {
     assert!(replay.is_err(), "replay reddedilmeli");
     // Hata türü sequence ile ilgili olmalı
     let err = replay.unwrap_err();
-    assert!(err.contains("sequence"), "sequence error: got '{}'", err);
+    assert!(err.contains("sequence"), "sequence error: got '{err}'");
 }
 
 /// Out-of-order: seq atlanırsa reject. Göndericiden 3 mesaj geliyor ama
@@ -282,7 +282,7 @@ fn tampered_hmac_reddedilir() {
     let r = b.decrypt(&enc);
     assert!(r.is_err(), "HMAC bozulmuşken reddedilmeli");
     let e = r.unwrap_err();
-    assert!(e.contains("HMAC"), "HMAC error beklenir: '{}'", e);
+    assert!(e.contains("HMAC"), "HMAC error beklenir: '{e}'");
 }
 
 /// Ciphertext tampering (HMAC'i yeniden hesaplamadan ciphertext'i değiştir):

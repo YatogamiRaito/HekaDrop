@@ -256,8 +256,7 @@ impl PayloadAssembler {
             PayloadType::Bytes => self.ingest_bytes(id, body, last_chunk),
             PayloadType::File => self.ingest_file(id, total_size, body, last_chunk).await,
             other => Err(HekaError::ProtocolState(format!(
-                "desteklenmeyen payload tipi: {:?}",
-                other
+                "desteklenmeyen payload tipi: {other:?}"
             ))
             .into()),
         }
@@ -322,7 +321,7 @@ impl PayloadAssembler {
             let dest = self
                 .pending_destinations
                 .remove(&id)
-                .ok_or_else(|| anyhow!("payload_id={} için destination kayıtlı değil", id))?;
+                .ok_or_else(|| anyhow!("payload_id={id} için destination kayıtlı değil"))?;
             // SECURITY: `total_size` negatif ya da absürt büyükse en başta reddet.
             // Aksi halde `(written*100)/total` integer aritmetiği taşar ve
             // saldırgan terabaytlık disk doldurma isteği UI/progress yoluyla
@@ -384,7 +383,7 @@ impl PayloadAssembler {
             let sink = self
                 .file_sinks
                 .get_mut(&id)
-                .ok_or_else(|| anyhow!("file_sink kayıp: id={}", id))?;
+                .ok_or_else(|| anyhow!("file_sink kayıp: id={id}"))?;
             // SECURITY: Cumulative overrun koruması — saldırgan `total_size=10`
             // deklare edip gigabaytlarca chunk yollayarak disk doldurabilir.
             // usize → i64: pratikte body 4 MiB ile sınırlı (CHUNK_SIZE),
@@ -397,7 +396,7 @@ impl PayloadAssembler {
             let new_written = sink
                 .written
                 .checked_add(body_len)
-                .ok_or_else(|| HekaError::PayloadIo(format!("yazım toplamı taştı (id={})", id)))?;
+                .ok_or_else(|| HekaError::PayloadIo(format!("yazım toplamı taştı (id={id})")))?;
             if new_written > sink.total_size {
                 return Err(HekaError::PayloadOverrun {
                     id,
@@ -421,7 +420,7 @@ impl PayloadAssembler {
             let mut sink = self
                 .file_sinks
                 .remove(&id)
-                .ok_or_else(|| anyhow!("son chunk ama sink yok: id={}", id))?;
+                .ok_or_else(|| anyhow!("son chunk ama sink yok: id={id}"))?;
             // SECURITY: Peer `last_chunk=true` gönderip yarım dosyayı tamamlanmış
             // gibi onaylatabilir (silent truncation). Toplam byte sayısı
             // bildirilen total_size ile eşleşmezse reddet.
@@ -541,7 +540,7 @@ mod tests {
                 assert_eq!(id, 42);
                 assert_eq!(data, b"hello");
             }
-            other => panic!("beklenen Bytes, {:?} geldi", other),
+            other => panic!("beklenen Bytes, {other:?} geldi"),
         }
         assert_eq!(a.partial_count(), 0, "tamamlanan bytes temizlenmeli");
     }
@@ -555,7 +554,7 @@ mod tests {
         let done = a.ingest(&f2).await.unwrap().expect("last chunk tamamlar");
         match done {
             CompletedPayload::Bytes { data, .. } => assert_eq!(data, b"foobar"),
-            other => panic!("{:?}", other),
+            other => panic!("{other:?}"),
         }
     }
 
@@ -656,7 +655,7 @@ mod tests {
     async fn cancel_removes_bytes_file_and_pending() {
         let pid = std::process::id();
         let rnd: u32 = rand::random();
-        let tmp = std::env::temp_dir().join(format!("hekadrop-cancel-test-{}-{}.part", pid, rnd));
+        let tmp = std::env::temp_dir().join(format!("hekadrop-cancel-test-{pid}-{rnd}.part"));
         let _ = std::fs::remove_file(&tmp);
         let mut a = PayloadAssembler::new();
 
@@ -671,8 +670,7 @@ mod tests {
             .unwrap();
         assert!(tmp.exists());
         // pending destination — review-18 MED: cancel artık placeholder'ı da silmeli.
-        let tmp2 =
-            std::env::temp_dir().join(format!("hekadrop-cancel-pending-{}-{}.part", pid, rnd));
+        let tmp2 = std::env::temp_dir().join(format!("hekadrop-cancel-pending-{pid}-{rnd}.part"));
         // Diskte sıfır bayt placeholder simulate et (unique_downloads_path davranışı).
         std::fs::write(&tmp2, b"").expect("placeholder yarat");
         a.register_file_destination(3, tmp2.clone()).unwrap();
@@ -699,8 +697,8 @@ mod tests {
         // reddetmelidir.
         let pid = std::process::id();
         let rnd: u32 = rand::random();
-        let real = std::env::temp_dir().join(format!("hekadrop-symlink-real-{}-{}.bin", pid, rnd));
-        let link = std::env::temp_dir().join(format!("hekadrop-symlink-link-{}-{}.bin", pid, rnd));
+        let real = std::env::temp_dir().join(format!("hekadrop-symlink-real-{pid}-{rnd}.bin"));
+        let link = std::env::temp_dir().join(format!("hekadrop-symlink-link-{pid}-{rnd}.bin"));
         let _ = std::fs::remove_file(&real);
         let _ = std::fs::remove_file(&link);
         std::fs::write(&real, b"").expect("real yarat");
@@ -714,8 +712,7 @@ mod tests {
             .expect_err("symlink hedef reddedilmeli");
         assert!(
             err.to_string().contains("symlink"),
-            "hata mesajı symlink belirtmeli, aldı: {}",
-            err
+            "hata mesajı symlink belirtmeli, aldı: {err}"
         );
 
         let _ = std::fs::remove_file(&link);
@@ -727,7 +724,7 @@ mod tests {
         // review-18: 1 TiB üstü bildirilen dosya başlamadan reddedilmeli.
         let pid = std::process::id();
         let rnd: u32 = rand::random();
-        let tmp = std::env::temp_dir().join(format!("hekadrop-absurd-{}-{}.bin", pid, rnd));
+        let tmp = std::env::temp_dir().join(format!("hekadrop-absurd-{pid}-{rnd}.bin"));
         let _ = std::fs::remove_file(&tmp);
         std::fs::write(&tmp, b"").expect("placeholder");
 
@@ -746,8 +743,7 @@ mod tests {
             .expect_err("absurd total_size reddedilmeli");
         assert!(
             err.to_string().contains("absürt") || err.to_string().contains("1 TiB"),
-            "hata mesajı limit belirtmeli, aldı: {}",
-            err
+            "hata mesajı limit belirtmeli, aldı: {err}"
         );
         let _ = std::fs::remove_file(&tmp);
     }
@@ -799,7 +795,7 @@ mod tests {
                 };
                 assert_eq!(sha256, expected);
             }
-            other => panic!("beklenen File, {:?} geldi", other),
+            other => panic!("beklenen File, {other:?} geldi"),
         }
         // Dosyayı oku ve içeriğini doğrula.
         let content = std::fs::read(&tmp).unwrap();

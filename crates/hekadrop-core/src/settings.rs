@@ -162,7 +162,7 @@ mod hex_hash_opt {
             return Ok(None);
         };
         let bytes = hex::decode(&raw)
-            .map_err(|e| D::Error::custom(format!("secret_id_hash hex decode: {}", e)))?;
+            .map_err(|e| D::Error::custom(format!("secret_id_hash hex decode: {e}")))?;
         if bytes.len() != 6 {
             return Err(D::Error::custom(format!(
                 "secret_id_hash 6 bayt bekleniyor, bulunan {}",
@@ -624,7 +624,7 @@ static DEBOUNCE_TASK: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>> =
 pub fn validate_download_dir(path: &Path) -> Result<()> {
     let meta = std::fs::metadata(path).map_err(|e| HekaError::DownloadDirInvalid {
         path: path.display().to_string(),
-        reason: format!("okunamadı: {}", e),
+        reason: format!("okunamadı: {e}"),
     })?;
     if !meta.is_dir() {
         return Err(HekaError::DownloadDirInvalid {
@@ -641,7 +641,7 @@ pub fn validate_download_dir(path: &Path) -> Result<()> {
         }
         Err(e) => Err(HekaError::DownloadDirInvalid {
             path: path.display().to_string(),
-            reason: format!("yazılabilir değil: {}", e),
+            reason: format!("yazılabilir değil: {e}"),
         }
         .into()),
     }
@@ -782,7 +782,7 @@ pub(crate) fn atomic_write_mode(
     let (mut file, tmp_path) = loop {
         attempts += 1;
         let r = rand::thread_rng().next_u64();
-        let tmp = parent.join(format!(".{}.{}.{:016x}.tmp", file_name, pid, r));
+        let tmp = parent.join(format!(".{file_name}.{pid}.{r:016x}.tmp"));
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create_new(true);
         #[cfg(unix)]
@@ -838,8 +838,7 @@ pub(crate) fn migrate_trusted_value(v: serde_json::Value) -> Result<Vec<TrustedD
         serde_json::Value::Array(a) => a,
         other => {
             return Err(format!(
-                "trusted_devices array bekleniyordu, geldi: {:?}",
-                other
+                "trusted_devices array bekleniyordu, geldi: {other:?}"
             ))
         }
     };
@@ -859,15 +858,14 @@ pub(crate) fn migrate_trusted_value(v: serde_json::Value) -> Result<Vec<TrustedD
             }
             serde_json::Value::Object(_) => {
                 let td: TrustedDevice = serde_json::from_value(item)
-                    .map_err(|e| format!("TrustedDevice parse: {}", e))?;
+                    .map_err(|e| format!("TrustedDevice parse: {e}"))?;
                 if !td.name.is_empty() {
                     out.push(td);
                 }
             }
             other => {
                 return Err(format!(
-                    "trusted_devices elemanı beklenmeyen tip: {:?}",
-                    other
+                    "trusted_devices elemanı beklenmeyen tip: {other:?}"
                 ))
             }
         }
@@ -1088,7 +1086,7 @@ mod tests {
         use std::thread;
         let mut s = Settings::default();
         for i in 0..50 {
-            s.add_trusted(&format!("dev-{}", i), &format!("id-{}", i));
+            s.add_trusted(&format!("dev-{i}"), &format!("id-{i}"));
         }
         let arc = Arc::new(s);
         let handles: Vec<_> = (0..8)
@@ -1320,8 +1318,7 @@ mod tests {
         // Hex string'in JSON'da göründüğünü doğrula.
         assert!(
             json.contains("\"deadbeef0042\""),
-            "beklenen hex yok: {}",
-            json
+            "beklenen hex yok: {json}"
         );
         let back: Settings = serde_json::from_str(&json).expect("parse");
         assert_eq!(back.trusted_devices[0].secret_id_hash, Some(hash));
@@ -1532,7 +1529,7 @@ mod tests {
             ..Settings::default()
         };
         let json = serde_json::to_string(&s).expect("serialize");
-        assert!(json.contains("\"warn\""), "lowercase beklenir: {}", json);
+        assert!(json.contains("\"warn\""), "lowercase beklenir: {json}");
     }
 
     #[test]
@@ -1669,8 +1666,7 @@ mod tests {
         assert!(
             owner_bits <= 0o600,
             "owner bitleri 0o600'den fazla olmamalı (mode(0o600) umask'i gevşetmez): \
-             0o{:o}",
-            owner_bits
+             0o{owner_bits:o}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1752,7 +1748,7 @@ mod tests {
             .map(|i| {
                 let t = Arc::clone(&target);
                 thread::spawn(move || {
-                    let payload = format!("thread-{}", i);
+                    let payload = format!("thread-{i}");
                     for _ in 0..16 {
                         atomic_write(&t, payload.as_bytes()).expect("atomic_write ok");
                     }

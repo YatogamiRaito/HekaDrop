@@ -123,7 +123,7 @@ fn truncated_length_prefix_hata_doner() {
     let buf = [0x00u8, 0x00, 0x01]; // 4. byte eksik
     let mut cur = Cursor::new(&buf[..]);
     let err = read_frame(&mut cur).expect_err("truncated hata bekleniyor");
-    assert!(matches!(err, FrameError::Truncated), "err={:?}", err);
+    assert!(matches!(err, FrameError::Truncated), "err={err:?}");
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn truncated_body_hata_doner() {
     buf.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
     let mut cur = Cursor::new(&buf);
     let err = read_frame(&mut cur).expect_err("truncated body");
-    assert!(matches!(err, FrameError::Truncated), "err={:?}", err);
+    assert!(matches!(err, FrameError::Truncated), "err={err:?}");
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn cok_buyuk_frame_reddedilir() {
     let err = read_frame(&mut cur).expect_err("TooLarge");
     match err {
         FrameError::TooLarge(n) => assert_eq!(n as u32, too_big),
-        _ => panic!("TooLarge beklendi, got: {:?}", err),
+        _ => panic!("TooLarge beklendi, got: {err:?}"),
     }
 }
 

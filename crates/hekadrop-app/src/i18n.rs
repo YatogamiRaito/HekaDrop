@@ -771,8 +771,8 @@ mod tests {
             "onboarding.cta_dismiss",
         ];
         for k in &sample_keys {
-            assert!(lookup_tr(k).is_some(), "Türkçe çeviri eksik: {}", k);
-            assert!(lookup_en(k).is_some(), "English translation missing: {}", k);
+            assert!(lookup_tr(k).is_some(), "Türkçe çeviri eksik: {k}");
+            assert!(lookup_en(k).is_some(), "English translation missing: {k}");
         }
     }
 }
