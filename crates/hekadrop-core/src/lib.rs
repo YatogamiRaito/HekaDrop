@@ -41,6 +41,7 @@
 )]
 
 pub mod capabilities;
+pub mod chunk_hmac;
 pub mod config;
 pub mod crypto;
 pub mod error;
