@@ -22,7 +22,7 @@
 )]
 
 //! Criterion benchmark — kripto sıcak yolu (AES-CBC, HMAC, HKDF,
-//! session_fingerprint). 64 KiB tipik chunk boyutunu temsil ediyor.
+//! `session_fingerprint`). 64 KiB tipik chunk boyutunu temsil ediyor.
 //!
 //! Çalıştırma: `cargo bench --bench crypto`
 //! Derleme kontrolü (CI/pre-commit): `cargo bench --no-run`

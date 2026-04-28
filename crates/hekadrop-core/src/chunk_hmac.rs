@@ -28,8 +28,8 @@ pub const CHUNK_HMAC_HKDF_INFO: &[u8] = b"hekadrop chunk-hmac v1";
 pub const TAG_LEN: usize = 32;
 
 /// HMAC input prefix uzunluğu (body öncesi sabit alanlar).
-/// Hesap: 8 (payload_id BE i64) + 8 (chunk_index BE i64) + 8 (offset BE i64)
-///       + 4 (body_len BE u32) = 28 bayt.
+/// Hesap: 8 (`payload_id` BE i64) + 8 (`chunk_index` BE i64) + 8 (offset BE i64)
+///       + 4 (`body_len` BE u32) = 28 bayt.
 pub const HMAC_INPUT_PREFIX_LEN: usize = 8 + 8 + 8 + 4;
 
 /// UKEY2 `next_secret` IKM'inden chunk-HMAC anahtarını türet.
@@ -214,7 +214,7 @@ mod tests {
     }
 
     /// Domain separation: chunk-HMAC label başka label'lardan farklı key
-    /// üretir. SecureMessage HKDF (different info) ile çakışma olmamalı.
+    /// üretir. `SecureMessage` HKDF (different info) ile çakışma olmamalı.
     #[test]
     fn key_derivation_domain_separated() {
         let ikm = [0x42u8; 32];
@@ -225,7 +225,7 @@ mod tests {
         assert_ne!(chunk_key.as_slice(), other.as_slice());
     }
 
-    /// Round-trip: compute_tag + verify_tag (eşleşen body) → Ok.
+    /// Round-trip: `compute_tag` + `verify_tag` (eşleşen body) → Ok.
     #[test]
     fn compute_then_verify_ok() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(verify_tag(&key, &ci, body), Ok(()));
     }
 
-    /// Body bit-flip → TagMismatch.
+    /// Body bit-flip → `TagMismatch`.
     #[test]
     fn verify_detects_body_tampering() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
@@ -252,7 +252,7 @@ mod tests {
         );
     }
 
-    /// Yanlış payload_id → TagMismatch (tag binding redundant alanları içerir).
+    /// Yanlış `payload_id` → `TagMismatch` (tag binding redundant alanları içerir).
     #[test]
     fn verify_detects_payload_id_rebinding() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(verify_tag(&key, &ci, body), Err(VerifyError::TagMismatch));
     }
 
-    /// Yanlış chunk_index → TagMismatch.
+    /// Yanlış `chunk_index` → `TagMismatch`.
     #[test]
     fn verify_detects_chunk_index_rebinding() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(verify_tag(&key, &ci, body), Err(VerifyError::TagMismatch));
     }
 
-    /// Yanlış offset → TagMismatch.
+    /// Yanlış offset → `TagMismatch`.
     #[test]
     fn verify_detects_offset_rebinding() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
@@ -305,7 +305,7 @@ mod tests {
         assert_eq!(verify_tag(&key, &ci, body), Err(VerifyError::TagMismatch));
     }
 
-    /// Yanlış key → TagMismatch.
+    /// Yanlış key → `TagMismatch`.
     #[test]
     fn verify_detects_wrong_key() {
         let k1 = derive_chunk_hmac_key(&[0x42u8; 32]);
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(verify_tag(&k2, &ci, body), Err(VerifyError::TagMismatch));
     }
 
-    /// Tag uzunluğu 32 değil → WrongTagLength (constant-time öncesi).
+    /// Tag uzunluğu 32 değil → `WrongTagLength` (constant-time öncesi).
     #[test]
     fn verify_rejects_short_tag() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
@@ -354,7 +354,7 @@ mod tests {
         );
     }
 
-    /// `body_len` mismatch → BodyLenMismatch (HMAC compute öncesi yakalanır).
+    /// `body_len` mismatch → `BodyLenMismatch` (HMAC compute öncesi yakalanır).
     #[test]
     fn verify_rejects_body_len_mismatch() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(&input[28..], &body[..]);
     }
 
-    /// Chunk index'leri sıralı ama farklı payload_id'lerde aynı body için
+    /// Chunk index'leri sıralı ama farklı `payload_id`'lerde aynı body için
     /// farklı tag çıkarmalı (binding redundancy doğrulaması).
     #[test]
     fn different_payload_ids_produce_different_tags_for_same_body() {

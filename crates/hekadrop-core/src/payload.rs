@@ -25,19 +25,19 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-/// BufWriter iç tampon boyutu. 128 KiB, Quick Share'in 512 KiB chunk'ları için
+/// `BufWriter` iç tampon boyutu. 128 KiB, Quick Share'in 512 KiB chunk'ları için
 /// ~4 chunk'lık tampon sağlar; syscall sayısını düşürürken RAM maliyeti düşük.
-/// Performans raporu 100 Mbps'de tokio::fs async write per-chunk ~5-10 µs
-/// syscall + wakeup overhead rapor etti; sync std::io + BufWriter bunu eler.
+/// Performans raporu 100 Mbps'de `tokio::fs` async write per-chunk ~5-10 µs
+/// syscall + wakeup overhead rapor etti; sync `std::io` + `BufWriter` bunu eler.
 const FILE_WRITE_BUF_CAPACITY: usize = 128 * 1024;
 
 /// Sync bir closure'ı runtime flavor'una göre çalıştırır:
-/// - **MultiThread runtime** (prod, `#[tokio::test(flavor = "multi_thread")]`):
+/// - **`MultiThread` runtime** (prod, `#[tokio::test(flavor = "multi_thread")]`):
 ///   [`tokio::task::block_in_place`] sinyaliyle sar — tokio bu worker'ı
 ///   "blocking" olarak işaretler, park halindeki async task'ları başka
 ///   worker'a taşır. Böylece yavaş disk (iCloud Drive, SMB/NFS mount,
 ///   yavaş USB) syscall'ları network read / UI task'ları geciktirmez.
-/// - **CurrentThread runtime** (default `#[tokio::test]`): `block_in_place`
+/// - **`CurrentThread` runtime** (default `#[tokio::test]`): `block_in_place`
 ///   çağrısı panik atar; closure'ı direkt çağırırız. Tek worker'ı zaten
 ///   tutuyoruz, kaybedecek diğer worker yok.
 /// - **Runtime yok** (senkron çağrı path'i): direkt çağır.
@@ -87,11 +87,11 @@ struct BytesBuf {
 /// Disk I/O **senkron** (`std::fs::File` + `std::io::BufWriter`). Async
 /// (`tokio::fs`) sürümü chunk başına ~5-10 µs tokio task-pool + syscall
 /// overhead getiriyordu; 512 KiB chunk'lar zaten kısa süreli blocking I/O'ya
-/// izin verir ve 128 KiB BufWriter tamponu syscall sayısını azaltır.
+/// izin verir ve 128 KiB `BufWriter` tamponu syscall sayısını azaltır.
 /// Sync I/O çağrıları `ingest_file` içinde [`block_in_place_if_multi`] ile
 /// sarılır — multi-thread runtime'da tokio'ya "blocking" sinyali verilir ki
 /// yavaş disk (iCloud Drive, SMB/NFS, yavaş USB) runtime worker'ını tutmasın;
-/// current_thread runtime'da (unit test) `block_in_place` panik edeceği için
+/// `current_thread` runtime'da (unit test) `block_in_place` panik edeceği için
 /// sync çağrı direkt yapılır.
 struct FileSink {
     writer: BufWriter<File>,
@@ -125,7 +125,7 @@ impl PayloadAssembler {
     /// İlk chunk geldiğinde bu yol kullanılarak dosya `std::fs::File::create` ile açılır.
     ///
     /// SECURITY: Aynı `payload_id` ile iki kez kayıt → önceki hedef **silent
-    /// overwrite** olurdu (HashMap::insert). Saldırgan Introduction'da
+    /// overwrite** olurdu (`HashMap::insert`). Saldırgan Introduction'da
     /// `id=X → legit.pdf` + aynı Introduction'da `id=X → _evil.sh` yollayarak
     /// UI'ın kullanıcıya `legit.pdf`'i göstermesini ama gerçekte `_evil.sh`'in
     /// yazılmasını sağlayabilirdi. İkinci register artık hata döner.

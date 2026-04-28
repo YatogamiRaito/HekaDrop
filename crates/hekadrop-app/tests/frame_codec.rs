@@ -23,7 +23,7 @@
 
 //! Frame codec: big-endian u32 length-prefix + protobuf body.
 //!
-//! HekaDrop `src/frame.rs` bu kontratı TcpStream üstünde uygular. Burada stream
+//! `HekaDrop` `src/frame.rs` bu kontratı `TcpStream` üstünde uygular. Burada stream
 //! yerine in-memory cursor kullanarak `read_frame`/`write_frame` davranışını
 //! simüle eder; uzunluk overflow, truncation, protobuf uyumluluğu (prost)
 //! senaryoları kapsanır.

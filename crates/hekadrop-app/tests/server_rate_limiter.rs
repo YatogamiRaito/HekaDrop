@@ -39,7 +39,7 @@
 //!     `forget_most_recent` ile kayıt geri alınır. Gate peer-controlled
 //!     string'lere güvenmez.
 //!   * `farkli_ip_bagimsiz_pencere` — Farklı IP'ler birbirinin limit
-//!     penceresini etkilememeli (HashMap key=IpAddr).
+//!     penceresini etkilememeli (`HashMap` key=IpAddr).
 //!   * `spoofed_legacy_name_id_rate_limit_bypass_yapmamali` —
 //!     Issue #17: gate'de legacy (name, id) muafiyeti YOK.
 //!   * `hash_dogrulanmadan_muafiyet_verilmez` — Hash yoksa queue intact.
@@ -130,8 +130,8 @@ fn trusted_ip_rate_limit_bypass() {
         fn is_trusted_by_hash(&self, h: &[u8; 6]) -> bool {
             self.trusted_hashes.contains(h)
         }
-        /// Production ile aynı sıralama: gate'de check_and_record, sonra
-        /// PairedKeyEncryption frame'i sonrası hash doğrulanırsa forget.
+        /// Production ile aynı sıralama: gate'de `check_and_record`, sonra
+        /// `PairedKeyEncryption` frame'i sonrası hash doğrulanırsa forget.
         fn accept_flow(&self, peer_hash: Option<[u8; 6]>) -> bool {
             // 1) Gate: herkes rate-limit'e tabi.
             self.rate_limiter_calls

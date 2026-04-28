@@ -1,9 +1,9 @@
 //! Kullanıcı arayüzü yardımcıları — cross-platform dialog ve bildirimler.
 //!
-//! - macOS: `osascript` (AppKit dialog)
+//! - macOS: `osascript` (`AppKit` dialog)
 //! - Linux: `zenity` (yoksa `kdialog`)
 //! - Windows: native `MessageBoxW` / `windows-rs`, file/folder dialog'u için
-//!   PowerShell (`System.Windows.Forms`) fallback
+//!   `PowerShell` (`System.Windows.Forms`) fallback
 //!
 //! Dialog aracı yoksa veya headless ortamsa `Reject`/`None` döner; uygulama
 //! çökmek yerine güvenli default davranışa geçer.
@@ -33,7 +33,7 @@ pub(crate) enum AcceptResult {
 /// Kullanıcıya PIN + dosya listesi gösterir. 3 seçenek döner:
 ///   - Reddet
 ///   - Kabul et
-///   - Kabul + güven (device_name ileride otomatik kabul edilir)
+///   - Kabul + güven (`device_name` ileride otomatik kabul edilir)
 pub(crate) async fn prompt_accept(
     device_name: &str,
     pin_code: &str,
@@ -467,7 +467,7 @@ pub(crate) fn notify(title: &str, body: &str) {
 
 /// Fatal (ölümcül) hata diyaloğu — **blocking**. Uygulama başlatılamıyor ve
 /// process yakında `exit(1)` çağıracağında kullanıcıya görsel bir açıklama
-/// vermek için kullanılır; show_info fire-and-forget olduğundan o hata
+/// vermek için kullanılır; `show_info` fire-and-forget olduğundan o hata
 /// mesajı okunamadan uygulama kapanırdı. Burada `status()` kullanıyoruz →
 /// osascript/zenity/MessageBox kapanana kadar thread bloke olur.
 ///
@@ -1077,7 +1077,7 @@ fn zenity_supports_extra_button() -> bool {
 }
 
 /// Bir ikili (binary) PATH'te mevcut mu? Linux-only helper (zenity/kdialog
-/// varlık kontrolü). Windows'ta kullanılmaz — MessageBoxW her zaman var.
+/// varlık kontrolü). Windows'ta kullanılmaz — `MessageBoxW` her zaman var.
 ///
 /// GÜVENLİK: `sh -c` kullanımı şu an sadece bu dosya içinden sabit
 /// binary isimleri ile çağrılıyor ("zenity", "kdialog") — peer-kontrollü

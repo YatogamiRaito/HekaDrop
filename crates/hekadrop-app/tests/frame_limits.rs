@@ -30,16 +30,16 @@
 //!
 //! Pin'lenen davranışlar:
 //!   * `frame_too_large_reddedilir` — 16 MiB üstü length-prefix reddedilmeli
-//!     (MAX_FRAME_SIZE). Tam sınır değer kabul, +1 reddedilir.
+//!     (`MAX_FRAME_SIZE`). Tam sınır değer kabul, +1 reddedilir.
 //!   * `truncated_frame_eof_doner` — Length-prefix N bayt deklare edip socket
-//!     N-k baytta kapanırsa read_exact EOF hatası döner (peer bağlantıyı
+//!     N-k baytta kapanırsa `read_exact` EOF hatası döner (peer bağlantıyı
 //!     yarıda kesti / slow-loris frame pompalama).
 //!   * `zero_length_frame_davranisi` — **Kabul edilir** (mevcut davranış);
 //!     üst katman boş payload'ı boş Vec olarak görür. Bu pin, ileride "zero
 //!     reject" politikası eklenirse test'i güncellemeyi zorunlu kılar.
 //!   * `huge_length_u32_max_reddedilir` — 32-bit platform'da `u32::MAX` gibi
-//!     bir length cast'i usize'a genişler ama MAX_FRAME_SIZE check'i absürt
-//!     değeri reddeder (DoS: 4 GiB alloc'u engeller).
+//!     bir length cast'i usize'a genişler ama `MAX_FRAME_SIZE` check'i absürt
+//!     değeri reddeder (`DoS`: 4 GiB alloc'u engeller).
 
 use std::io::{Cursor, Read, Write};
 

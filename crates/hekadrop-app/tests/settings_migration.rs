@@ -142,7 +142,7 @@ fn v1_vec_string_okunabilir() {
     );
 }
 
-/// V1 format load_or_default üzerinden V2'ye migrate edilmeli.
+/// V1 format `load_or_default` üzerinden V2'ye migrate edilmeli.
 #[test]
 fn v1_otomatik_v2_ye_migrate() {
     let json = r#"{
@@ -263,7 +263,7 @@ fn roundtrip_v1_serialize_deserialize_identical() {
     assert_eq!(s, back);
 }
 
-/// Eski JSON'da tip yanlış yazılmışsa (örn. trusted_devices bir obje): fallback.
+/// Eski JSON'da tip yanlış yazılmışsa (örn. `trusted_devices` bir obje): fallback.
 #[test]
 fn trusted_devices_yanlis_tip_fallback_default() {
     let bad = r#"{"trusted_devices": "not-a-list"}"#;

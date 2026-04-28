@@ -2,16 +2,16 @@
 //!
 //! Akış:
 //!   1) TCP connect
-//!   2) ConnectionRequest (plain, bizim endpoint_info)
-//!   3) UKEY2 client handshake → DerivedKeys + PIN
-//!   4) Plain ConnectionResponse değişimi (biz → peer, peer → biz)
-//!   5) SecureCtx kur — artık tüm trafik şifreli
-//!   6) PairedKeyEncryption gönder (biz başlatırız)
-//!   7) Peer'den PairedKeyEncryption al → PairedKeyResult gönder
-//!   8) Peer'den PairedKeyResult al
+//!   2) `ConnectionRequest` (plain, bizim `endpoint_info`)
+//!   3) UKEY2 client handshake → `DerivedKeys` + PIN
+//!   4) Plain `ConnectionResponse` değişimi (biz → peer, peer → biz)
+//!   5) `SecureCtx` kur — artık tüm trafik şifreli
+//!   6) `PairedKeyEncryption` gönder (biz başlatırız)
+//!   7) Peer'den `PairedKeyEncryption` al → `PairedKeyResult` gönder
+//!   8) Peer'den `PairedKeyResult` al
 //!   9) Introduction gönder (dosya metadata'sı ile)
 //!  10) Peer'den Response (Accept/Reject) bekle
-//!  11) Accept ise: dosya chunk'larını PayloadTransfer olarak gönder
+//!  11) Accept ise: dosya chunk'larını `PayloadTransfer` olarak gönder
 //!  12) Disconnection
 
 use crate::config;
@@ -433,10 +433,10 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
 
 /// Tek bir metin parçasını Quick Share üzerinden gönderir.
 ///
-/// Dosya yolundaki akışın birebir aynısı — UKEY2 → PairedKey → Introduction →
-/// Consent → PayloadTransfer. Tek farkı: Introduction'da `text_metadata` olur
-/// (file_metadata yerine), payload chunk'ı `PayloadType::Bytes` tipinde tek
-/// chunk (küçük metin) ya da CHUNK_SIZE sınırıyla parçalanmış çoklu chunk
+/// Dosya yolundaki akışın birebir aynısı — UKEY2 → `PairedKey` → Introduction →
+/// Consent → `PayloadTransfer`. Tek farkı: Introduction'da `text_metadata` olur
+/// (`file_metadata` yerine), payload chunk'ı `PayloadType::Bytes` tipinde tek
+/// chunk (küçük metin) ya da `CHUNK_SIZE` sınırıyla parçalanmış çoklu chunk
 /// halinde yollanır. Android Quick Share alıcısı Bytes payload'ı `TextType`
 /// meta'sıyla eşleyip pano/URL açma akışına sokuyor.
 pub struct SendTextRequest {
@@ -444,7 +444,7 @@ pub struct SendTextRequest {
     pub text: String,
 }
 
-/// TcpStream::connect için üst sınır. Hedef cihaz kapalı/erişilemez iken
+/// `TcpStream::connect` için üst sınır. Hedef cihaz kapalı/erişilemez iken
 /// OS TCP SYN retry'ını ~75 sn bekletmesin diye 10 sn ile keser.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -732,7 +732,7 @@ pub async fn send_text(
 }
 
 /// Metni Bytes payload olarak gönderir. Küçük metin tek chunk + son empty
-/// chunk ile biter; büyük metin CHUNK_SIZE sınırıyla bölünür (Android
+/// chunk ile biter; büyük metin `CHUNK_SIZE` sınırıyla bölünür (Android
 /// tarafı her iki durumu da assembler reassembly ile ele alır).
 #[allow(clippy::too_many_arguments)]
 async fn send_text_bytes(

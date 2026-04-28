@@ -1,4 +1,4 @@
-//! HekaDrop'un Quick Share / Nearby Connections protobuf bindings'i.
+//! `HekaDrop`'un Quick Share / Nearby Connections protobuf bindings'i.
 //!
 //! Tüm `pub mod` blokları `build.rs` üzerinden `prost-build` tarafından
 //! `OUT_DIR`'a üretilen modülleri include eder. Bu crate runtime mantığı
@@ -29,6 +29,7 @@
 
 #[allow(
     clippy::all,
+    clippy::doc_markdown,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -42,6 +43,7 @@ pub mod securegcm {
 
 #[allow(
     clippy::all,
+    clippy::doc_markdown,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -55,6 +57,7 @@ pub mod securemessage {
 
 #[allow(
     clippy::all,
+    clippy::doc_markdown,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -80,6 +83,7 @@ pub mod location {
 
 #[allow(
     clippy::all,
+    clippy::doc_markdown,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -99,12 +103,13 @@ pub mod sharing {
 /// raw prefix — ardından `HekaDropFrame` protobuf encoding'i. Magic
 /// dispatcher seviyesinde strip edilir (`hekadrop-core::frame`).
 ///
-/// Slot tahsisi: capabilities=10, chunk_tag=11, resume_hint=12,
-/// resume_reject=13, folder_mft=14. 1..9 ve 15..63 reserved.
+/// Slot tahsisi: capabilities=10, `chunk_tag=11`, `resume_hint=12`,
+/// `resume_reject=13`, `folder_mft=14`. 1..9 ve 15..63 reserved.
 ///
 /// Wire-byte-exact spec: `docs/protocol/capabilities.md`.
 #[allow(
     clippy::all,
+    clippy::doc_markdown,
     non_snake_case,
     non_camel_case_types,
     dead_code,

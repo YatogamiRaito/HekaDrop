@@ -1,6 +1,6 @@
 //! Log dosyası için PII redaction yardımcıları.
 //!
-//! HekaDrop log dosyası (`platform::logs_dir()` altında, 3 gün rolling)
+//! `HekaDrop` log dosyası (`platform::logs_dir()` altında, 3 gün rolling)
 //! troubleshooting için paylaşılabilir. Paylaşım senaryosunda kullanıcının
 //! ev dizin yapısı, cross-user eşleştirilebilen dosya parmakları (SHA-256)
 //! veya URL query token'ları ifşa olmamalı — bu yardımcılar `info!` / `warn!`

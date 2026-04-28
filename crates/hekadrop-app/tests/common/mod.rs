@@ -1,6 +1,6 @@
 //! Ortak test yardımcıları — protokol-seviyesi entegrasyon testlerinde paylaşılır.
 //!
-//! HekaDrop binary-only bir crate (lib.rs yok). Bu yüzden `tests/` altındaki
+//! `HekaDrop` binary-only bir crate (lib.rs yok). Bu yüzden `tests/` altındaki
 //! entegrasyon testleri `hekadrop::...` erişemez; bunun yerine aynı dış crate'leri
 //! (p256, aes, cbc, hmac, sha2, hkdf, prost) kullanarak protokol uyumluluğunu
 //! bağımsızca doğrularız. Bu yaklaşımın bir yan faydası var: implement ve test
@@ -8,7 +8,7 @@
 //! kaçırılmaz.
 //!
 //! Her test binary'si bu modülü `mod common;` ile include eder, ama kendi özel
-//! fonksiyonlarını kullanır — kullanılmayan helper'lar dead_code warning'e yol
+//! fonksiyonlarını kullanır — kullanılmayan helper'lar `dead_code` warning'e yol
 //! açabilir. `#[allow(dead_code)]` her yardımcıyı bireysel olarak bu beklenen
 //! durumdan muaf tutar.
 
@@ -20,7 +20,7 @@
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-/// HKDF-SHA256 → HekaDrop `crypto::hkdf_sha256` ile birebir aynı davranış.
+/// HKDF-SHA256 → `HekaDrop` `crypto::hkdf_sha256` ile birebir aynı davranış.
 pub(crate) fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
     let hk = hkdf::Hkdf::<Sha256>::new(Some(salt), ikm);
     let mut out = vec![0u8; len];
@@ -56,7 +56,7 @@ pub(crate) const D2D_SALT: [u8; 32] = [
 ];
 
 /// Quick Share 4-haneli PIN türetme — `src/crypto.rs::pin_code_from_auth_key`
-/// referans implementasyonunun birebir kopyası (NearDrop algoritması).
+/// referans implementasyonunun birebir kopyası (`NearDrop` algoritması).
 /// Her bayt Java'daki `byte`-olarak (signed) yorumlanır.
 pub(crate) fn pin_code_from_auth_key(key: &[u8]) -> String {
     let mut hash: i64 = 0;

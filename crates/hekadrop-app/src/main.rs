@@ -62,7 +62,7 @@ use hekadrop_core::{config, connection, log_redact, sender, server, settings, st
 
 /// `DeviceKind` → kullanıcıya gösterilen Türkçe etiket (emoji ile). Core
 /// UI/i18n-agnostic kalsın diye bu mapping app crate'inde — PR #93 review
-/// (Copilot) sonrası kind_label() core'dan çıkartıldı.
+/// (Copilot) sonrası `kind_label()` core'dan çıkartıldı.
 fn device_kind_label(kind: DeviceKind) -> &'static str {
     match kind {
         DeviceKind::Phone => "📱 Telefon",
@@ -295,7 +295,7 @@ fn main() {
 ///
 /// `log_level` Settings'ten gelir (H#4 privacy control). `RUST_LOG` env var
 /// set ise o öncelikli — geliştirici kaçış vanası; aksi halde verilen
-/// LogLevel `hekadrop=<seviye>` direktifine dönüşür.
+/// `LogLevel` `hekadrop=<seviye>` direktifine dönüşür.
 fn setup_logging(log_level: settings::LogLevel) {
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -1100,7 +1100,7 @@ fn push_i18n_to_ui() {
     state::enqueue_js(js);
 }
 
-/// İlk açılışta (veya upgrade eden kullanıcının ilk sürüm sonrasında) WebView
+/// İlk açılışta (veya upgrade eden kullanıcının ilk sürüm sonrasında) `WebView`
 /// yüklenir yüklenmez onboarding modal'ını gösterir. `first_launch_completed`
 /// zaten true ise no-op. `act('onboarding_done')` IPC'si flag'i true'ya çekip
 /// diske yazar → bir sonraki boot'ta modal tekrar gelmez.
@@ -1631,7 +1631,7 @@ enum UpdateCheckOutcome {
 }
 
 /// UI'a update status push et. `kind` CSS class adıdır: `info` / `success` /
-/// `error`. Window açık değilse JS sessizce yutulur (enqueue_js buffer'lanır,
+/// `error`. Window açık değilse JS sessizce yutulur (`enqueue_js` buffer'lanır,
 /// sonraki eval bunu drain eder).
 fn push_update_status(msg: &str, kind: &str) {
     state::enqueue_js(format!(
@@ -1799,7 +1799,7 @@ fn semver_less(current: &str, latest: &str) -> bool {
 ///   - Dizin → içindeki tüm dosyalar (recursive)
 ///   - Symlink dizin → takip ETMEZ (döngü koruması; o path atlanır)
 ///
-/// Okuma hatası olan alt dizinler sessizce atlanır (tracing::warn log'u ile).
+/// Okuma hatası olan alt dizinler sessizce atlanır (`tracing::warn` log'u ile).
 /// Stack-based BFS; rekürsif çağrı yok, derin ağaçlarda stack overflow yok.
 fn expand_folder_drops(dropped: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
@@ -1968,7 +1968,7 @@ fn toggle_login_item() {
 }
 
 /// Windows: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` Registry
-/// anahtarına "HekaDrop" değerini yazar ya da kaldırır. Binary yolu
+/// anahtarına `"HekaDrop"` değerini yazar ya da kaldırır. Binary yolu
 /// `current_exe()` ile alınır (tırnak içine alınarak; Program Files gibi
 /// boşluklu yollara dayanıklı).
 #[cfg(target_os = "windows")]

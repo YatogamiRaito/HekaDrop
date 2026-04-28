@@ -35,7 +35,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
 
-/// HekaDrop `RateLimiter` ile birebir davranış — Instant tabanlı sliding window.
+/// `HekaDrop` `RateLimiter` ile birebir davranış — Instant tabanlı sliding window.
 struct RateLimiter {
     windows: RwLock<HashMap<IpAddr, VecDeque<Instant>>>,
     window: Duration,
@@ -178,7 +178,7 @@ fn sliding_window_kaydirimi_yari_window() {
 /// peer muafiyeti yalnız hash doğrulandıktan sonra `forget_most_recent` ile
 /// geriye-dönük verilir. Bu test güncel kontratı pin'liyor.
 ///
-/// Eski test ("gate'de trusted bypass, check_and_record hiç çağrılmaz")
+/// Eski test ("gate'de trusted bypass, `check_and_record` hiç çağrılmaz")
 /// Issue #17 öncesi davranıştı — peer-controlled (name, id) spoof'a izin
 /// verdiği için kaldırıldı.
 #[test]

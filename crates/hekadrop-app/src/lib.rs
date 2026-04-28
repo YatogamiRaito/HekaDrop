@@ -1,10 +1,10 @@
-//! HekaDrop library surface — yalnız benchmarklar ve harici entegrasyon testleri
+//! `HekaDrop` library surface — yalnız benchmarklar ve harici entegrasyon testleri
 //! için public re-export katmanı.
 //!
 //! Binary `src/main.rs` bu lib'e bağımlı değildir; modül ağacı ikisinde de
 //! bağımsızca derlenir (Cargo lib+bin hibrit projeyi bu şekilde ele alır).
 //! Buradaki amaç `benches/crypto.rs` ve `tests/*.rs` gibi harici consumer'lara
-//! dar bir yüzey (crypto + file_size_guard + UKEY2 downgrade validator
+//! dar bir yüzey (crypto + `file_size_guard` + UKEY2 downgrade validator
 //! + H#4 privacy controls için settings) açmaktır.
 
 #![allow(dead_code)]

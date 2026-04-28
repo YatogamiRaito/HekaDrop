@@ -23,14 +23,14 @@
 
 //! H#4 — Privacy controls integration tests.
 //!
-//! Settings struct'a eklenen 4 alanın (advertise / log_level / keep_stats /
-//! disable_update_check) davranışsal semantiğini doğrular. Gerçek tcp/mdns
+//! Settings struct'a eklenen 4 alanın (advertise / `log_level` / `keep_stats` /
+//! `disable_update_check`) davranışsal semantiğini doğrular. Gerçek tcp/mdns
 //! soket simülasyonu yerine **doğrudan API seviyesinde** kontrat testleri —
 //! main.rs / connection.rs / sender.rs integration noktaları state + settings
 //! üzerinden bu değerleri okuyor; bu test'ler o okuma path'inin canlı
 //! olduğunu ve default'ların v0.5 davranışını koruduğunu garantiler.
 //!
-//! Gerçek mdns bypass integration testi için mdns_discovery.rs'teki canlı
+//! Gerçek mdns bypass integration testi için `mdns_discovery.rs`'teki canlı
 //! test yeterli — burada Settings kontratını izole ediyoruz.
 //!
 //! Bu binary crate içinde `pub mod settings` (src/lib.rs) public API olarak

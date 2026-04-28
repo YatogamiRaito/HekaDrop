@@ -3,7 +3,7 @@
 //!   - Linux: `~/.config/HekaDrop/stats.json`
 //!
 //! Her başarılı aktarım sonrası güncellenir. UI'da "Tanı" sekmesinde gösterilir.
-//! SystemTime yerine UNIX epoch saniye olarak saklanır (serde'de kolay, taşınabilir).
+//! `SystemTime` yerine UNIX epoch saniye olarak saklanır (serde'de kolay, taşınabilir).
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};

@@ -1,11 +1,11 @@
 //! Secure message katmanı — UKEY2 sonrası tüm trafik bu sarmalayıcıdan geçer.
 //!
 //! Akış (outbound):
-//!   plaintext (OfflineFrame veya NearbyFrame bytes)
-//!     → DeviceToDeviceMessage{ seq, message=plaintext }
-//!     → AES-256-CBC-PKCS7(encrypt_key, random_iv, d2d_bytes)
-//!     → HeaderAndBody{ header{iv, schemes, meta}, body=ciphertext }
-//!     → SecureMessage{ header_and_body, signature=HMAC-SHA256(send_hmac, hb) }
+//!   plaintext (`OfflineFrame` veya `NearbyFrame` bytes)
+//!     → `DeviceToDeviceMessage`{ seq, message=plaintext }
+//!     → AES-256-CBC-PKCS7(encrypt_key, `random_iv`, `d2d_bytes`)
+//!     → `HeaderAndBody`{ header{iv, schemes, meta}, body=ciphertext }
+//!     → `SecureMessage`{ `header_and_body`, signature=HMAC-SHA256(send_hmac, hb) }
 //!
 //! Inbound aynı sırayla tersine.
 

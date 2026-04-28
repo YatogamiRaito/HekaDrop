@@ -1,4 +1,4 @@
-//! HekaDrop protocol extension capability negotiation (RFC-0003 §3.2).
+//! `HekaDrop` protocol extension capability negotiation (RFC-0003 §3.2).
 //!
 //! Bu modül [`hekadrop_proto::hekadrop_ext`] altındaki üretilmiş
 //! `Capabilities` ve `HekaDropFrame` mesajlarını idiomatic Rust API

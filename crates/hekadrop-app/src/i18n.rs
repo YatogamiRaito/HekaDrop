@@ -93,7 +93,7 @@ pub(crate) fn tf(key: &'static str, args: &[&str]) -> String {
 }
 
 /// Template stringinde `{N}` yer tutucularını args ile doldurur (single-pass).
-/// Public `tf()`'nin test edilebilir yan yüzü — `current()` OnceLock'una
+/// Public `tf()`'nin test edilebilir yan yüzü — `current()` `OnceLock`'una
 /// bağımlı değil, saf deterministik fonksiyon.
 pub(crate) fn apply_args(template: &str, args: &[&str]) -> String {
     let bytes = template.as_bytes();

@@ -9,7 +9,7 @@ use std::net::IpAddr;
 
 /// Quick Share peer device kategorisi (TXT record `device_type` byte'ından).
 /// Display string'leri caller (UI/CLI) tarafında i18n + emoji ile çözülür —
-/// core UI/locale-agnostic kalır. PR #93 review (Copilot): kind_label() Türkçe
+/// core UI/locale-agnostic kalır. PR #93 review (Copilot): `kind_label()` Türkçe
 /// + emoji string'leri core'dan çıkartıldı.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceKind {
@@ -42,9 +42,9 @@ pub struct DiscoveredDevice {
     pub device_type: u8,
     pub fullname: String,
     /// `true` ise peer mDNS TXT record'unda `ext=1` flag'i göndermiş —
-    /// HekaDrop extension protocol (capabilities envelope, chunk-HMAC,
+    /// `HekaDrop` extension protocol (capabilities envelope, chunk-HMAC,
     /// resume, folder) destekli. `false` (eski Quick Share peer):
-    /// HekaDropFrame yollanmamalı; legacy mode kullanılır.
+    /// `HekaDropFrame` yollanmamalı; legacy mode kullanılır.
     ///
     /// RFC-0003 §3.3 peer-detection signal. Eski Quick Share peer'larında
     /// `ext` alanı yok → parser default `false` set eder.

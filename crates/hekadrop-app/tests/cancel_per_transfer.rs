@@ -23,7 +23,7 @@
 
 //! H#1 — Per-transfer `CancellationToken` semantiği.
 //!
-//! HekaDrop binary-only (sadece `crypto` lib'de export edilir); `state`
+//! `HekaDrop` binary-only (sadece `crypto` lib'de export edilir); `state`
 //! modülünü test için dışarı açmıyoruz. Refactor'ın çekirdek davranışı
 //! `tokio_util::sync::CancellationToken`'ın "root → child" ağacına dayanıyor —
 //! regresyonu önlemek için testimiz aynı primitif üzerinde aynı ağacı kurup

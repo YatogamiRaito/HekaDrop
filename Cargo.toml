@@ -19,7 +19,6 @@ homepage = "https://github.com/YatogamiRaito/HekaDrop"
 #
 # Kapsam dışı bırakılanlar (RED-tier — ayrı tracking issue'larla cleanup):
 #   * clippy::pedantic umbrella (~1,228 hit)        — issue #TBD
-#   * clippy::doc_markdown (445 hand + 792 gen)     — issue #TBD
 #   * clippy::must_use_candidate (71 hand)          — issue #TBD
 #   * unused_crate_dependencies                     — false-pos cascade, atlandı
 #
@@ -74,6 +73,7 @@ get_unwrap = "warn"
 redundant_clone = "warn"
 use_self = "warn"
 # Kalite — düşük volüm, anlık temizlik
+doc_markdown = "warn"           # PR #110: 648 hit, 242 auto-fix + 406 generated proto module-level allow
 uninlined_format_args = "warn"  # PR #87 auto-fix sonrası 110 yeni site birikmişti; auto-fix tekrar uygulandı + lint enforce
 match_same_arms = "warn"        # i18n table + 2 dokümantasyon arm scoped allow ile (PR #87 deferred)
 manual_let_else = "warn"

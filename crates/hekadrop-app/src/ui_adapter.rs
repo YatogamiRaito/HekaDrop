@@ -1,4 +1,4 @@
-//! UiPort trait'inin app-side concrete implementation'ı. `connection.rs`
+//! `UiPort` trait'inin app-side concrete implementation'ı. `connection.rs`
 //! ve sonraki adımlarda `sender.rs`, `server.rs` bu adapter'ı `Arc<dyn
 //! UiPort>` olarak alır.
 //!

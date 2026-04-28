@@ -23,7 +23,7 @@
 
 //! Legacy TTL soft-sunset — Issue #17 (Seçenek D).
 //!
-//! v0.6 prune_expired eskiden legacy kayıtlara (`secret_id_hash == None`)
+//! v0.6 `prune_expired` eskiden legacy kayıtlara (`secret_id_hash == None`)
 //! hiç dokunmazdı — sınırsız yaşarlardı. Bu, hash-suppress saldırısıyla
 //! birleştiğinde saldırgana "kurban 90 gün önce trust ettiği ama artık
 //! hash-upgrade olmamış legacy kaydı yoluyla muafiyet kazanma" şansı
@@ -46,7 +46,7 @@ fn now_epoch() -> u64 {
         .unwrap_or(0)
 }
 
-/// Legacy kayıt (`hash = None`) 90 günden eski ise prune_expired silmeli.
+/// Legacy kayıt (`hash = None`) 90 günden eski ise `prune_expired` silmeli.
 /// Saldırı yüzeyini sınırlar: "yıllar önce trust edilmiş ama hash-upgrade
 /// olmamış" peer'lar sonsuza kadar legacy fallback sunmaz.
 #[test]

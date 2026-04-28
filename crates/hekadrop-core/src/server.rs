@@ -16,7 +16,7 @@ const DEFAULT_PORT: u16 = 47893;
 ///
 /// **Neden:** Her bağlantı tokio task + payload buffer + crypto state +
 /// pending destination path'leri tüketir. Limit yoksa saldırgan yüzlerce
-/// TCP bağlantısı açıp kaynakları şişirerek DoS yapabilir (rate limiter
+/// TCP bağlantısı açıp kaynakları şişirerek `DoS` yapabilir (rate limiter
 /// aynı IP için 10/60sn kural koyar ama farklı IP'lerden gelenleri
 /// kaplamayı engellemez). 32 sınırı tipik ev kullanımı için fazlasıyla
 /// yeterli; aşan bağlantılar semaphore'da bekletilmek yerine TCP RST ile

@@ -27,7 +27,7 @@ pub enum HekaError {
     /// `#[from]` — `?` ile `std::io::Error` otomatik dönüşüm için.
     #[error("I/O hatası: {0}")]
     Io(#[from] std::io::Error),
-    /// `read_frame`: 4-byte length-prefix MAX_FRAME_SIZE'ı aştı.
+    /// `read_frame`: 4-byte length-prefix `MAX_FRAME_SIZE`'ı aştı.
     #[error("çerçeve boyutu sınır aştı: {0}")]
     FrameTooLarge(usize),
     /// `read_frame`: stream beklenmedik biçimde sonlandı (kısa okuma).
@@ -42,7 +42,7 @@ pub enum HekaError {
     /// Rate limiter aynı IP'den pencere aşımı tespit etti (trusted muaf).
     #[error("rate limit: aynı IP'den çok fazla bağlantı denemesi ({0})")]
     RateLimited(String),
-    /// TcpStream::connect üst sınırı aşıldı (erişilemez host / router drop).
+    /// `TcpStream::connect` üst sınırı aşıldı (erişilemez host / router drop).
     #[error("bağlantı zaman aşımına uğradı ({secs} sn): {addr}")]
     ConnectTimeout { secs: u64, addr: String },
 
@@ -65,13 +65,13 @@ pub enum HekaError {
     /// korunur).
     #[error("UKEY2: {0}")]
     Ukey2(String),
-    /// UKEY2 ServerInit cipher downgrade reddedildi (P256_SHA512 dışı).
+    /// UKEY2 `ServerInit` cipher downgrade reddedildi (`P256_SHA512` dışı).
     #[error("ServerInit cipher downgrade reddedildi: beklenen P256_SHA512, gelen {0}")]
     Ukey2CipherDowngrade(String),
-    /// UKEY2 ServerInit version downgrade reddedildi (V1 dışı).
+    /// UKEY2 `ServerInit` version downgrade reddedildi (V1 dışı).
     #[error("ServerInit version={0} — yalnız V1 destekleniyor")]
     Ukey2VersionDowngrade(String),
-    /// UKEY2 ClientFinished commitment doğrulaması başarısız (PIN / MITM).
+    /// UKEY2 `ClientFinished` commitment doğrulaması başarısız (PIN / MITM).
     #[error("UKEY2: cipher commitment uyuşmadı")]
     Ukey2CommitmentMismatch,
 
@@ -79,13 +79,13 @@ pub enum HekaError {
     /// Protobuf decode ya da beklenen alan eksikliği.
     #[error("protokol hatası: {0}")]
     Protocol(String),
-    /// Beklenen state'te değiliz (örn. beklenen CLIENT_INIT, alınan X).
+    /// Beklenen state'te değiliz (örn. beklenen `CLIENT_INIT`, alınan X).
     #[error("protokol durumu: {0}")]
     ProtocolState(String),
-    /// Introduction / CipherCommitment repeated-field flood (DoS).
+    /// Introduction / `CipherCommitment` repeated-field flood (`DoS`).
     #[error("Introduction cardinality flood: {files} dosya, {texts} metin (limit 1000/64)")]
     IntroductionFlood { files: usize, texts: usize },
-    /// UKEY2 CipherCommitment repeated-field flood (DoS).
+    /// UKEY2 `CipherCommitment` repeated-field flood (`DoS`).
     #[error("cipher_commitment flood: {0} eleman (max 8)")]
     CipherCommitmentFlood(usize),
 
@@ -116,7 +116,7 @@ pub enum HekaError {
     /// Unique dosya adı 10k denemede bulunamadı (dizin dolu).
     #[error("uygun dosya adı bulunamadı (10k deneme)")]
     FileNameExhausted,
-    /// Payload katmanı IO (disk full, permission, generic std::io wrap
+    /// Payload katmanı IO (disk full, permission, generic `std::io` wrap
     /// etmesek de context string taşıyanlar).
     #[error("payload IO: {0}")]
     PayloadIo(String),
@@ -133,7 +133,7 @@ pub enum HekaError {
     /// "0 bayt dosya" değil, "hiç dosya yok".
     #[error("hiç dosya seçilmedi")]
     NoFilesSelected,
-    /// Tek dosya boyutu i64::MAX üstü (saçma büyük).
+    /// Tek dosya boyutu `i64::MAX` üstü (saçma büyük).
     #[error("dosya çok büyük (>= {max} bayt, desteklenmiyor): {path}")]
     FileTooLarge { max: i64, path: String },
 

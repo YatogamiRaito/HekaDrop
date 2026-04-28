@@ -27,7 +27,7 @@
 //! Bu entegrasyon testi `hekadrop::payload::PayloadAssembler` public API'sini
 //! doğrudan kullanır (lib.rs'te `pub mod payload` olarak re-export edilmiştir).
 //! Secure/network katmanlarına dokunmaz — payload reassembly semantiği
-//! (chunk birleşimi, total_size validasyonu, duplicate id koruması, SHA-256
+//! (chunk birleşimi, `total_size` validasyonu, duplicate id koruması, SHA-256
 //! hesabı) platform-agnostik olduğu için bu seviyede izole edilebilir.
 //!
 //! Kapsanan invariant'lar (her test adı iddiayı pin'ler):
@@ -35,7 +35,7 @@
 //!     yerel olarak hesaplanan SHA-256'dan farklı olmalı; `CompletedPayload::
 //!     File.sha256` alanı streaming hasher üzerinden üretilir, dışarıdan
 //!     beklenen hash ile kıyaslanır.
-//!   * `duplicate_payload_id_reddedilir` — Introduction'da aynı payload_id
+//!   * `duplicate_payload_id_reddedilir` — Introduction'da aynı `payload_id`
 //!     ile iki destination register edilirse ikincisi silent-overwrite yerine
 //!     hata dönmeli (review-18 MED: path-swap saldırısı).
 //!   * `out_of_order_chunks_dogru_konuma_yazilir` — `PayloadChunk.offset`

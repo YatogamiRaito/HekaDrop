@@ -22,9 +22,9 @@
 )]
 
 //! mDNS keşif katmanı — Quick Share'in `_FC9F5ED42C8A._tcp.local.` servis tipi,
-//! 10-byte instance name ve EndpointInfo encoding'i protokol uyumluluğu.
+//! 10-byte instance name ve `EndpointInfo` encoding'i protokol uyumluluğu.
 //!
-//! Bu testler HekaDrop `src/config.rs` çıktılarıyla birebir uyumlu olmalı —
+//! Bu testler `HekaDrop` `src/config.rs` çıktılarıyla birebir uyumlu olmalı —
 //! her biri bağımsız implement edilmiştir, böylece kaynak değişirse regression
 //! yakalanır.
 
@@ -53,7 +53,7 @@ fn instance_name(endpoint_id: &[u8; 4]) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// EndpointInfo yapısı — `n=` TXT record'un base64 öncesi:
+/// `EndpointInfo` yapısı — `n=` TXT record'un base64 öncesi:
 ///   [0]      bitmap (cihaz tipi << 1)
 ///   [1..17]  16 bayt rastgele
 ///   [17]     ad uzunluğu (u8)
@@ -119,7 +119,7 @@ fn instance_name_farkli_id_farkli_name() {
     assert_ne!(a, b);
 }
 
-/// EndpointInfo encoding'i: [bitmap, 16 random, name_len, utf8 name]
+/// `EndpointInfo` encoding'i: [bitmap, 16 random, `name_len`, utf8 name]
 #[test]
 fn endpoint_info_yerlesim_standart() {
     let random = [0xAAu8; 16];
