@@ -161,13 +161,18 @@ fn main() {
     // `load_or_default` bozuk dosyayı tespit edip default ile döner ama dosya
     // korunur (caller backup'lar). Bir sonraki save default'ı yazar = veri
     // kaybı. Burada bozuk dosyayı `<path>.corrupt-<unix>` backup'la, default
-    // kullan, kullanıcı log'tan görsün. UI logger henüz kurulmadığı için
-    // (chicken-and-egg) eprintln + tracing'e duplicate basıyoruz.
+    // kullan, kullanıcı log+UI dialog'tan görsün. Backup başarısızsa
+    // `state.persistence_blocked` set edilir → tüm save call site'ları
+    // skip eder (PR #109 review: Gemini HIGH + Copilot persistence-blocked).
     let config_path = paths::config_path();
     let (settings, settings_load_err) = settings::Settings::load_or_default(&config_path);
-    if let Some(err) = settings_load_err {
-        // Tracing subscriber henüz kurulmadı; kullanıcının fark etmesi için
-        // stderr'e bas. Sonra setup_logging tracing channel'ını da açar.
+    // Backup outcome — `state::init`'ten SONRA flag ve UI dialog için tutulur.
+    let mut config_backup_failed = false;
+    let mut config_backup_path: Option<std::path::PathBuf> = None;
+    if let Some(err) = &settings_load_err {
+        // HUMAN: Tracing subscriber henüz kurulmadı; kullanıcının fark
+        // etmesi için stderr'e bas. setup_logging sonra tracing channel'ı
+        // açar; kalıcı uyarı UI dialog ile (aşağıda) verilir.
         #[allow(clippy::print_stderr)]
         {
             eprintln!("[HekaDrop] config yüklenirken hata: {err}");
@@ -175,6 +180,8 @@ fn main() {
         if matches!(err, settings::LoadError::Corrupt { .. }) {
             match settings::backup_corrupt_file(&config_path) {
                 Ok(backup) => {
+                    config_backup_path = Some(backup.clone());
+                    // HUMAN: bkz. yukarı.
                     #[allow(clippy::print_stderr)]
                     {
                         eprintln!(
@@ -184,10 +191,8 @@ fn main() {
                     }
                 }
                 Err(e) => {
-                    // Backup başarısız → default'u DİSKE YAZMA tehlikesi var:
-                    // settings::save() çağrılırsa kullanıcının trust listesi
-                    // kalıcı olarak silinir. Default'la başla ama explicit save
-                    // çağrısı kullanıcı eylemine bağlı (UI tarafı).
+                    config_backup_failed = true;
+                    // HUMAN: bkz. yukarı.
                     #[allow(clippy::print_stderr)]
                     {
                         eprintln!(
@@ -201,6 +206,38 @@ fn main() {
     setup_logging(settings.log_level);
 
     state::init(settings);
+
+    // PR #109: backup başarısızsa save'leri fiilen blokla — runtime'da
+    // touch_trusted_by_hash / settings_save / stats record'lar çalışsa bile
+    // bozuk dosya overwrite edilmez (flag try_save_settings/stats helper'ları
+    // ve handle_settings_save guard'ı tarafından kontrol edilir).
+    if config_backup_failed {
+        state::get()
+            .persistence_blocked
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    // PR #109 (Gemini HIGH): GUI app'ta kullanıcı stderr görmeyebilir.
+    // Backup outcome'una göre modal dialog ile bilgilendir — kullanıcı
+    // veri kaybı riskini anlasın, manuel kurtarma seçeneği bilsin.
+    if let Some(err) = &settings_load_err {
+        if matches!(err, settings::LoadError::Corrupt { .. }) {
+            if let Some(backup) = &config_backup_path {
+                ui::show_info(
+                    "HekaDrop — Config dosyası kurtarıldı",
+                    &format!(
+                        "Ayarlar dosyanız bozuk olduğu için varsayılan değerler yüklendi.\n\nMevcut dosya yedeklendi:\n{}\n\nManuel düzenleme yapmak isterseniz bu dosyayı açabilirsiniz.",
+                        backup.display()
+                    ),
+                );
+            } else if config_backup_failed {
+                ui::show_info(
+                    "HekaDrop — UYARI: Config korunuyor",
+                    "Ayarlar dosyanız bozuk ama yedekleme başarısız oldu.\n\nVeri kaybını önlemek için tüm AYARLAR ve TRUSTED CİHAZ değişiklikleri DEVRE DIŞI bırakıldı. Lütfen uygulamayı kapatıp config.json dosyasını manuel kurtarın.\n\nUygulamayı yeniden başlatınca normal çalışır.",
+                );
+            }
+        }
+    }
 
     // Issue #17: startup'ta süresi dolmuş trust kayıtlarını temizle. Legacy
     // kayıtlar (epoch>0) 90 gün soft-sunset; hash kayıtları `trust_ttl_secs`
@@ -687,7 +724,7 @@ fn handle_ipc(cmd: &str) {
             s.remove_trusted(name);
             s.clone()
         };
-        let _ = snap.save(&paths::config_path());
+        st.try_save_settings(snap);
         push_trusted_to_ui();
         ui::notify(
             i18n::t("notify.app_name"),
@@ -742,7 +779,7 @@ fn handle_ipc(cmd: &str) {
                 *s = stats::Stats::default();
                 s.clone()
             };
-            let _ = snap.save(&paths::stats_path());
+            st.try_save_stats(snap);
             push_stats_to_ui();
             ui::notify(i18n::t("notify.app_name"), i18n::t("notify.stats_reset"));
         }
@@ -761,7 +798,7 @@ fn handle_ipc(cmd: &str) {
                 s.trusted_devices.clear();
                 s.clone()
             };
-            let _ = snap.save(&paths::config_path());
+            st.try_save_settings(snap);
             push_trusted_to_ui();
             ui::notify(i18n::t("notify.app_name"), i18n::t("notify.trust_cleared"));
         }
@@ -771,6 +808,18 @@ fn handle_ipc(cmd: &str) {
             // yaz (debounce YOK; kullanıcı restart ederse modal tekrar
             // açılmasın, kritik persistency noktası).
             let st = state::get();
+            // PR #109: persistence_blocked guard — bozuk config startup'ta
+            // backup başarısızsa onboarding flag yazımı da skip; modal her
+            // restart'ta tekrar gelir ama veri silinmez.
+            if st
+                .persistence_blocked
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                tracing::warn!(
+                    "persistence_blocked=true → onboarding_done save SKIPPED; modal tekrar gelecek"
+                );
+                return;
+            }
             let snap = {
                 let mut s = st.settings.write();
                 if s.first_launch_completed {
@@ -914,6 +963,16 @@ fn handle_settings_save(json: &str) {
                 );
                 return;
             }
+        }
+        // PR #109: persistence_blocked guard — bozuk config korunur.
+        if state::get()
+            .persistence_blocked
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::warn!(
+                "persistence_blocked=true → settings save SKIPPED (handle_settings_save)"
+            );
+            return;
         }
         // RUNTIME handle tokio async thread init'inde set edilir (main.rs:170).
         // `handle_settings_save` UI event-loop thread'inden çağrılıyor → burada
@@ -1245,10 +1304,19 @@ fn open_downloads_folder() {
 fn open_config_file() {
     let path = paths::config_path();
     if !path.exists() {
-        // Snapshot clone + drop guard → disk I/O lock dışında. Yavaş FS'te
-        // (encrypted home, FUSE) read() guard tüm write()'ları bloklardı.
-        let snap = state::get().settings.read().clone();
-        let _ = snap.save(&path);
+        // PR #109: persistence_blocked guard — startup'ta bozuk config
+        // backup başarısızsa default'u yazma; "open" sırasında kullanıcı
+        // mevcut bozuk dosyaya bakacak (corrupt-<unix> yedeği yan dosyada).
+        let st = state::get();
+        if !st
+            .persistence_blocked
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            // Snapshot clone + drop guard → disk I/O lock dışında. Yavaş FS'te
+            // (encrypted home, FUSE) read() guard tüm write()'ları bloklardı.
+            let snap = st.settings.read().clone();
+            let _ = snap.save(&path);
+        }
     }
     platform::reveal_path(&path);
 }
@@ -1314,7 +1382,11 @@ fn js_string(s: &str) -> String {
 /// **Doğrudan `format!("...{value}...")` KULLANMAYIN** — `Display` impl'i
 /// </script> ve U+2028/U+2029'ı escape etmez.
 fn js_safe_json(v: &serde_json::Value) -> String {
-    // Infallible: serde_json::Value zaten valid JSON; serialize panic etmez.
+    // INVARIANT: `serde_json::Value` her zaman valid JSON veri modelidir;
+    // `serde_json::to_string(&Value)` belgelenmiş olarak hiçbir koşulda
+    // fail etmez (yalnız map key'i string olmayan veya recursive yapı
+    // panic'leyebilir, ama `Value`'nun map key tipi `String`'tir). Bu
+    // expect runtime hatası değil, invariant'ı belgelemek için.
     #[allow(clippy::expect_used)]
     let s = serde_json::to_string(v).expect("serde_json::Value serialize infallible");
     s.replace("</", "<\\/")

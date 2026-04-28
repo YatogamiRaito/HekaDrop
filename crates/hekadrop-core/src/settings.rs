@@ -523,20 +523,25 @@ impl Settings {
 /// caller dosyayı backup'lar ve UI'a uyarı verir; `Io` durumunda kullanıcı
 /// permission/disk hatasını anlamalı.
 ///
-/// **Why error type:** Önceki davranış (`unwrap_or_default`) bozuk
-/// `config.json` durumunda kullanıcının trusted device listesini sessizce
-/// silip bir sonraki save ile **kalıcı veri kaybına** sebep oluyordu
-/// (PR #90 review, Gemini medium). Hata ayrımı `NotFound = OK, Corrupt =
-/// kullanıcı görür` semantiğini sağlar.
+/// **Why error type:** Önceki davranış (`unwrap_or_default`) bozuk dosya
+/// durumunda kullanıcının trusted device listesini sessizce silip bir
+/// sonraki save ile **kalıcı veri kaybına** sebep oluyordu (PR #90 review,
+/// Gemini medium). Hata ayrımı `NotFound = OK, Corrupt = kullanıcı görür`
+/// semantiğini sağlar.
+///
+/// **Kapsam:** Settings (`config.json`) ve Stats (`stats.json`) load
+/// hataları için ortak. PR #109 review (Copilot): mesajlar generic
+/// "kalıcı state dosyası" diyor, "config.json" demiyor — Stats için de
+/// anlaşılır.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
-    #[error("config dosyası bozuk ({path}): {source}")]
+    #[error("kalıcı state dosyası bozuk ({path}): {source}")]
     Corrupt {
         path: PathBuf,
         #[source]
         source: serde_json::Error,
     },
-    #[error("config dosyası okunamadı ({path}): {source}")]
+    #[error("kalıcı state dosyası okunamadı ({path}): {source}")]
     Io {
         path: PathBuf,
         #[source]
@@ -792,24 +797,49 @@ pub(crate) fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Resu
     atomic_write_mode(path, data, None)
 }
 
-/// Bozuk config dosyasını `<path>.corrupt-<unix>` olarak yedekler ve
-/// `Result<PathBuf, io::Error>` döner. Caller silinmeden önce çağırmalı —
-/// böylece kullanıcı dosyayı manuel kurtarabilir, default ile başlanması
-/// veri kaybı izlenimi yaratmaz.
+/// Bozuk config dosyasını `<path>.corrupt-<unix-nanos>-<pid>-<attempt>` olarak
+/// yedekler ve `Result<PathBuf, io::Error>` döner. Caller silinmeden önce
+/// çağırmalı — böylece kullanıcı dosyayı manuel kurtarabilir.
 ///
-/// Backup başarısız olursa **orijinal dosya silinmez** (caller default'a
-/// düşer ama bir sonraki `save` corrupt'ı override etmez ki belki sonra
-/// el ile bakılabilsin). Yani backup garantisi yoksa overwrite yok.
+/// **Naming detail (PR #109 Copilot):** Saniye çözünürlüğü + sabit suffix
+/// race-prone idi (aynı saniyede tekrar denemeler veya eski yedekler hedefin
+/// var olmasına neden olurdu, `rename` `AlreadyExists` döndürürdü).
+/// nanos + pid + attempt counter ile çakışma pratikte imkansız; ek olarak
+/// `AlreadyExists` durumunda 16 deneme yapılır, sonra hata.
+///
+/// **Sorumluluk sınırı:** Bu fonksiyon yalnız orijinal dosyayı yedek
+/// konumuna **rename** eder. Backup başarısız olursa orijinal dosya
+/// `rename` tamamlanmadığı için yerinde kalır. Ancak bu fonksiyon
+/// **persistence akışını bloklayan bir mekanizma değildir** — ilgili
+/// politikayı (örn. `AppState.persistence_blocked`) caller uygular.
+/// PR #109 (Copilot doc accuracy): önceki yorum "garanti" iddia ediyordu;
+/// gerçek garanti caller-side flag ile sağlanır.
 pub fn backup_corrupt_file(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
-    let unix = std::time::SystemTime::now()
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let mut backup = path.as_os_str().to_owned();
-    backup.push(format!(".corrupt-{unix}"));
-    let backup = std::path::PathBuf::from(backup);
-    std::fs::rename(path, &backup)?;
-    Ok(backup)
+    let pid = std::process::id();
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..16u32 {
+        let mut backup = path.as_os_str().to_owned();
+        backup.push(format!(".corrupt-{nanos}-{pid}-{attempt}"));
+        let backup = std::path::PathBuf::from(backup);
+        match std::fs::rename(path, &backup) {
+            Ok(()) => return Ok(backup),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_err = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "backup retry quota exhausted",
+        )
+    }))
 }
 
 /// `atomic_write` variant'ı — kısıtlı (gizli) dosyalar için tmp'yi

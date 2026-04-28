@@ -387,14 +387,10 @@ pub async fn handle(
                                     }
                                 };
                                 if let Some(snap) = snap_opt {
-                                    // Async context'te sync I/O (atomic_write tmp+rename)
-                                    // worker thread'i bloklamasın diye spawn_blocking;
-                                    // fire-and-forget — save zaten `let _ = ...` ile
-                                    // hatayı swallow ediyor (PR #93 review, Gemini medium).
-                                    let stats_path = state.stats_path.clone();
-                                    tokio::task::spawn_blocking(move || {
-                                        let _ = snap.save(&stats_path);
-                                    });
+                                    // PR #93 + #109: spawn_blocking + persistence_blocked guard
+                                    // (bozuk stats.json startup'ta backup başarısızsa save'i
+                                    // skip eder — kullanıcı verisini override etmez).
+                                    state.try_save_stats(snap);
                                 }
                             }
                             let file_name = path
@@ -744,11 +740,9 @@ async fn handle_sharing_frame(
                         s.touch_trusted_by_hash(h);
                         s.clone()
                     };
-                    // Bkz. yukarı: spawn_blocking ile async worker thread bloklanmasın.
-                    let config_path = state.config_path.clone();
-                    tokio::task::spawn_blocking(move || {
-                        let _ = snap.save(&config_path);
-                    });
+                    // PR #93 + #109: try_save_settings = spawn_blocking +
+                    // persistence_blocked guard (bozuk config korunsun).
+                    state.try_save_settings(snap);
                 }
                 AcceptDecision::Accept
             } else if auto_accept {
@@ -799,10 +793,7 @@ async fn handle_sharing_frame(
                             s.add_trusted_with_hash(remote_name, remote_id, *h);
                             s.clone()
                         };
-                        let config_path = state.config_path.clone();
-                        tokio::task::spawn_blocking(move || {
-                            let _ = snap.save(&config_path);
-                        });
+                        state.try_save_settings(snap);
                         info!(
                             "[{}] legacy trust kaydı secret_id_hash ile yükseltildi: {}",
                             peer, remote_name
@@ -829,10 +820,7 @@ async fn handle_sharing_frame(
                     }
                     s.clone()
                 };
-                let config_path = state.config_path.clone();
-                tokio::task::spawn_blocking(move || {
-                    let _ = snap.save(&config_path);
-                });
+                state.try_save_settings(snap);
                 info!(
                     "[{}] cihaz trusted listeye eklendi: {} (id: {})",
                     peer,
