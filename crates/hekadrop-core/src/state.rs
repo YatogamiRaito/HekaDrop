@@ -117,6 +117,20 @@ pub struct AppState {
     /// Platform-default indirme dizini — `Settings.download_dir` yoksa
     /// fallback. App startup'ta tek seferlik resolve edilir.
     pub default_download_dir: PathBuf,
+    /// Persistence kilidi — `true` ise tüm `Settings::save` / `Stats::save`
+    /// çağrıları **bypass** edilir (no-op + uyarı log).
+    ///
+    /// **Neden:** Startup'ta bozuk `config.json`/`stats.json` tespit edilip
+    /// backup başarısız olduysa default değerlerin disk'e yazılması kullanıcı
+    /// verisinin **kalıcı silinmesi** demektir. Bu flag set edilirse runtime'da
+    /// otomatik save'ler (trust güncellemesi, stats record vb.) skip edilir;
+    /// kullanıcı UI'da explicit save denese de bloklanır.
+    ///
+    /// PR #109 review (Copilot): önceki tasarımda `eprintln!` uyarısı vardı
+    /// ama save'ler fiilen çalışıyordu — bu flag tutarlı bir guard sağlar.
+    /// Caller'lar `try_save_settings` / `try_save_stats` helper'larını
+    /// kullanmalı; ham `Settings::save` çağrısı bu kontrolü atlar.
+    pub persistence_blocked: AtomicBool,
 }
 
 impl AppState {
@@ -142,7 +156,24 @@ impl AppState {
         #[allow(clippy::expect_used)]
         let identity = DeviceIdentity::load_or_create_at(identity_path)
             .expect("DeviceIdentity yüklenemedi/oluşturulamadı — identity.key kontrol edin");
-        let stats_loaded = Stats::load(&stats_path);
+        // Stats corrupt olursa default + uyarı; geçmiş istatistikler kaybolur
+        // ama trust güvenlik kararı etkilenmez (stats sadece UI panel verisi).
+        // Bozuk dosya backup'lanır → kullanıcı isterse manuel kurtarır.
+        let (stats_loaded, stats_load_err) = Stats::load_or_default(&stats_path);
+        if let Some(err) = stats_load_err {
+            tracing::warn!("stats yüklenemedi: {err}");
+            if matches!(err, crate::settings::LoadError::Corrupt { .. }) {
+                match crate::settings::backup_corrupt_file(&stats_path) {
+                    Ok(backup) => tracing::warn!(
+                        "bozuk stats.json yedeklendi: {} — varsayılan ile devam",
+                        backup.display()
+                    ),
+                    Err(e) => tracing::warn!(
+                        "bozuk stats.json yedeklenemedi ({e}) — varsayılan stats ile devam edilecek; mevcut dosya sonraki kaydetmelerde üzerine yazılabilir (persistence_blocked guard ayrı bir politika; bu noktada otomatik aktive edilmez)"
+                    ),
+                }
+            }
+        }
         Arc::new(Self {
             settings: RwLock::new(settings),
             identity,
@@ -161,7 +192,39 @@ impl AppState {
             stats_path,
             default_device_name,
             default_download_dir,
+            persistence_blocked: AtomicBool::new(false),
         })
+    }
+
+    /// Settings snapshot'ı diske yaz — `persistence_blocked` true ise no-op.
+    /// Async context'ten güvenle çağrılır (sync I/O `spawn_blocking` ile sarılı).
+    pub fn try_save_settings(&self, snap: crate::settings::Settings) {
+        if self.persistence_blocked.load(Ordering::Relaxed) {
+            tracing::warn!(
+                "persistence_blocked=true → settings save SKIPPED (bozuk config korunuyor)"
+            );
+            return;
+        }
+        let path = self.config_path.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = snap.save(&path) {
+                tracing::warn!("settings save fail: {e}");
+            }
+        });
+    }
+
+    /// Stats snapshot'ı diske yaz — `persistence_blocked` true ise no-op.
+    pub fn try_save_stats(&self, snap: crate::stats::Stats) {
+        if self.persistence_blocked.load(Ordering::Relaxed) {
+            tracing::warn!("persistence_blocked=true → stats save SKIPPED (bozuk stats korunuyor)");
+            return;
+        }
+        let path = self.stats_path.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = snap.save(&path) {
+                tracing::warn!("stats save fail: {e}");
+            }
+        });
     }
 
     // ── pending_js / window flags ───────────────────────────────────────────
