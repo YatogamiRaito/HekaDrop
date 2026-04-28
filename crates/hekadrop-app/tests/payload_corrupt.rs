@@ -90,7 +90,7 @@ fn frame(
 fn tmp(label: &str) -> std::path::PathBuf {
     let pid = std::process::id();
     let rnd: u64 = rand::random();
-    std::env::temp_dir().join(format!("hd-payload-corrupt-{}-{}-{}.bin", label, pid, rnd))
+    std::env::temp_dir().join(format!("hd-payload-corrupt-{label}-{pid}-{rnd}.bin"))
 }
 
 #[tokio::test]
@@ -166,8 +166,7 @@ async fn duplicate_payload_id_reddedilir() {
     let msg = err.to_string();
     assert!(
         msg.contains("duplicate") || msg.contains("777"),
-        "hata mesajı duplicate/ id belirtmeli, aldı: {}",
-        msg
+        "hata mesajı duplicate/ id belirtmeli, aldı: {msg}"
     );
 }
 
@@ -204,7 +203,7 @@ async fn out_of_order_chunks_dogru_konuma_yazilir() {
                 "arrival-order append: offset alanı yazım pozisyonu için değil"
             );
         }
-        other => panic!("File bekleniyor, {:?}", other),
+        other => panic!("File bekleniyor, {other:?}"),
     }
     let _ = std::fs::remove_file(&path);
 }
@@ -233,8 +232,7 @@ async fn total_size_overrun_reddedilir() {
     let msg = err.to_string();
     assert!(
         msg.contains("overrun"),
-        "overrun mesajı bekleniyor, aldı: {}",
-        msg
+        "overrun mesajı bekleniyor, aldı: {msg}"
     );
     let _ = std::fs::remove_file(&path);
 }

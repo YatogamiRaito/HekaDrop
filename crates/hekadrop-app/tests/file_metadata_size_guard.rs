@@ -95,6 +95,6 @@ fn ui_gosterilen_deger_dogrudan_accept_s_den_gelir() {
     // görmez. Bu testin kontratı: clamp kararında boyut 0 olur.
     match classify_file_size(-42) {
         FileSizeGuard::Clamped => { /* UI'a 0 yazılmalı — bkz. connection.rs */ }
-        other => panic!("negatif size Clamped beklenirdi, geldi: {:?}", other),
+        other => panic!("negatif size Clamped beklenirdi, geldi: {other:?}"),
     }
 }

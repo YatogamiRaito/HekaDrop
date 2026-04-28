@@ -146,7 +146,7 @@ async fn cancelling_root_cascades_to_all_children() {
     for (name, h) in [("a", ha), ("b", hb), ("c", hc)] {
         let r = tokio::time::timeout(CANCEL_OBSERVE_TIMEOUT, h)
             .await
-            .unwrap_or_else(|_| panic!("{} task timeout", name))
+            .unwrap_or_else(|_| panic!("{name} task timeout"))
             .unwrap();
         assert!(r, "{name} root cancel'dan tetiklenmeli");
     }

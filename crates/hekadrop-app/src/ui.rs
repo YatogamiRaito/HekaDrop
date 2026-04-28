@@ -53,7 +53,7 @@ pub async fn prompt_accept(
 
     task::spawn_blocking(move || prompt_accept_blocking(&device, &pin, &files, text_count))
         .await
-        .map_err(|e| anyhow::anyhow!("UI task join: {}", e))
+        .map_err(|e| anyhow::anyhow!("UI task join: {e}"))
 }
 
 /// Tek bir peer-kontrollü alan (cihaz adı, dosya adı, PIN) için sıkı
@@ -1039,7 +1039,7 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
 /// notify kullanıyoruz.
 #[allow(dead_code)]
 pub fn send_progress_notify(device: &str, file: &str) {
-    notify("HekaDrop", &format!("Gönderiliyor: {} → {}", file, device));
+    notify("HekaDrop", &format!("Gönderiliyor: {file} → {device}"));
 }
 
 #[cfg(target_os = "macos")]

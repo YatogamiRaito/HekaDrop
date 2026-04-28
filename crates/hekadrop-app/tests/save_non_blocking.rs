@@ -100,7 +100,7 @@ struct Payload {
 impl Payload {
     fn new() -> Self {
         Self {
-            devices: (0..32).map(|i| format!("device-{}", i)).collect(),
+            devices: (0..32).map(|i| format!("device-{i}")).collect(),
             flags: vec![false; 64],
             counters: vec![0; 64],
         }
@@ -199,15 +199,12 @@ fn save_write_lock_not_held_during_disk_io() {
     // — her writer iterasyonu reader'ı tam blokladığı için max >= 5 ms.
     assert!(
         samples > 10,
-        "reader yeterince örnekleme yapamadı: {}",
-        samples
+        "reader yeterince örnekleme yapamadı: {samples}"
     );
     assert!(
         max_ms < 100.0,
-        "read() acquire max {:.3} ms — snapshot pattern regress olmuş olabilir \
-         (write guard disk I/O altında tutuluyor). Örnek sayısı: {}",
-        max_ms,
-        samples
+        "read() acquire max {max_ms:.3} ms — snapshot pattern regress olmuş olabilir \
+         (write guard disk I/O altında tutuluyor). Örnek sayısı: {samples}"
     );
 }
 
@@ -278,7 +275,6 @@ fn regressed_pattern_blocks_reader_self_check() {
     // Regressed pattern reader'ı en az save_slow süresi (5 ms) kadar bloklar.
     assert!(
         max_ms >= 3.0,
-        "regressed pattern reader'ı {:.3} ms bekletti — beklenen >=3 ms",
-        max_ms
+        "regressed pattern reader'ı {max_ms:.3} ms bekletti — beklenen >=3 ms"
     );
 }

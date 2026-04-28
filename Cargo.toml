@@ -68,6 +68,7 @@ get_unwrap = "warn"
 redundant_clone = "warn"
 use_self = "warn"
 # Kalite — düşük volüm, anlık temizlik
+uninlined_format_args = "warn"  # PR #87 auto-fix sonrası 110 yeni site birikmişti; auto-fix tekrar uygulandı + lint enforce
 manual_let_else = "warn"
 ignored_unit_patterns = "warn"
 trivially_copy_pass_by_ref = "warn"

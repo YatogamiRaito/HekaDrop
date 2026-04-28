@@ -299,8 +299,7 @@ mod tests {
         let mode = meta.permissions().mode() & 0o777;
         assert_eq!(
             mode, 0o600,
-            "identity.key 0o600 olmalı, bulunan: 0o{:o}",
-            mode
+            "identity.key 0o600 olmalı, bulunan: 0o{mode:o}"
         );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -315,8 +314,7 @@ mod tests {
         let err = format!("{:#}", res.err().unwrap());
         assert!(
             err.contains("bozuk") || err.contains("32 bayt"),
-            "hata mesajı bozukluğu belirtmeli: {}",
-            err
+            "hata mesajı bozukluğu belirtmeli: {err}"
         );
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }

@@ -57,7 +57,7 @@ pub fn url_scheme_host(url: &str) -> String {
     if host_port.is_empty() {
         return "<unparsable>".to_string();
     }
-    format!("{}://{}", scheme, host_port)
+    format!("{scheme}://{host_port}")
 }
 
 #[cfg(test)]
