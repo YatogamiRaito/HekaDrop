@@ -14,6 +14,6 @@ pub(crate) fn stats_path() -> PathBuf {
     crate::platform::config_dir().join("stats.json")
 }
 
-pub fn config_path() -> PathBuf {
+pub(crate) fn config_path() -> PathBuf {
     crate::platform::config_dir().join("config.json")
 }

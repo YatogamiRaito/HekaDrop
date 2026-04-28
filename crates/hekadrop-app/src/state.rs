@@ -17,7 +17,7 @@
 // kasıtlı API genişliği — bin'de doğrudan referans yok ama integration
 // test'leri ve gelecekteki UI tab'ları için açık tutuluyor.
 #[allow(unused_imports)]
-pub use hekadrop_core::state::{
+pub(crate) use hekadrop_core::state::{
     AppState, HistoryItem, ProgressState, RateLimiter, TransferGuard, DEFAULT_COMPLETED_IDLE_DELAY,
 };
 
@@ -26,7 +26,7 @@ use std::sync::{Arc, OnceLock};
 
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
 
-pub fn init(settings: Settings) {
+pub(crate) fn init(settings: Settings) {
     // App-singleton katmanı path'leri ve platform default'larını inject
     // ediyor — `AppState::new` core'da global'siz çalışır. Path resolution
     // `crate::paths` (`crate::platform::config_dir()` üstünde) sorumluluğu;
@@ -42,7 +42,7 @@ pub fn init(settings: Settings) {
     ));
 }
 
-pub fn get() -> Arc<AppState> {
+pub(crate) fn get() -> Arc<AppState> {
     // INVARIANT: `init()` her zaman `main`'in ilk işlerinden — `get()`
     // öncesinde çağrılması garanti. Aksi durum programlama hatası, panik
     // yerine sessiz default state üretmek bug'ı maskeler.
@@ -59,51 +59,51 @@ pub fn get() -> Arc<AppState> {
 // (artık core'da) doğrudan `Arc<AppState>` parametresi alıyor — singleton
 // lookup yok.
 
-pub fn enqueue_js(js: String) {
+pub(crate) fn enqueue_js(js: String) {
     get().enqueue_js(js);
 }
 
-pub fn drain_js() -> Vec<String> {
+pub(crate) fn drain_js() -> Vec<String> {
     get().drain_js()
 }
 
-pub fn request_hide_window() {
+pub(crate) fn request_hide_window() {
     get().request_hide_window();
 }
 
-pub fn request_show_window() {
+pub(crate) fn request_show_window() {
     get().request_show_window();
 }
 
-pub fn consume_hide_window() -> bool {
+pub(crate) fn consume_hide_window() -> bool {
     get().consume_hide_window()
 }
 
-pub fn consume_show_window() -> bool {
+pub(crate) fn consume_show_window() -> bool {
     get().consume_show_window()
 }
 
-pub fn request_cancel(id: Option<&str>) {
+pub(crate) fn request_cancel(id: Option<&str>) {
     get().request_cancel(id);
 }
 
 /// Legacy kompat: tray menüsündeki "İptal" "hepsini iptal et" anlamındaydı.
-pub fn request_cancel_all() {
+pub(crate) fn request_cancel_all() {
     request_cancel(None);
 }
 
-pub fn set_listen_port(p: u16) {
+pub(crate) fn set_listen_port(p: u16) {
     get().set_listen_port(p);
 }
 
-pub fn listen_port() -> u16 {
+pub(crate) fn listen_port() -> u16 {
     get().listen_port()
 }
 
-pub fn read_history() -> Vec<HistoryItem> {
+pub(crate) fn read_history() -> Vec<HistoryItem> {
     get().read_history()
 }
 
-pub fn read_progress() -> ProgressState {
+pub(crate) fn read_progress() -> ProgressState {
     get().read_progress()
 }

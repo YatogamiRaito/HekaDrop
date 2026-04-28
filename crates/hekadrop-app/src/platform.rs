@@ -37,7 +37,7 @@ fn home_dir() -> PathBuf {
 /// - macOS: `~/Library/Application Support/HekaDrop`
 /// - Linux: `$XDG_CONFIG_HOME/HekaDrop` → `~/.config/HekaDrop`
 /// - Windows: `FOLDERID_RoamingAppData\HekaDrop` (genelde `%APPDATA%\HekaDrop`)
-pub fn config_dir() -> PathBuf {
+pub(crate) fn config_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         home_dir().join("Library/Application Support/HekaDrop")
@@ -62,7 +62,7 @@ pub fn config_dir() -> PathBuf {
 /// - macOS: `~/Library/Logs/HekaDrop`
 /// - Linux: `$XDG_STATE_HOME/HekaDrop/logs` → `~/.local/state/HekaDrop/logs`
 /// - Windows: `FOLDERID_LocalAppData\HekaDrop\logs` — log'lar roam etmesin.
-pub fn logs_dir() -> PathBuf {
+pub(crate) fn logs_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         home_dir().join("Library/Logs/HekaDrop")
@@ -88,7 +88,7 @@ pub fn logs_dir() -> PathBuf {
 /// - macOS: `$HOME/Downloads`
 /// - Windows: `FOLDERID_Downloads` (kullanıcının özel konuma taşımış olması
 ///   durumunda da doğru yolu döner)
-pub fn default_download_dir() -> PathBuf {
+pub(crate) fn default_download_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         if let Ok(out) = Command::new("xdg-user-dir").arg("DOWNLOAD").output() {
@@ -117,7 +117,7 @@ pub fn default_download_dir() -> PathBuf {
 /// - Linux: `/etc/hostname` → `hostname` komutu → fallback "HekaDrop Linux"
 /// - Windows: `GetComputerNameExW(ComputerNameDnsHostname)` → fallback
 ///   `%COMPUTERNAME%` → "HekaDrop PC"
-pub fn device_name() -> String {
+pub(crate) fn device_name() -> String {
     if let Ok(v) = std::env::var("HEKADROP_NAME") {
         if !v.is_empty() {
             return v;
@@ -175,7 +175,7 @@ pub fn device_name() -> String {
 }
 
 /// Verilen dosyayı/dizini işletim sisteminin varsayılan programıyla açar.
-pub fn open_path(path: &Path) {
+pub(crate) fn open_path(path: &Path) {
     #[cfg(target_os = "macos")]
     {
         let _ = Command::new("open").arg(path).spawn();
@@ -191,7 +191,7 @@ pub fn open_path(path: &Path) {
 }
 
 /// Dosyayı dosya yöneticisinde (Finder / Nautilus / Explorer) seçili olarak gösterir.
-pub fn reveal_path(path: &Path) {
+pub(crate) fn reveal_path(path: &Path) {
     #[cfg(target_os = "macos")]
     {
         let _ = Command::new("open").arg("-R").arg(path).spawn();
@@ -301,7 +301,7 @@ mod tests {
 }
 
 /// URL'i tarayıcıda açar.
-pub fn open_url(url: &str) {
+pub(crate) fn open_url(url: &str) {
     #[cfg(target_os = "macos")]
     {
         let _ = Command::new("open").arg(url).spawn();
@@ -321,7 +321,7 @@ pub fn open_url(url: &str) {
 /// - macOS: `pbpaste`
 /// - Linux: Wayland (`wl-paste`) → X11 (`xclip` → `xsel`) sırayla
 /// - Windows: `GetClipboardData(CF_UNICODETEXT)` — UTF-16 → UTF-8 lossy
-pub fn paste_from_clipboard() -> Option<String> {
+pub(crate) fn paste_from_clipboard() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         win::clipboard_get().ok().flatten()
@@ -364,7 +364,7 @@ pub fn paste_from_clipboard() -> Option<String> {
 /// - Linux: Wayland (`wl-copy`) → X11 (`xclip` → `xsel`) sırayla
 /// - Windows: `OpenClipboard` + `SetClipboardData(CF_UNICODETEXT)` — UTF-16 LE,
 ///   `clip.exe`'nin ANSI-yorumu yüzünden Türkçe/non-ASCII bozulmasın
-pub fn copy_to_clipboard(text: &str) {
+pub(crate) fn copy_to_clipboard(text: &str) {
     #[cfg(target_os = "windows")]
     {
         if win::clipboard_set(text).is_err() {

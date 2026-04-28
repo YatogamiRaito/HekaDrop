@@ -18,13 +18,13 @@ use tokio::task;
 #[allow(unused_imports)]
 use std::path::PathBuf;
 
-pub struct FileSummary {
+pub(crate) struct FileSummary {
     pub name: String,
     pub size: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcceptResult {
+pub(crate) enum AcceptResult {
     Reject,
     Accept,
     AcceptAndTrust,
@@ -34,7 +34,7 @@ pub enum AcceptResult {
 ///   - Reddet
 ///   - Kabul et
 ///   - Kabul + güven (device_name ileride otomatik kabul edilir)
-pub async fn prompt_accept(
+pub(crate) async fn prompt_accept(
     device_name: &str,
     pin_code: &str,
     files: &[FileSummary],
@@ -348,7 +348,7 @@ fn prompt_accept_blocking(
 /// butona bastığında dosya `xdg-open` ile, klasör ise file-manager ile açılır.
 /// macOS'ta aksiyon butonu desteklenmez — düz bildirim + tıklanınca Finder'da
 /// açma için fallback uygulanır (bkz. `NotificationCenter` gelecek iş).
-pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
+pub(crate) fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
     #[cfg(target_os = "macos")]
     {
         let _ = path; // macOS'ta aksiyon butonlu notify henüz yok.
@@ -428,7 +428,7 @@ pub fn notify_file_received(title: &str, body: &str, path: std::path::PathBuf) {
 }
 
 /// Kısa bildirim. Başarı/hata mesajları için.
-pub fn notify(title: &str, body: &str) {
+pub(crate) fn notify(title: &str, body: &str) {
     #[cfg(target_os = "macos")]
     {
         let script = format!(
@@ -473,7 +473,7 @@ pub fn notify(title: &str, body: &str) {
 ///
 /// Dialog aracı yoksa (headless) sadece log'a yazılır — zaten log dosyası
 /// da açılamamış olabilir, ama `tracing` stdout layer'ı çalışmaya devam eder.
-pub fn fatal_error_dialog(title: &str, body: &str) {
+pub(crate) fn fatal_error_dialog(title: &str, body: &str) {
     tracing::error!("fatal: {} — {}", title, body);
     #[cfg(target_os = "macos")]
     {
@@ -537,7 +537,7 @@ pub fn fatal_error_dialog(title: &str, body: &str) {
 }
 
 /// Bilgi diyaloğu (blocking değil, fire-and-forget).
-pub fn show_info(title: &str, body: &str) {
+pub(crate) fn show_info(title: &str, body: &str) {
     #[cfg(target_os = "macos")]
     {
         let script = format!(
@@ -603,12 +603,12 @@ pub fn show_info(title: &str, body: &str) {
 
 /// `choose file` dialog → seçilen dosyanın tam yolu veya None (tek dosya).
 #[allow(dead_code)]
-pub async fn choose_file() -> Option<std::path::PathBuf> {
+pub(crate) async fn choose_file() -> Option<std::path::PathBuf> {
     choose_files().await.and_then(|mut v| v.pop())
 }
 
 /// Çoklu dosya seçim dialog'u → seçilen tüm path'lerin listesi.
-pub async fn choose_files() -> Option<Vec<std::path::PathBuf>> {
+pub(crate) async fn choose_files() -> Option<Vec<std::path::PathBuf>> {
     task::spawn_blocking(choose_files_blocking)
         .await
         .ok()
@@ -751,7 +751,7 @@ fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
 }
 
 /// `choose folder` dialog → seçilen klasörün path'i.
-pub async fn choose_folder() -> Option<std::path::PathBuf> {
+pub(crate) async fn choose_folder() -> Option<std::path::PathBuf> {
     task::spawn_blocking(choose_folder_blocking)
         .await
         .ok()
@@ -861,7 +861,7 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
 }
 
 /// Listeden cihaz seçim dialog'u. `labels` içindeki etiket indeks'i döner.
-pub async fn choose_device(labels: Vec<String>) -> Option<usize> {
+pub(crate) async fn choose_device(labels: Vec<String>) -> Option<usize> {
     if labels.is_empty() {
         return None;
     }
@@ -1038,7 +1038,7 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
 /// Dosya keşif sırasında basit bir ilerleme/bildirim dialog'u olmadığı için
 /// notify kullanıyoruz.
 #[allow(dead_code)]
-pub fn send_progress_notify(device: &str, file: &str) {
+pub(crate) fn send_progress_notify(device: &str, file: &str) {
     notify("HekaDrop", &format!("Gönderiliyor: {file} → {device}"));
 }
 
