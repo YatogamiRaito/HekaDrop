@@ -103,11 +103,58 @@ fn parse(info: &ResolvedService) -> Option<DiscoveredDevice> {
             .to_string()
     });
 
+    let extension_supported = parse_extension_flag(info.get_property_val_str("ext"));
+
     Some(DiscoveredDevice {
         name,
         addr,
         port,
         device_type,
         fullname: info.get_fullname().to_string(),
+        extension_supported,
     })
+}
+
+/// RFC-0003 §3.3 peer-detection — TXT record'undaki `ext` alanından HekaDrop
+/// extension destek flag'ini parse et.
+///
+/// Eski Quick Share peer'larında (Pixel/Samsung/NearDrop/rquickshare) `ext`
+/// alanı yoktur → `None` → `false` (legacy mode).
+/// HekaDrop peer'ları `ext=1` yollar → `Some("1")` → `true`.
+/// Beklenmeyen değerler (`"0"`, `"true"`, vb.) → `false` (defensive — yalnız
+/// "1" tam pozitif sinyal sayılır).
+#[must_use]
+pub(crate) fn parse_extension_flag(prop_value: Option<&str>) -> bool {
+    prop_value == Some("1")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Eski Quick Share peer (Pixel/Samsung/NearDrop) — `ext` alanı yok.
+    #[test]
+    fn missing_ext_property_legacy() {
+        assert!(!parse_extension_flag(None));
+    }
+
+    /// HekaDrop peer — `ext=1` spec değeri.
+    #[test]
+    fn ext_one_signals_extension_support() {
+        assert!(parse_extension_flag(Some("1")));
+    }
+
+    /// Defensive: "1" dışı hiçbir değer pozitif sinyal sayılmaz.
+    /// Saldırgan veya yanlışlıkla farklı flag yollayan peer extension
+    /// destekliyor sayılmamalı (false-positive → connection drop riski).
+    #[test]
+    fn unexpected_values_default_to_legacy() {
+        assert!(!parse_extension_flag(Some("0")));
+        assert!(!parse_extension_flag(Some("true")));
+        assert!(!parse_extension_flag(Some("yes")));
+        assert!(!parse_extension_flag(Some("")));
+        assert!(!parse_extension_flag(Some(" 1")));
+        assert!(!parse_extension_flag(Some("1 ")));
+        assert!(!parse_extension_flag(Some("2")));
+    }
 }
