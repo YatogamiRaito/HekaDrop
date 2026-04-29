@@ -170,7 +170,7 @@ Negotiated `active_caps = my_caps & peer_caps`. Bit-AND seçimi: bir taraf bir �
 
 ```
 IKM  = next_secret          # mevcut UKEY2 türevi, src/crypto.rs Level-2 (§6.3 threat-model)
-salt = empty                # zero-length salt; domain separation `info` etiketinden geliyor
+salt = []                   # zero-length byte sequence; domain separation `info` etiketinden geliyor
 info = b"hekadrop chunk-hmac v1"
 chunk_hmac_key = HKDF-SHA256(IKM, salt, info, 32)
 ```

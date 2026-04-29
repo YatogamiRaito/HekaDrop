@@ -322,7 +322,9 @@ mod tests {
             // payload yolla (legacy OfflineFrame'i simüle ediyor — pratikte
             // protobuf encode'una gerek yok; magic mismatch dispatch'te
             // FrameKind::Offline döndürecek, plain bytes leftover'a düşecek).
-            let plain_legacy = b"NOT_A_HEKADROP_FRAME_SENTINEL".to_vec();
+            // PR #115 Gemini medium: `Bytes::from_static` heap allocation
+            // önler + dönüş tipi Bytes olarak kalır (assert_eq! tip uyumu).
+            let plain_legacy = Bytes::from_static(b"NOT_A_HEKADROP_FRAME_SENTINEL");
             let enc = server_ctx.encrypt(&plain_legacy).unwrap();
             let _ = frame::write_frame(&mut server_socket, &enc).await;
             tokio::time::sleep(Duration::from_millis(100)).await;
