@@ -14,7 +14,9 @@
 //! ve timing değişmez. Refactor pure mechanical decoupling.
 
 use async_trait::async_trait;
-use hekadrop_core::ui_port::{AcceptDecision, FileSummary, UiNotification, UiPort};
+use hekadrop_core::ui_port::{
+    AcceptDecision, FileSummary, FolderPromptSummary, UiNotification, UiPort,
+};
 
 /// `connection::PlatformOps` trait'inin app-side concrete impl'i —
 /// `crate::platform::open_url` / `crate::platform::copy_to_clipboard`'ı
@@ -89,6 +91,24 @@ impl UiPort for UiAdapter {
                 let body = crate::i18n::tf(body_key, &args_refs);
                 crate::ui::notify_file_received(title, &body, path);
             }
+            UiNotification::FolderReceived {
+                title_key,
+                body_key,
+                body_args,
+                path,
+            } => {
+                // RFC-0005 PR-F: folder completion toast. Notification altyapısı
+                // file ile aynı (`notify-rust` action: open) — ancak file tıklanınca
+                // `open_path` dosyayı açar; klasörde aynı çağrı klasörü açar
+                // (Finder/Explorer/xdg-open). Reveal action mantıksal olarak
+                // duplicate olur (klasör zaten parent'ı olur), o yüzden
+                // file path'iyle aynı helper'a delege; OS-bazlı reveal davranışı
+                // file için optimal ama klasör için de bozulmaz (parent dir açar).
+                let title = crate::i18n::t(title_key);
+                let args_refs: Vec<&str> = body_args.iter().map(String::as_str).collect();
+                let body = crate::i18n::tf(body_key, &args_refs);
+                crate::ui::notify_file_received(title, &body, path);
+            }
             UiNotification::ToastRaw { title, body } => {
                 crate::ui::notify(&title, &body);
             }
@@ -106,6 +126,7 @@ impl UiPort for UiAdapter {
         pin: &str,
         files: &[FileSummary],
         text_count: usize,
+        folder: Option<&FolderPromptSummary>,
     ) -> AcceptDecision {
         // Core FileSummary → app ui::FileSummary type conversion. İki struct
         // alan bazında izomorfik; convert burada zorunlu çünkü `crate::ui`
@@ -117,7 +138,15 @@ impl UiPort for UiAdapter {
                 size: f.size,
             })
             .collect();
-        let result = crate::ui::prompt_accept(device, pin, &ui_files, text_count).await;
+        // RFC-0005 PR-F: folder summary'i app-side ui::FolderSummary'e map et.
+        // Core type'ı `crate::ui` modülüne sızdırmamak için manual convert.
+        let ui_folder = folder.map(|f| crate::ui::FolderSummary {
+            root_name: f.root_name.clone(),
+            entry_count: f.entry_count,
+            total_size: f.total_size,
+        });
+        let result =
+            crate::ui::prompt_accept(device, pin, &ui_files, text_count, ui_folder.as_ref()).await;
         match result {
             Ok(crate::ui::AcceptResult::Accept) => AcceptDecision::Accept,
             Ok(crate::ui::AcceptResult::AcceptAndTrust) => AcceptDecision::AcceptAndTrust,

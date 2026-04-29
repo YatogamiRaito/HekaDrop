@@ -28,7 +28,7 @@ use crate::sharing::nearby::{
     PairedKeyEncryptionFrame, PairedKeyResultFrame, V1Frame as ShV1Frame,
 };
 use crate::state::{self, AppState, HistoryItem, ProgressState};
-use crate::ui_port::{AcceptDecision, FileSummary, UiNotification, UiPort};
+use crate::ui_port::{AcceptDecision, FileSummary, FolderPromptSummary, UiNotification, UiPort};
 use crate::ukey2;
 use anyhow::{anyhow, Context, Result};
 use prost::Message;
@@ -563,10 +563,18 @@ fn finalize_received_payload(
                     when: std::time::SystemTime::now(),
                     sha256_short: hex::encode(sha256).chars().take(16).collect(),
                 });
-                ui.notify(UiNotification::FileReceived {
-                    title_key: "notify.app_name",
-                    body_key: "notify.received",
-                    body_args: vec![folder_label, format!("{}", extracted.file_count)],
+                // RFC-0005 PR-F: folder-specific notification — `FolderReceived`
+                // varyantı `notification.folder_received.*` i18n key'leri ile
+                // "klasör tamam" başlığı + "N dosya, X" body, "Klasörü Aç"
+                // aksiyon path'i (`platform::open_path` Finder/Explorer/xdg).
+                ui.notify(UiNotification::FolderReceived {
+                    title_key: "notification.folder_received.title",
+                    body_key: "notification.folder_received.body",
+                    body_args: vec![
+                        folder_label,
+                        extracted.file_count.to_string(),
+                        human_size(total_size),
+                    ],
                     path: extracted.final_path,
                 });
             }
@@ -586,6 +594,42 @@ fn finalize_received_payload(
     }
     // Mevcut individual file akışı — bundle marker yok.
     finalize_received_file(peer, path, total_size, sha256, remote_name, state, ui);
+}
+
+/// RFC-0005 PR-F — Introduction'daki bundle marker'larından accept dialog
+/// için folder summary üret. Aynı Introduction içinde tek bundle olur (sender
+/// `build_introduction_folder` tek `<root>.hekabundle` `FileMetadata` + her
+/// inner file için ek metadata gönderir); birden fazla bundle gelirse ilkini
+/// kullanırız (defansif — spec dışı).
+///
+/// `entry_count` = `planned_files` − `planned_bundles`: bundle marker kendisi
+/// dosya değil, manifest'teki gerçek file entry sayısı kalır.
+///
+/// `root_name` bundle filename'inden `.hekabundle` suffix strip ile
+/// türetilir; sender invariantı `<sanitized_root>.hekabundle`. Strip
+/// başarısızsa filename olduğu gibi gösterilir (defansif).
+fn build_folder_prompt_summary(
+    planned_bundles: &[(i64, i64, std::path::PathBuf)],
+    planned_files: &[(i64, std::path::PathBuf, String, i64)],
+) -> Option<FolderPromptSummary> {
+    let (bundle_pid, _, _) = planned_bundles.first()?;
+    let (_, _, bundle_name, bundle_size) =
+        planned_files.iter().find(|(pid, ..)| pid == bundle_pid)?;
+    let root_name = bundle_name
+        .strip_suffix(".hekabundle")
+        .unwrap_or(bundle_name)
+        .to_string();
+    // INVARIANT (CLAUDE.md I-5): planned_files.len() ≤ 1000 (Introduction
+    // flood guard L817), planned_bundles.len() ≤ planned_files.len().
+    // Saturating sub + u32 cast (max 1000 ≪ u32::MAX) güvenli.
+    let total_entries = planned_files.len().saturating_sub(planned_bundles.len());
+    #[allow(clippy::cast_possible_truncation)] // INVARIANT: ≤ 1000 < u32::MAX
+    let entry_count = total_entries as u32;
+    Some(FolderPromptSummary {
+        root_name,
+        entry_count,
+        total_size: *bundle_size,
+    })
 }
 
 /// `CompletedPayload::File` finalize ortak işleri (stats record, history push,
@@ -1072,8 +1116,22 @@ async fn handle_sharing_frame(
                         pin: pin_code.to_string(),
                     });
                 }
-                ui.prompt_accept(remote_name, pin_code, &summaries, text_count)
-                    .await
+                // RFC-0005 PR-F: peer Introduction'da bundle MIME marker
+                // gönderdiyse `planned_bundles` non-empty. UI'a klasör
+                // summary'i geç → dialog body "klasör — N dosya, X MB"
+                // satırı ile zenginleşir. Sender `build_introduction_folder`
+                // bundle marker + her bir inner file için ek FileMetadata
+                // gönderir; entry_count = (toplam planned_files) − (bundle
+                // marker count) = manifest'teki file entry sayısı.
+                let folder_summary = build_folder_prompt_summary(&planned_bundles, &planned_files);
+                ui.prompt_accept(
+                    remote_name,
+                    pin_code,
+                    &summaries,
+                    text_count,
+                    folder_summary.as_ref(),
+                )
+                .await
             };
 
             let ok = !matches!(decision, AcceptDecision::Reject);

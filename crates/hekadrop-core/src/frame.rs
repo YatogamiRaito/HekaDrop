@@ -245,13 +245,13 @@ mod dispatcher_tests {
                 if let Some(Payload::Capabilities(c)) = frame.payload {
                     assert_eq!(c.features, 0x07);
                     let active = ActiveCapabilities::negotiate(features::ALL_SUPPORTED, c.features);
-                    // PR-G: RESUME_V1 ALL_SUPPORTED'a geri eklendi (receiver
-                    // append/seek tamamlandı). Peer 0x07 advertise edince
-                    // intersection CHUNK_HMAC + RESUME_V1; FOLDER_STREAM_V1
-                    // bizim build'imizde yok → düşer.
+                    // PR-F (RFC-0005): FOLDER_STREAM_V1 da ALL_SUPPORTED'a
+                    // eklendi. Peer 0x07 advertise edince intersection
+                    // CHUNK_HMAC + RESUME_V1 + FOLDER_STREAM_V1 — üçü de
+                    // aktif.
                     assert!(active.has(features::CHUNK_HMAC_V1));
                     assert!(active.has(features::RESUME_V1));
-                    assert!(!active.has(features::FOLDER_STREAM_V1));
+                    assert!(active.has(features::FOLDER_STREAM_V1));
                 } else {
                     panic!("capabilities oneof beklendi");
                 }

@@ -32,6 +32,24 @@ pub struct FileSummary {
     pub size: i64,
 }
 
+/// RFC-0005 PR-F — accept dialog enrichment. Peer'dan gelen Introduction'da
+/// `application/x-hekadrop-folder` MIME marker bulunduğunda connection
+/// handler bu summary'i doldurur; UI dialog body'sinde "klasör — N dosya, X
+/// MB" satırı ile dosya yerine klasör bağlamı gösterir.
+///
+/// `root_name`: peer-controlled string. **Sender tarafında** zaten
+/// `folder::sanitize::sanitize_root_name` ile path-traversal/null-byte/depth
+/// kontrolünden geçer; receiver UI rendering öncesi ek kontrol gerekmez
+/// (CLAUDE.md I-5). `entry_count`: manifest entry sayısı (file + dir);
+/// peer-controlled fakat sender tarafında `MAX_FOLDER_ENTRIES` cap altında.
+/// `total_size`: bundle içi toplam byte (announced); receiver legacy
+/// `MAX_FILE_BYTES` guard'ı zaten Introduction parse aşamasında uyguluyor.
+pub struct FolderPromptSummary {
+    pub root_name: String,
+    pub entry_count: u32,
+    pub total_size: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcceptDecision {
     Reject,
@@ -53,6 +71,17 @@ pub enum UiNotification {
         body_args: Vec<String>,
         path: PathBuf,
     },
+    /// RFC-0005 PR-F — klasör alımı tamamlandı toast'u. `path` extract sonrası
+    /// final klasör konumu; UI bu yola "Klasörü Aç" aksiyonu bağlar
+    /// (`platform::open_path`: Finder/Explorer/xdg-open). `body_args` =
+    /// `[root_name, entry_count, human_size]`; çevrim app tarafında
+    /// `notification.folder_received.body` key'i ile yapılır.
+    FolderReceived {
+        title_key: &'static str,
+        body_key: &'static str,
+        body_args: Vec<String>,
+        path: PathBuf,
+    },
     /// Hardcoded body (legacy — i18n key'e taşınması bekleyen 2 site).
     /// TODO: i18n key haline getir, bu varyantı kaldır.
     ToastRaw { title: String, body: String },
@@ -67,11 +96,16 @@ pub trait UiPort: Send + Sync {
 
     /// User'dan kabul kararı al — modal blocking. `text_count` 0 ise dosya
     /// transferi, ≥1 ise text + dosya kombinasyonu (UI farklı render eder).
+    ///
+    /// `folder` `Some` iken peer bundle MIME marker ile bir klasör gönderiyor;
+    /// UI dialog body'sini "klasör — N dosya, X MB" satırı ile zenginleştirir.
+    /// `None` iken mevcut bireysel dosya/metin akışı (RFC-0005 öncesi davranış).
     async fn prompt_accept(
         &self,
         device: &str,
         pin: &str,
         files: &[FileSummary],
         text_count: usize,
+        folder: Option<&FolderPromptSummary>,
     ) -> AcceptDecision;
 }

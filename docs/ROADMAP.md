@@ -118,11 +118,9 @@ README'nin vaat ettiklerini kodun gerçekten yaptığı noktaya çek. Monolitik 
 - Screenshots eklenir (placeholder'lar yerine gerçek macOS + Linux + Windows ekran görüntüleri; `docs/screenshots/`).
 
 **v0.8.0 — Protokol Sağlamlaştırma (2026-07-31)**
-- **Chunk-level HMAC**: Her 512 KiB chunk için ayrı HMAC-SHA256 tag; `secure.rs` refactor. Mid-stream corruption anında tespit, tüm dosyayı beklemek yerine chunk başında kesim.
-- **Transfer resume**: Protokol mesaj eklentisi `ResumeHint { session_id, file_id, offset, partial_hash }`. Receiver yarım dosyaları `~/.hekadrop/partial/` altında tutar (7 gün TTL, temizlik job'u). Sender `ResumeHint`'i görünce seeker'dan başlar.
-  - Protokol spec: `docs/protocol/resume.md` (RFC formatında, alan uzunlukları byte-level).
-  - Geri uyumluluk: sender capabilities negotiation (Quick Share `extra_capabilities` field).
-- **Folder streaming**: `FolderPayload` için tar-like stream format (dahili, disk'te tar oluşturmaz); her dosya yine ayrı SHA-256 + chunk-HMAC ile korunur.
+- ✅ **Chunk-level HMAC** (RFC-0003, `CHUNK_HMAC_V1`): her 512 KiB chunk için ayrı HMAC-SHA256 tag; `secure.rs` refactor. Mid-stream corruption anında tespit, tüm dosyayı beklemek yerine chunk başında kesim.
+- ✅ **Transfer resume** (RFC-0004, `RESUME_V1`): protokol mesaj eklentisi `ResumeHint { session_id, file_id, offset, partial_hash }`. Receiver yarım dosyaları `~/.hekadrop/partial/` altında tutar (7 gün TTL, cleanup sweep job'u). Sender `ResumeHint`'i görünce seeker'dan başlar. Geri uyumluluk: capability negotiation. Spec: `docs/protocol/resume.md`. PR-G ile re-enabled (PR #138).
+- ✅ **Folder streaming** (RFC-0005, `FOLDER_STREAM_V1`): `HEKABUND` v1 container — header + JSON manifest + per-file body + trailer SHA-256. Disk'te tar oluşturmaz; in-memory streaming. Her dosya yine ayrı SHA-256 + chunk-HMAC + RESUME_V1 ile korunur. Receiver atomic-reject pipeline (staging dir + Drop guard). UI: accept dialog folder summary + completion notification "Klasörü Aç" aksiyonu (Finder/Explorer/xdg-open). Spec: `docs/protocol/folder-payload.md`. PR-A → PR-F.
 - **Issue #17 fix**: Trusted device verification UKEY2 sonrasına taşınır. Pre-handshake rate-limit bypass kaldırılır. Test: `tests/trust_race.rs` — name/id spoof senaryosu.
 - **Protobuf şema versioning**: `proto/v2/` dizini; geriye uyumluluk için v1 shim.
 

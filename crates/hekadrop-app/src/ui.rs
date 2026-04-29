@@ -23,6 +23,18 @@ pub(crate) struct FileSummary {
     pub size: i64,
 }
 
+/// RFC-0005 PR-F — accept dialog folder enrichment payload.
+///
+/// Sender peer Introduction'ında `application/x-hekadrop-folder` MIME marker
+/// ile bundle gönderdiğinde [`prompt_accept`] çağrısı buna sahip olur ve
+/// dialog body'sinde dosya listesi yerine "klasör — N dosya, X" özeti
+/// gösterilir.
+pub(crate) struct FolderSummary {
+    pub root_name: String,
+    pub entry_count: u32,
+    pub total_size: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AcceptResult {
     Reject,
@@ -34,11 +46,16 @@ pub(crate) enum AcceptResult {
 ///   - Reddet
 ///   - Kabul et
 ///   - Kabul + güven (`device_name` ileride otomatik kabul edilir)
+///
+/// `folder` `Some` iken peer bundle gönderiyor (RFC-0005 PR-F); dosya listesi
+/// yerine `prompt.folder_accept.body` çevrim'i ile zenginleştirilmiş satır
+/// gösterilir.
 pub(crate) async fn prompt_accept(
     device_name: &str,
     pin_code: &str,
     files: &[FileSummary],
     text_count: usize,
+    folder: Option<&FolderSummary>,
 ) -> Result<AcceptResult> {
     // Peer-kontrollü alanları dialog gövdesine yerleştirmeden önce
     // control karakterleri (özellikle `\n`, `\r`) strip et — kötü niyetli
@@ -50,10 +67,20 @@ pub(crate) async fn prompt_accept(
         .iter()
         .map(|f| (sanitize_field(&f.name), f.size))
         .collect();
+    // RFC-0005 PR-F: root_name peer-controlled — sender'da
+    // sanitize_root_name'den geçti ama UI display öncesi defansif bir kez
+    // daha control char strip.
+    let folder_owned = folder.map(|f| FolderSummary {
+        root_name: sanitize_field(&f.root_name),
+        entry_count: f.entry_count,
+        total_size: f.total_size,
+    });
 
-    task::spawn_blocking(move || prompt_accept_blocking(&device, &pin, &files, text_count))
-        .await
-        .map_err(|e| anyhow::anyhow!("UI task join: {e}"))
+    task::spawn_blocking(move || {
+        prompt_accept_blocking(&device, &pin, &files, text_count, folder_owned.as_ref())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("UI task join: {e}"))
 }
 
 /// Tek bir peer-kontrollü alan (cihaz adı, dosya adı, PIN) için sıkı
@@ -76,7 +103,26 @@ fn sanitize_display_text(s: &str) -> String {
         .collect()
 }
 
-fn format_payload_lines(files: &[(String, i64)], text_count: usize) -> String {
+fn format_payload_lines(
+    files: &[(String, i64)],
+    text_count: usize,
+    folder: Option<&FolderSummary>,
+) -> String {
+    // RFC-0005 PR-F: bundle MIME marker → "klasör — N dosya, X" satırı
+    // dosya listesinin önüne. Folder summary mevcutken peer'ın gerçek payload
+    // semantiği "tek bundle" (bundle_name `<root>.hekabundle` summaries'in
+    // içinde dosya gibi görünüyor — kullanıcıya "klasör" olarak sunuyoruz ki
+    // dağılım/extract şeffaf kalsın).
+    if let Some(f) = folder {
+        return crate::i18n::tf(
+            "prompt.folder_accept.body",
+            &[
+                &f.root_name,
+                &f.entry_count.to_string(),
+                &human_size(f.total_size),
+            ],
+        );
+    }
     if files.is_empty() {
         if text_count > 0 {
             crate::i18n::tf("accept.text_count", &[&text_count.to_string()])
@@ -98,8 +144,9 @@ fn prompt_accept_blocking(
     pin: &str,
     files: &[(String, i64)],
     text_count: usize,
+    folder: Option<&FolderSummary>,
 ) -> AcceptResult {
-    let files_str = format_payload_lines(files, text_count);
+    let files_str = format_payload_lines(files, text_count, folder);
     let message = crate::i18n::tf("accept.body", &[device, pin, &files_str]);
     let btn_reject = crate::i18n::t("accept.reject");
     let btn_accept = crate::i18n::t("accept.accept");
@@ -153,6 +200,7 @@ fn prompt_accept_blocking(
     pin: &str,
     files: &[(String, i64)],
     text_count: usize,
+    folder: Option<&FolderSummary>,
 ) -> AcceptResult {
     // Windows MessageBoxW ile 3 seçenekli dialog:
     //   Evet  = Kabul + güven   (MB_YESNOCANCEL → IDYES)
@@ -169,7 +217,7 @@ fn prompt_accept_blocking(
         MessageBoxW, IDCANCEL, IDNO, IDYES, MB_ICONINFORMATION, MB_SYSTEMMODAL, MB_YESNOCANCEL,
     };
 
-    let files_str = format_payload_lines(files, text_count);
+    let files_str = format_payload_lines(files, text_count, folder);
     // MessageBoxW'un Yes/No/Cancel butonları Windows sistem diline göre
     // zaten lokalize geliyor; biz mesajın gövdesinde buton anlamlarını
     // i18n üzerinden yazdırıyoruz.
@@ -219,8 +267,9 @@ fn prompt_accept_blocking(
     pin: &str,
     files: &[(String, i64)],
     text_count: usize,
+    folder: Option<&FolderSummary>,
 ) -> AcceptResult {
-    let files_str = format_payload_lines(files, text_count);
+    let files_str = format_payload_lines(files, text_count, folder);
     let message =
         sanitize_display_text(&crate::i18n::tf("accept.body", &[device, pin, &files_str]));
     let title = crate::i18n::t("accept.title");

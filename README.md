@@ -45,6 +45,14 @@ doğrudan — bulut yok, hesap yok, tracker yok.
   açılır, güvensizleri panoya düşer. Preview `text_title` sadece `scheme://host` —
   token'lı URL'ler payload geçmişinde kalıcı bırakmaz.
 - **Klasör drag-drop** — pencereye sürüklenen dizinler özyinelemeli olarak dosyalara açılır.
+- **Folder transfer (HEKABUND, atomic-reject + per-file SHA-256)** — RFC-0005 v0.8.0
+  ile klasörler tek paket halinde gönderilir: `HEKABUND` v1 container header + JSON
+  manifest (path traversal sanitize, derinlik ≤ 32, entry ≤ 10 000) + per-file body
+  + trailer SHA-256. Receiver tarafında bundle bir staging dizinine extract edilir;
+  herhangi bir hata (manifest mismatch, sanitize fail, partial write) tüm extract'i
+  atomik olarak iptal eder ve diskte yarım veri kalmaz. Chunk-HMAC + RESUME_V1 ile
+  birlikte çalışır — yarıda kesilen klasör transferi tekrar bağlanıldığında kaldığı
+  yerden devam eder.
 - **Trusted devices (whitelist)** — güvendiğiniz cihazlar her seferinde PIN sormadan otomatik kabul edilir
   ve **rate limit kurallarının dışında tutulur**. v0.6.0'dan itibaren **kriptografik hash-first**
   trust kararı (spoofing'e karşı sertleştirilmiş, bkz. [design 017](docs/design/017-trusted-id-hardening.md)).
