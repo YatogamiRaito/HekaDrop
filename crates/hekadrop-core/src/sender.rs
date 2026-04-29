@@ -89,6 +89,39 @@ struct PlannedFile {
     payload_id: i64,
 }
 
+/// RFC-0005 PR-C — sender için pre-computed folder bundle planı.
+///
+/// `send()` plan aşamasında bir directory path için:
+/// 1. `enumerate_folder` ile entries listesi alır
+/// 2. `build_manifest` ile per-file SHA-256 hesaplar + manifest üretir
+/// 3. `serde_json::to_vec(&manifest)` ile JSON bytes
+/// 4. `bundle_total_size(&manifest_json, &entries)` ile total byte
+///
+/// Bu yapı capability gate aşamasında ya:
+/// - `FOLDER_STREAM_V1` aktifse `send_folder_bundle` ile tek FILE payload
+///   olarak gönderilir (`HEKABUND` header + manifest + `concat_data` + trailer)
+/// - capability inactive ise `flatten_folder_to_files` ile individual file
+///   plan'larına çevrilir (mevcut multi-file akış)
+struct PlannedFolder {
+    /// Sender disk root path (folder kökü). Şu anda sadece debug log'da
+    /// kullanılıyor; ileride retry/resume yolunda walk-yenileme için
+    /// gerekecek (PR-D sonrası).
+    #[allow(dead_code)] // PR-C scope: log + future use; field zaten plan-level.
+    root_path: std::path::PathBuf,
+    /// Manifest validate edilmiş + JSON-serialize için hazır.
+    manifest: crate::folder::BundleManifest,
+    /// Pre-serialized canonical JSON bytes (`BundleWriter::new`'e ve
+    /// `Introduction.attachment_hash` hesabına aynı bytes gider —
+    /// re-serialize ile mismatch riski yok).
+    manifest_json: Vec<u8>,
+    /// Enumerate çıktısı (file body'leri için `absolute_path` lookup).
+    entries: Vec<crate::folder::EnumeratedEntry>,
+    /// `Introduction.FileMetadata.size` — `52 + manifest_len + sum_files`.
+    total_size: i64,
+    /// `Introduction.FileMetadata.payload_id`.
+    payload_id: i64,
+}
+
 pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     if req.files.is_empty() {
         // Not: "hiç dosya yok" ile "toplam 0 bayt dosya var" semantik olarak
@@ -98,11 +131,78 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     }
 
     let mut plans: Vec<PlannedFile> = Vec::with_capacity(req.files.len());
+    // RFC-0005 PR-C — folder dispatch. İlk directory path bir
+    // `PlannedFolder`'a dönüşür (capability gate aşamasında bundle vs flatten
+    // kararı verilir). Bu PR scope'unda tek folder destekleniyor; mixed
+    // file+folder veya çoklu folder gelecek PR'lara erteleniyor (UI dağıtım
+    // semantiği RFC-0005 §3.7 + §6 kapanış aşamasında).
+    let mut planned_folder: Option<PlannedFolder> = None;
     for path in &req.files {
         if !path.exists() {
             return Err(HekaError::FileNotFound(path.display().to_string()).into());
         }
         let meta = std::fs::metadata(path)?;
+        if meta.is_dir() {
+            // Folder branch — yalnız ilk directory işlenir; sonrasındaki
+            // path'ler sessiz skip + warn.
+            if planned_folder.is_some() {
+                warn!(
+                    "[sender] folder send: ek directory path atlandı (PR-C: tek folder destekleniyor): {}",
+                    path.display()
+                );
+                continue;
+            }
+            // INVARIANT (CLAUDE.md I-1): enumerate_folder + build_manifest
+            // pure folder primitive'leri; UI/global state yok. spawn_blocking
+            // ile sarmalı çünkü recursive walk + per-file SHA-256 disk-bound.
+            let walk_root = path.clone();
+            let entries =
+                tokio::task::spawn_blocking(move || crate::folder::enumerate_folder(&walk_root))
+                    .await
+                    .map_err(|e| anyhow!("folder enumerate task join: {e}"))?
+                    .with_context(|| format!("folder enumerate: {}", path.display()))?;
+            let manifest_root = path.clone();
+            let entries_for_build = entries.clone();
+            let manifest = tokio::task::spawn_blocking(move || {
+                crate::folder::build_manifest(&manifest_root, &entries_for_build)
+            })
+            .await
+            .map_err(|e| anyhow!("folder build_manifest task join: {e}"))?
+            .with_context(|| format!("folder build_manifest: {}", path.display()))?;
+            // Schema-level validate — root_name + entry path sanitize +
+            // duplicate check. Hata receiver'da reject ile kalmasındansa
+            // sender-side erken yakalanır.
+            manifest
+                .validate()
+                .with_context(|| "folder manifest validate")?;
+            let manifest_json =
+                serde_json::to_vec(&manifest).with_context(|| "folder manifest JSON serialize")?;
+            // INVARIANT (CLAUDE.md I-5): bundle_total_size checked aritmetik;
+            // overflow → reject (16 EiB folder pratik dışı ama defansif).
+            let total_u64 = crate::folder::bundle_total_size(manifest_json.len(), &entries)
+                .ok_or_else(|| anyhow!("folder bundle total size overflow"))?;
+            if total_u64 > i64::MAX as u64 {
+                return Err(HekaError::FileTooLarge {
+                    max: i64::MAX,
+                    path: path.display().to_string(),
+                }
+                .into());
+            }
+            // SAFETY-CAST: total_u64 > i64::MAX kontrolü yukarıda; cast wrap yapamaz.
+            #[allow(clippy::cast_possible_wrap)] // INVARIANT: total_u64 ≤ i64::MAX checked
+            let total_i64 = total_u64 as i64;
+            #[allow(clippy::cast_possible_wrap)] // INVARIANT: u64 >> 1 high bit sıfır
+            let payload_id_i64 = (rand::thread_rng().next_u64() >> 1) as i64;
+            planned_folder = Some(PlannedFolder {
+                root_path: path.clone(),
+                manifest,
+                manifest_json,
+                entries,
+                total_size: total_i64,
+                payload_id: payload_id_i64,
+            });
+            continue;
+        }
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -135,10 +235,19 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     }
     // Multi-file toplamda i64 overflow olmaması için checked_add kullan.
     // 60 GB üstü senaryoda bile i64 hâlâ rahat, ama yine de savunmacı yaklaşım.
-    let total_bytes: i64 = plans
+    let mut total_bytes: i64 = plans
         .iter()
         .try_fold(0i64, |acc, p| acc.checked_add(p.size))
         .ok_or(HekaError::ByteCountOverflow)?;
+    // RFC-0005 PR-C: folder bundle bayt'ları total_bytes hesabına dahil
+    // edilir → progress yüzde hesabı bundle stream sırasında doğru olsun
+    // (capability inactive flatten yolunda total_bytes flat file'lardan
+    // tekrar hesaplanır; PlannedFolder'ın `total_size` kayıp olur).
+    if let Some(folder) = &planned_folder {
+        total_bytes = total_bytes
+            .checked_add(folder.total_size)
+            .ok_or(HekaError::ByteCountOverflow)?;
+    }
     // Bug #30: Boş dosya(lar) → total_bytes == 0 → aşağıda yüzde hesabı 0/0 olur.
     // Boş dosya göndermeyi reddetmek en açık davranış; UI kullanıcıya anlamlı hata gösterir.
     if total_bytes == 0 {
@@ -339,10 +448,51 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                         }
 
                         if !introduction_sent {
-                            let intro = build_introduction_multi(&plans);
-                            connection::send_sharing_frame(&mut socket, &mut ctx, &intro).await?;
+                            // RFC-0005 §7 — capability gate: FOLDER_STREAM_V1 inactive ise
+                            // folder bundle akışı yerine flatten fallback (mevcut multi-file
+                            // Introduction). Aktif ise folder Introduction'a tek
+                            // `application/x-hekadrop-folder` FILE entry eklenir.
+                            if let Some(folder) = &planned_folder {
+                                if active_capabilities
+                                    .has(crate::capabilities::features::FOLDER_STREAM_V1)
+                                {
+                                    let intro = build_introduction_folder(folder, &plans);
+                                    connection::send_sharing_frame(&mut socket, &mut ctx, &intro)
+                                        .await?;
+                                    info!(
+                                        "[sender] Folder Introduction gönderildi — bundle {} bayt + {} ek dosya",
+                                        folder.total_size,
+                                        plans.len()
+                                    );
+                                } else {
+                                    // Flatten fallback — folder içeriğini individual file
+                                    // plan'larına dönüştürüp mevcut akışa enjekte et.
+                                    let flattened = flatten_folder_to_files(folder);
+                                    let flat_count = flattened.len();
+                                    plans.extend(flattened);
+                                    // Bundle bayt'ları total_bytes'a eklenmişti; flatten yolunda
+                                    // gerçek dosya bayt'ları farklı (header + manifest + trailer
+                                    // çıkarılır). total_bytes'i flat dosyalardan tekrar hesapla.
+                                    total_bytes = plans
+                                        .iter()
+                                        .try_fold(0i64, |acc, p| acc.checked_add(p.size))
+                                        .ok_or(HekaError::ByteCountOverflow)?;
+                                    planned_folder = None;
+                                    let intro = build_introduction_multi(&plans);
+                                    connection::send_sharing_frame(&mut socket, &mut ctx, &intro)
+                                        .await?;
+                                    info!(
+                                        "[sender] Folder flatten fallback — {} dosya (capability inactive)",
+                                        flat_count
+                                    );
+                                }
+                            } else {
+                                let intro = build_introduction_multi(&plans);
+                                connection::send_sharing_frame(&mut socket, &mut ctx, &intro)
+                                    .await?;
+                                info!("[sender] Introduction gönderildi — {} dosya", plans.len());
+                            }
                             introduction_sent = true;
-                            info!("[sender] Introduction gönderildi — {} dosya", plans.len());
                         }
                     }
                     Some(sh_v1::FrameType::Response) => {
@@ -385,6 +535,31 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                         let known_payload_ids: Vec<i64> =
                             plans.iter().map(|p| p.payload_id).collect();
                         let mut bytes_sent: i64 = 0;
+                        // RFC-0005 §6 — folder bundle önce gönderilir (intro
+                        // sırasında file_metadata listesinin başında yer
+                        // aldığı için tutarlı).
+                        if let Some(folder) = planned_folder.take() {
+                            let folder_size = folder.total_size;
+                            info!(
+                                "[sender] folder bundle gönderiliyor: payload_id={} ({} bayt)",
+                                folder.payload_id, folder.total_size
+                            );
+                            send_folder_bundle(
+                                &mut socket,
+                                &mut ctx,
+                                folder,
+                                &peer_label,
+                                bytes_sent,
+                                total_bytes,
+                                &cancel_token,
+                                state.as_ref(),
+                                chunk_hmac_key.as_ref(),
+                            )
+                            .await?;
+                            bytes_sent = bytes_sent
+                                .checked_add(folder_size)
+                                .ok_or(HekaError::ByteCountOverflow)?;
+                        }
                         for plan in &plans {
                             info!(
                                 "[sender] gönderiliyor: {} ({} bayt) payload_id={}",
@@ -1381,6 +1556,275 @@ fn wrap_payload_transfer(
             ..Default::default()
         }),
     }
+}
+
+/// RFC-0005 §4 — Folder Introduction frame (`mime_type =
+/// "application/x-hekadrop-folder"`, `attachment_hash = manifest_sha256[0..8]`
+/// BE i64). Intro içine ek individual file plan'ları varsa onlar da eklenir
+/// (PR-C scope: pratikte bu PR'da `plans` boş, ama yapı hazır).
+fn build_introduction_folder(folder: &PlannedFolder, plans: &[PlannedFile]) -> SharingFrame {
+    // INVARIANT (CLAUDE.md I-2): manifest validate `send` aşamasında çağrıldı;
+    // attachment_hash hesabı `serde_json::to_vec` round-trip ile sender-side
+    // başarısız olmaz (manifest `BundleManifest`'in field tipleri primitive +
+    // Vec/String/Option). Hata durumunda 0 fallback — receiver mismatch ile
+    // reject eder, sender-side panic üretmez.
+    let attachment_hash = folder.manifest.attachment_hash_i64().unwrap_or(0);
+    let bundle_name = format!("{}.hekabundle", folder.manifest.root_name);
+    let mut files: Vec<FileMetadata> = Vec::with_capacity(1 + plans.len());
+    files.push(FileMetadata {
+        name: Some(bundle_name),
+        r#type: Some(FileKind::Unknown as i32),
+        payload_id: Some(folder.payload_id),
+        size: Some(folder.total_size),
+        mime_type: Some("application/x-hekadrop-folder".to_string()),
+        attachment_hash: Some(attachment_hash),
+        ..Default::default()
+    });
+    for p in plans {
+        files.push(FileMetadata {
+            name: Some(p.name.clone()),
+            r#type: Some(FileKind::Unknown as i32),
+            payload_id: Some(p.payload_id),
+            size: Some(p.size),
+            mime_type: Some(guess_mime(&p.name).to_string()),
+            ..Default::default()
+        });
+    }
+    SharingFrame {
+        version: Some(ShVersion::V1 as i32),
+        v1: Some(ShV1Frame {
+            r#type: Some(sh_v1::FrameType::Introduction as i32),
+            introduction: Some(IntroductionFrame {
+                file_metadata: files,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+    }
+}
+
+/// RFC-0005 §7 — capability inactive yolda folder içeriği individual file
+/// plan'larına flatten edilir. Sub-directory'ler atlanır (Quick Share legacy
+/// flat akışı zaten dizin yapısını korumaz). Per-file `payload_id` random.
+fn flatten_folder_to_files(folder: &PlannedFolder) -> Vec<PlannedFile> {
+    let mut out: Vec<PlannedFile> = Vec::new();
+    for entry in &folder.entries {
+        if entry.kind != crate::folder::EntryKind::File {
+            continue;
+        }
+        // Flat akış için sadece basename — receiver mevcut Quick Share
+        // yolunda subdir yapısı kuramaz.
+        let name = std::path::Path::new(&entry.relative_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("dosya")
+            .to_owned();
+        // INVARIANT (CLAUDE.md I-5): u64 size sender-controlled (kendi
+        // diskimiz); enumerate sırasında `meta.len()` dönüyor, i64::MAX
+        // kontrolü `enumerate_folder` içinde yapılmıyor — burada checked.
+        let Ok(size_i64) = i64::try_from(entry.size) else {
+            warn!(
+                "[sender] folder flatten: dosya boyutu i64'a sığmıyor, skip: {}",
+                entry.relative_path
+            );
+            continue;
+        };
+        // SAFETY-CAST (CLAUDE.md I-2): u64 >> 1 high-bit sıfır.
+        #[allow(clippy::cast_possible_wrap)] // INVARIANT: u64 >> 1
+        let payload_id_i64 = (rand::thread_rng().next_u64() >> 1) as i64;
+        out.push(PlannedFile {
+            path: entry.absolute_path.clone(),
+            name,
+            size: size_i64,
+            payload_id: payload_id_i64,
+        });
+    }
+    out
+}
+
+/// RFC-0005 §6 — `HEKABUND` bundle stream emit.
+///
+/// Akış (`docs/protocol/folder-payload.md` §2):
+/// 1. `BundleWriter::new(&manifest_json)` → header (16 byte) + manifest hash
+///    chain'e commit.
+/// 2. Header bytes + `manifest_json` bytes accumulator'a yazılır.
+/// 3. Per-file body: absolute path'ten chunk'lar okunur, `BundleWriter` hash
+///    chain'e feed edilir, accumulator `CHUNK_SIZE`'a doldukça
+///    `PayloadTransferFrame{File}` chunk olarak gönderilir.
+/// 4. `BundleWriter::finalize()` → 32 byte trailer accumulator'a, kalan
+///    bytes son chunk olarak `last=1` flag ile gönderilir.
+///
+/// **Chunk ordering invariant:** Tüm chunk'lar tek `payload_id` altında, monoton
+/// artan `offset`. Last chunk `flags=1`. RFC-0003 chunk-HMAC enabled ise her
+/// data chunk'ından sonra `ChunkIntegrity` envelope'u emit edilir (mevcut
+/// `send_file_chunks` pattern'ı).
+#[allow(clippy::too_many_arguments)]
+async fn send_folder_bundle(
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    folder: PlannedFolder,
+    peer_label: &str,
+    bytes_sent_before: i64,
+    total_bytes: i64,
+    cancel: &CancellationToken,
+    state: &AppState,
+    chunk_hmac_key: Option<&[u8; 32]>,
+) -> Result<()> {
+    use crate::folder::bundle::BundleWriter;
+
+    let payload_id = folder.payload_id;
+    let total_size = folder.total_size;
+    let bundle_label = format!("{}.hekabundle", folder.manifest.root_name);
+
+    let mut writer = BundleWriter::new(&folder.manifest_json)
+        .with_context(|| "BundleWriter init (manifest_json)")?;
+    let header_bytes = writer.header_bytes();
+
+    // Accumulator — CHUNK_SIZE'a varan flush'lar.
+    let mut accum: Vec<u8> = Vec::with_capacity(CHUNK_SIZE * 2);
+    accum.extend_from_slice(&header_bytes);
+    accum.extend_from_slice(&folder.manifest_json);
+
+    let mut offset: i64 = 0;
+    let mut chunk_index: i64 = 0;
+
+    // Helper: accum'dan tam CHUNK_SIZE drain edip data chunk gönder.
+    // Her drain'de `chunk_index += 1`, `offset += chunk_len`.
+    // (Closure değil — `await` ile mut borrow zinciri).
+    for entry in &folder.entries {
+        if entry.kind != crate::folder::EntryKind::File {
+            continue;
+        }
+        let mut file = tokio::fs::File::open(&entry.absolute_path)
+            .await
+            .with_context(|| format!("folder bundle file open: {}", entry.relative_path))?;
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            // Cancel'i parallel bekle — büyük chunk'larda anında bail.
+            let n = tokio::select! {
+                biased;
+                () = cancel.cancelled() => return Err(HekaError::CancelledDuringChunk.into()),
+                res = file.read(&mut buf) => res?,
+            };
+            if n == 0 {
+                break;
+            }
+            accum.extend_from_slice(&buf[..n]);
+            // BundleWriter hash chain'e feed et.
+            writer.update(&buf[..n]);
+
+            while accum.len() >= CHUNK_SIZE {
+                let chunk: Vec<u8> = accum.drain(..CHUNK_SIZE).collect();
+                send_bundle_chunk(
+                    socket,
+                    ctx,
+                    payload_id,
+                    total_size,
+                    offset,
+                    &chunk,
+                    false,
+                    chunk_hmac_key,
+                    chunk_index,
+                )
+                .await?;
+                // SAFETY-CAST: chunk.len() == CHUNK_SIZE (512 KiB) usize → i64
+                // wrap imkansız (CHUNK_SIZE << i64::MAX).
+                #[allow(clippy::cast_possible_wrap)] // INVARIANT: CHUNK_SIZE = 512 KiB
+                let chunk_len_i64 = chunk.len() as i64;
+                offset = offset
+                    .checked_add(chunk_len_i64)
+                    .ok_or_else(|| anyhow!("folder bundle offset overflow"))?;
+                chunk_index = chunk_index
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow!("folder bundle chunk_index overflow"))?;
+                if let Some(percent) = compute_percent(bytes_sent_before, offset, total_bytes) {
+                    state.set_progress(ProgressState::Receiving {
+                        device: peer_label.to_string(),
+                        file: bundle_label.clone(),
+                        percent,
+                    });
+                }
+            }
+        }
+    }
+
+    // Trailer (32 byte) accumulator'a; kalan bytes (manifest+last partial+trailer)
+    // son chunk olarak `last=1` flag ile yollanır.
+    let trailer = writer.finalize();
+    accum.extend_from_slice(&trailer);
+
+    // Trailing chunk: last_flag=1, body = remaining accum bytes (en az 32 byte
+    // trailer; mümkünse manifest tail + son partial chunk).
+    send_bundle_chunk(
+        socket,
+        ctx,
+        payload_id,
+        total_size,
+        offset,
+        &accum,
+        true,
+        chunk_hmac_key,
+        chunk_index,
+    )
+    .await?;
+
+    info!("[sender] folder bundle gönderildi — {}", bundle_label);
+    Ok(())
+}
+
+/// Tek bundle chunk'ını wrap + encrypt + write yap; chunk-HMAC enabled ise
+/// `ChunkIntegrity` envelope'u peşinden ekle. PR-C: hot-path artık
+/// `send_file_chunks` ile aynı emit pattern'ı.
+#[allow(clippy::too_many_arguments)]
+async fn send_bundle_chunk(
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    payload_id: i64,
+    total_size: i64,
+    offset: i64,
+    body: &[u8],
+    last: bool,
+    chunk_hmac_key: Option<&[u8; 32]>,
+    chunk_index: i64,
+) -> Result<()> {
+    let body_bytes = Bytes::copy_from_slice(body);
+    let flags = if last { 1 } else { 0 };
+    let wrapped = wrap_payload_transfer(payload_id, total_size, offset, flags, body_bytes);
+    let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
+    frame::write_frame(socket, &enc).await?;
+
+    // RFC-0003 §2: data chunk hemen ardından ChunkIntegrity envelope'u
+    // (capability gate açık). Last chunk için de tag emit edilir (receiver
+    // her chunk'ı verify eder; final body dahil).
+    if let Some(key) = chunk_hmac_key {
+        let tag = crate::chunk_hmac::compute_tag(key, payload_id, chunk_index, offset, body)
+            .with_context(|| {
+                format!(
+                    "folder bundle chunk-HMAC tag compute (payload_id={payload_id}, chunk_index={chunk_index})"
+                )
+            })?;
+        let ci = crate::chunk_hmac::build_chunk_integrity(
+            payload_id,
+            chunk_index,
+            offset,
+            body.len(),
+            tag,
+        )
+        .with_context(|| {
+            format!(
+                "folder bundle ChunkIntegrity build (payload_id={payload_id}, chunk_index={chunk_index})"
+            )
+        })?;
+        let heka_frame = hekadrop_proto::hekadrop_ext::HekaDropFrame {
+            version: crate::capabilities::ENVELOPE_VERSION,
+            payload: Some(hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload::ChunkTag(ci)),
+        };
+        let pb = heka_frame.encode_to_vec();
+        let wrapped_bytes = frame::wrap_hekadrop_frame(&pb);
+        let enc_tag = ctx.encrypt(&wrapped_bytes)?;
+        frame::write_frame(socket, &enc_tag).await?;
+    }
+    Ok(())
 }
 
 fn build_introduction_multi(plans: &[PlannedFile]) -> SharingFrame {
