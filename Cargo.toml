@@ -19,13 +19,15 @@ homepage = "https://github.com/YatogamiRaito/HekaDrop"
 #
 # Kapsam dışı bırakılanlar (RED-tier — ayrı tracking issue'larla cleanup):
 #   * clippy::pedantic umbrella (~1,228 hit)        — issue #TBD
-#   * clippy::must_use_candidate (71 hand)          — issue #TBD
 #   * unused_crate_dependencies                     — false-pos cascade, atlandı
 #
 # v0.7.x ile enforce edilenler (önceki "RED" listesinden):
 #   * clippy::cast_possible_wrap (36)               — PR #101 audit + enforce
 #   * clippy::uninlined_format_args (auto-fix +110) — PR #105 enforce
 #   * unreachable_pub (workspace refactor sonrası 58 hit) — bu PR cleanup + enforce
+#   * clippy::must_use_candidate (37 source + 170 generated proto) —
+#     bu PR: source'larda #[must_use] ekleme + proto module-level allow
+#     (generated `as_str_name` / `from_str_name` enum helper'ları)
 #
 # Konsensus referans: Embark, uv, ruff. Top-tier (tokio/ripgrep/rustls/hyper)
 # minimal config tercih ediyor; biz crypto/protocol surface taşıyan bir desktop
@@ -82,6 +84,7 @@ trivially_copy_pass_by_ref = "warn"
 single_match_else = "warn"
 default_trait_access = "warn"
 large_enum_variant = "warn"
+must_use_candidate = "warn"     # API hijyeni: pure pub fn/method'lar `#[must_use]` ister; sonuç atılırsa caller bug. Bu PR: 37 source + proto generated module-level allow.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

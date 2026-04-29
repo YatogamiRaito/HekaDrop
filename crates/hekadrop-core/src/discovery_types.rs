@@ -20,6 +20,7 @@ pub enum DeviceKind {
 }
 
 impl DeviceKind {
+    #[must_use]
     pub fn from_byte(b: u8) -> Self {
         match b {
             1 => Self::Phone,
@@ -52,6 +53,7 @@ pub struct DiscoveredDevice {
 }
 
 impl DiscoveredDevice {
+    #[must_use]
     pub fn kind(&self) -> DeviceKind {
         DeviceKind::from_byte(self.device_type)
     }

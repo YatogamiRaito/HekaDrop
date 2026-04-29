@@ -17,6 +17,7 @@ use std::path::Path;
 ///
 /// `/home/alice/Belgeler/secret.pdf` → `secret.pdf`.
 /// Yol sadece bir bileşense veya parse edilemezse "?" döner.
+#[must_use]
 pub fn path_basename(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -26,6 +27,7 @@ pub fn path_basename(path: &Path) -> String {
 /// SHA-256'nın ilk 16 hex karakterini (ilk 8 bayt) döndürür. Self-verification
 /// için yeterli, cross-user fingerprint için yetersiz. Giriş 16 karakterden
 /// kısaysa olduğu gibi döner.
+#[must_use]
 pub fn sha_short(sha_hex: &str) -> &str {
     if sha_hex.len() >= 16 {
         &sha_hex[..16]
@@ -39,6 +41,7 @@ pub fn sha_short(sha_hex: &str) -> &str {
 ///
 /// `https://example.com/a?token=xyz` → `https://example.com`.
 /// Şema veya host parse edilemezse `<unparsable>` döner.
+#[must_use]
 pub fn url_scheme_host(url: &str) -> String {
     let trimmed = url.trim();
     let Some((scheme, rest)) = trimmed.split_once("://") else {

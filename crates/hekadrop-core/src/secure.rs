@@ -28,6 +28,7 @@ pub struct SecureCtx {
 }
 
 impl SecureCtx {
+    #[must_use]
     pub fn from_keys(keys: &crate::ukey2::DerivedKeys) -> Self {
         Self {
             encrypt_key: keys.encrypt_key,
@@ -84,6 +85,7 @@ impl SecureCtx {
     }
 
     #[cfg(test)]
+    #[must_use]
     pub fn new_with_keys(
         encrypt_key: [u8; 32],
         decrypt_key: [u8; 32],

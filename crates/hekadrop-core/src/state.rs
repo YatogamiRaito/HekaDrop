@@ -454,6 +454,7 @@ impl RateLimiter {
     const WINDOW: Duration = Duration::from_secs(60);
     const MAX_PER_WINDOW: usize = 10;
 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             windows: RwLock::new(HashMap::new()),
