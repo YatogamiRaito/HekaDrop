@@ -61,30 +61,39 @@ message ChunkIntegrity {
   bytes  tag         = 5;     // HMAC-SHA256 = 32 bytes; başka uzunluk reject
 }
 
-// Transfer resume hint (RFC 0004 placeholder).
+// Transfer resume hint (RFC 0004).
 //
 // Receiver, Introduction frame'inde tanıdığı bir payload_id görüp
 // `~/.hekadrop/partial/<session_id>_<payload_id>.meta` ile eşleşen
 // partial dosyası varsa bu mesajla sender'a "şuradan devam" ipucu verir.
 //
-// **v0.8.0'da boş placeholder.** Tam tanım v0.8.1 implementation'ında
-// `docs/protocol/resume.md` byte-exact spec'inden indirilecek.
+// Wire-byte-exact spec: `docs/protocol/resume.md` §3.
+// Normative RFC:        `docs/rfcs/0004-transfer-resume.md` §3.2.
+//
+// `session_id` UKEY2 auth_key SHA-256[0..8] big-endian; sender bu değeri
+// kendi session'ı ile karşılaştırır, eşleşmezse `ResumeReject{
+// SESSION_MISMATCH }` döner.
 message ResumeHint {
-  int64  payload_id          = 1;
-  int64  offset              = 2;
-  bytes  partial_hash        = 3;   // SHA-256(bytes[0..offset])
-  bytes  last_chunk_tag      = 4;   // RFC-0003 fast-path (32 bytes)
+  int64  session_id           = 1;  // UKEY2 auth_key SHA-256[0..8] BE
+  int64  payload_id           = 2;
+  int64  offset               = 3;
+  bytes  partial_hash         = 4;  // SHA-256(bytes[0..offset])
   uint32 capabilities_version = 5;  // peer Capabilities.version mirror
+  bytes  last_chunk_tag       = 6;  // RFC-0003 fast-path (32 bytes)
 }
 
 // Resume reject reasons (RFC 0004).
+//
+// Wire-byte-exact spec: `docs/protocol/resume.md` §3.
 message ResumeReject {
   enum Reason {
-    UNKNOWN          = 0;
-    HASH_MISMATCH    = 1;
-    TTL_EXPIRED      = 2;
-    VERSION_MISMATCH = 3;
-    DISK_BUDGET      = 4;
+    REASON_UNSPECIFIED = 0;
+    HASH_MISMATCH      = 1;
+    INVALID_OFFSET     = 2;
+    VERSION_MISMATCH   = 3;
+    PAYLOAD_UNKNOWN    = 4;
+    SESSION_MISMATCH   = 5;
+    INTERNAL_ERROR     = 6;
   }
   int64  payload_id = 1;
   Reason reason     = 2;
