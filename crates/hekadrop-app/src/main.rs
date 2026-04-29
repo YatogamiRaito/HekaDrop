@@ -1170,8 +1170,7 @@ fn push_stats_to_ui() {
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
 
     let first_use_human = if s.first_use_epoch > 0 {
         relative_time(now.saturating_sub(s.first_use_epoch))
