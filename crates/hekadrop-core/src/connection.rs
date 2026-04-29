@@ -357,7 +357,7 @@ pub async fn handle(
                         let id = header.id.unwrap_or(0);
                         let total = header.total_size.unwrap_or(0);
                         let offset = chunk.offset.unwrap_or(0);
-                        let body_len_usize = chunk.body.as_ref().map(|b| b.len()).unwrap_or(0);
+                        let body_len_usize = chunk.body.as_ref().map_or(0, |b| b.len());
                         // SECURITY: peer'den gelen `offset` + `body_len` + `total`
                         // alanları unvalidated. `*100` ve `+` operasyonlarını
                         // checked aritmetikle koru; overflow olursa progress
@@ -1249,18 +1249,6 @@ async fn handle_hekadrop_frame(
 }
 
 fn unique_downloads_path(name: &str, state: &AppState) -> Result<PathBuf> {
-    let base = state
-        .settings
-        .read()
-        .resolved_download_dir(|| state.default_download_dir.clone());
-    std::fs::create_dir_all(&base).ok();
-
-    // SECURITY: Uzak cihazdan gelen dosya adı saldırgan kontrolünde; doğrudan
-    // `base.join(name)` path traversal'a açıktır — sanitize ile yalnız
-    // basename kalır, `..`/`/`/`\`/NUL/control char silinir, Windows
-    // reserved adları (CON, PRN…) yeniden adlandırılır.
-    let safe = sanitize_received_name(name);
-
     // SECURITY/TOCTOU: Önceki sürüm `Path::exists()` + sonra `File::create`
     // kullanıyordu. İki paralel alıcı (server.rs `MAX_CONCURRENT_CONNECTIONS=32`)
     // aynı ismi aynı anda "mevcut değil" görüp aynı `candidate`'i seçebilir;
@@ -1279,6 +1267,18 @@ fn unique_downloads_path(name: &str, state: &AppState) -> Result<PathBuf> {
             .open(candidate)
             .map(|_| ())
     }
+
+    let base = state
+        .settings
+        .read()
+        .resolved_download_dir(|| state.default_download_dir.clone());
+    std::fs::create_dir_all(&base).ok();
+
+    // SECURITY: Uzak cihazdan gelen dosya adı saldırgan kontrolünde; doğrudan
+    // `base.join(name)` path traversal'a açıktır — sanitize ile yalnız
+    // basename kalır, `..`/`/`/`\`/NUL/control char silinir, Windows
+    // reserved adları (CON, PRN…) yeniden adlandırılır.
+    let safe = sanitize_received_name(name);
 
     let candidate = base.join(&safe);
     match try_reserve(&candidate) {

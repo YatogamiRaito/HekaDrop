@@ -1148,7 +1148,7 @@ fn push_settings_to_ui() {
     // karşılaştırması JS tarafında direkt bu değerle yapılır.
     let payload = serde_json::json!({
         "device_name": s.device_name.clone().unwrap_or(resolved_name),
-        "download_dir": s.download_dir.as_ref().map(|p| p.to_string_lossy().to_string()).unwrap_or(resolved_dl),
+        "download_dir": s.download_dir.as_ref().map_or(resolved_dl, |p| p.to_string_lossy().to_string()),
         "auto_accept": s.auto_accept,
         "advertise": s.advertise,
         "log_level": s.log_level.as_str(),
@@ -1189,14 +1189,14 @@ fn push_stats_to_ui() {
     // değerlerde wrap eder; saturating: 8 EiB üstü "ulaşılamaz" zaten,
     // i64::MAX "—" göstergesinden iyi UI sinyali.
     let to_i64_sat = |b: u64| -> i64 { i64::try_from(b).unwrap_or(i64::MAX) };
-    let top_rx = s
-        .top_rx_device()
-        .map(|(n, b)| format!("{} ({})", n, human_size(to_i64_sat(b))))
-        .unwrap_or_else(|| "—".to_string());
-    let top_tx = s
-        .top_tx_device()
-        .map(|(n, b)| format!("{} ({})", n, human_size(to_i64_sat(b))))
-        .unwrap_or_else(|| "—".to_string());
+    let top_rx = s.top_rx_device().map_or_else(
+        || "—".to_string(),
+        |(n, b)| format!("{} ({})", n, human_size(to_i64_sat(b))),
+    );
+    let top_tx = s.top_tx_device().map_or_else(
+        || "—".to_string(),
+        |(n, b)| format!("{} ({})", n, human_size(to_i64_sat(b))),
+    );
 
     let payload = serde_json::json!({
         "app_version": env!("CARGO_PKG_VERSION"),
@@ -1270,8 +1270,7 @@ fn push_history_to_ui() {
         .map(|h| {
             let age = now
                 .duration_since(h.when)
-                .map(|d| relative_time(d.as_secs()))
-                .unwrap_or_else(|_| "az önce".into());
+                .map_or_else(|_| "az önce".into(), |d| relative_time(d.as_secs()));
             serde_json::json!({
                 "file_name": h.file_name,
                 "path": h.path.to_string_lossy(),
@@ -1598,8 +1597,7 @@ fn show_history() {
         .map(|(i, h)| {
             let age = now
                 .duration_since(h.when)
-                .map(|d| relative_time(d.as_secs()))
-                .unwrap_or_else(|_| "az önce".to_string());
+                .map_or_else(|_| "az önce".to_string(), |d| relative_time(d.as_secs()));
             format!(
                 "{}. {}  •  {}  •  {}  •  {}",
                 i + 1,

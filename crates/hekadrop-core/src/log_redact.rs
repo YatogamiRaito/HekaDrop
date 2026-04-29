@@ -20,8 +20,7 @@ use std::path::Path;
 #[must_use]
 pub fn path_basename(path: &Path) -> String {
     path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "?".to_string())
+        .map_or_else(|| "?".to_string(), |n| n.to_string_lossy().into_owned())
 }
 
 /// SHA-256'nın ilk 16 hex karakterini (ilk 8 bayt) döndürür. Self-verification

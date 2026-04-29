@@ -122,10 +122,7 @@ pub(crate) fn apply_args(template: &str, args: &[&str]) -> String {
             i += 1;
         } else {
             // Bir sonraki `{`'e kadar toplu kopyala (hızlı path).
-            let end = template[i..]
-                .find('{')
-                .map(|p| i + p)
-                .unwrap_or(bytes.len());
+            let end = template[i..].find('{').map_or(bytes.len(), |p| i + p);
             out.push_str(&template[i..end]);
             i = end;
         }

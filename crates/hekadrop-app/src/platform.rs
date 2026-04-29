@@ -20,9 +20,7 @@ use std::process::Command;
 /// - Windows: `%USERPROFILE%` (tanımsızsa `C:\Users\Default` fallback)
 #[cfg(not(target_os = "windows"))]
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
+    std::env::var_os("HOME").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from)
 }
 
 #[cfg(target_os = "windows")]

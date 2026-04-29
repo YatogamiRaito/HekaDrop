@@ -85,6 +85,8 @@ single_match_else = "warn"
 default_trait_access = "warn"
 large_enum_variant = "warn"
 must_use_candidate = "warn"     # API hijyeni: pure pub fn/method'lar `#[must_use]` ister; sonuç atılırsa caller bug. Bu PR: 37 source + proto generated module-level allow.
+items_after_statements = "warn" # Block içinde item (fn/const/use) statement'lardan ÖNCE gelir; okunabilirlik + scope netliği. Bu PR: 7 site fix (const/use/inner-fn yukarı taşındı).
+map_unwrap_or = "warn"          # `.map(f).unwrap_or(d)` → `.map_or(d, f)`; allocation/closure azalır, idiomatik. Bu PR: 13 site auto-fix (`cargo clippy --fix`).
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

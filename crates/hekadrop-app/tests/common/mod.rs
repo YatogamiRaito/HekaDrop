@@ -59,9 +59,9 @@ pub(crate) const D2D_SALT: [u8; 32] = [
 /// referans implementasyonunun birebir kopyası (`NearDrop` algoritması).
 /// Her bayt Java'daki `byte`-olarak (signed) yorumlanır.
 pub(crate) fn pin_code_from_auth_key(key: &[u8]) -> String {
+    const MOD: i64 = 9973;
     let mut hash: i64 = 0;
     let mut mult: i64 = 1;
-    const MOD: i64 = 9973;
     for &b in key {
         let signed = b as i8 as i64;
         hash = (hash + signed * mult).rem_euclid(MOD);

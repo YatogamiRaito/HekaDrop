@@ -43,9 +43,9 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 ///   pin = abs(hash) 4 hane
 #[must_use]
 pub fn pin_code_from_auth_key(key: &[u8]) -> String {
+    const MOD: i64 = 9973;
     let mut hash: i64 = 0;
     let mut mult: i64 = 1;
-    const MOD: i64 = 9973;
     for &b in key {
         // SAFETY-CAST: NearDrop algoritması birebir uyumu için u8 → i8
         // signed reinterpretation (0..=255 → -128..=127) kasıtlı.

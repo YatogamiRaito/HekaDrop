@@ -245,6 +245,8 @@ pub struct ServerInitResult {
 
 /// `Ukey2ClientInit` mesajını doğrular, `Ukey2ServerInit` üretir ve handshake state'i döner.
 pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult> {
+    use rand::RngCore;
+
     let msg = Ukey2Message::decode(client_init_frame)?;
     let message_type = msg
         .message_type
@@ -301,7 +303,7 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
             "  commitment[{}]: cipher={:?}, len={}",
             idx,
             c.handshake_cipher,
-            c.commitment.as_ref().map(|v| v.len()).unwrap_or(0)
+            c.commitment.as_ref().map_or(0, |v| v.len())
         );
     }
 
@@ -335,7 +337,6 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
     let generic_pk_bytes = generic_pk.encode_to_vec();
 
     let mut random = [0u8; 32];
-    use rand::RngCore;
     OsRng.fill_bytes(&mut random);
 
     let server_init = Ukey2ServerInit {
@@ -361,6 +362,8 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
 
 /// İstemciden gelen `Ukey2ClientFinished`'i doğrular, ECDH + HKDF ile anahtarları türetir.
 pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Result<DerivedKeys> {
+    use sha2::{Digest, Sha512};
+
     // Önce mesaj tipini kontrol et (peer Alert gönderdiyse anlamsız bir byte dizisi
     // ClientFinished sanılmasın)
     let peek = Ukey2Message::decode(raw_frame).ok();
@@ -373,7 +376,6 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
     );
 
     // Commitment doğrulama: SHA512(raw Ukey2Message bytes) == cipher_commitment
-    use sha2::{Digest, Sha512};
     let mut sha = Sha512::new();
     sha.update(raw_frame);
     let digest = sha.finalize();
