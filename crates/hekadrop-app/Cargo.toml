@@ -111,6 +111,10 @@ criterion = { version = "0.8", features = ["html_reports"] }
 # invariant testi `Duration::days` kullanıyor. core'da zaten dep, aynı
 # feature set'i ile test build grafine alınır (Cargo unification).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# RFC-0005 PR-C — `tests/folder_sender_send.rs` enumerate + manifest build
+# fixture'ları için tempdir. core'da zaten dev-dep; Cargo unification ile
+# tekrar resolve maliyeti yok.
+tempfile = "3"
 
 [[bench]]
 name = "crypto"
