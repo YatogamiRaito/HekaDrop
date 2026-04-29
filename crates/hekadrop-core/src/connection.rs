@@ -957,12 +957,23 @@ async fn handle_sharing_frame(
                 } else {
                     None
                 };
+                // PR #133 medium: `partial_dir()` her dosya için ayrı çağrılıyordu
+                // (`resolve_resume_path` + `handle_resume_for_file`). Loop ÖNCESİ
+                // tek sefer hesapla — N dosya için 2N→1 dizin ensure I/O. None →
+                // HOME yok / mkdir başarısız → resume tamamen skip (fresh transfer).
+                let cached_partial_dir: Option<std::path::PathBuf> = if session_id.is_some() {
+                    crate::resume::partial_dir().ok()
+                } else {
+                    None
+                };
                 for (pid, fresh_path, display_name, announced_size) in planned_files {
                     // PR-G: RESUME_V1 + meta valid + meta.dest_path mevcut →
                     // fresh placeholder'ı sil + meta.dest_path'i register et
                     // (mevcut `.part` üstüne devam). Aksi halde fresh_path.
-                    let actual_path = if let Some(sid) = session_id {
-                        match resolve_resume_path(sid, pid, &display_name, announced_size) {
+                    let actual_path = if let (Some(sid), Some(dir)) =
+                        (session_id, cached_partial_dir.as_deref())
+                    {
+                        match resolve_resume_path(dir, sid, pid, &display_name, announced_size) {
                             Some(resume_path) => {
                                 // Fresh placeholder boş — sil, resume path'e geç.
                                 if let Err(e) = std::fs::remove_file(&fresh_path) {
@@ -997,11 +1008,12 @@ async fn handle_sharing_frame(
                     // RFC-0004 §3.3 — Introduction sonrası `.meta` lookup
                     // + (matching ise) `ResumeHint` emit. Hata yutulur:
                     // resume best-effort, fresh transfer her zaman OK.
-                    if let Some(sid) = session_id {
+                    if let (Some(sid), Some(dir)) = (session_id, cached_partial_dir.as_deref()) {
                         if let Err(e) = handle_resume_for_file(
                             socket,
                             ctx,
                             assembler,
+                            dir,
                             sid,
                             pid,
                             &display_name,
@@ -1169,21 +1181,23 @@ fn human_size(bytes: i64) -> String {
 /// silip bu path'i register eder. Aksi halde `None` (fresh transfer).
 ///
 /// Validate adımları (RFC §5'teki MUST'larla birebir):
-/// - `partial_dir` resolve OK
 /// - `.meta` load OK + `validate()` OK
 /// - `meta.file_name == announced display_name`
 /// - `meta.total_size == announced_total_size`
 /// - `meta.updated_at` TTL içinde
 /// - `meta.dest_path` non-empty + `Path::exists` + `metadata.len() ==
 ///   meta.received_bytes` (disk doğrulaması)
+///
+/// `dir` caller-cached `partial_dir()` — Introduction loop ÖNCESİ tek sefer
+/// hesaplanıp tüm dosyalar için reuse edilir (PR #133 medium follow-up).
 fn resolve_resume_path(
+    dir: &std::path::Path,
     session_id: i64,
     payload_id: i64,
     announced_display_name: &str,
     announced_total_size: i64,
 ) -> Option<std::path::PathBuf> {
-    let dir = crate::resume::partial_dir().ok()?;
-    let meta = crate::resume::PartialMeta::load(&dir, session_id, payload_id)
+    let meta = crate::resume::PartialMeta::load(dir, session_id, payload_id)
         .ok()
         .flatten()?;
     if meta.dest_path.is_empty() {
@@ -1241,6 +1255,7 @@ async fn handle_resume_for_file(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
     assembler: &mut PayloadAssembler,
+    dir: &std::path::Path,
     session_id: i64,
     payload_id: i64,
     file_name: &str,
@@ -1251,14 +1266,15 @@ async fn handle_resume_for_file(
     use base64::Engine;
     use hekadrop_proto::hekadrop_ext::ResumeHint;
 
-    // 1. partial_dir resolve. HOME yoksa silently skip → fresh transfer.
-    let dir = crate::resume::partial_dir().context("resume: partial_dir resolve")?;
+    // PR #133 medium: `dir` caller-cached `partial_dir()`. Introduction loop'u
+    // tek sefer hesaplar, N dosya için reuse — N×`partial_dir()` mkdir I/O
+    // bedeli elimine.
 
-    // 2. `.meta` lookup. NotFound → fresh; load Err → silently skip.
-    //    PR-G: meta validate sonucuna göre `enable_resume_with_offset` ya da
-    //    `enable_resume` (fresh) çağrılır — resume aktivasyonu meta sonrasına
-    //    ertelendi ki `received_bytes` doğru injected olsun.
-    let maybe_meta = match crate::resume::PartialMeta::load(&dir, session_id, payload_id) {
+    // `.meta` lookup. NotFound → fresh; load Err → silently skip.
+    // PR-G: meta validate sonucuna göre `enable_resume_with_offset` ya da
+    // `enable_resume` (fresh) çağrılır — resume aktivasyonu meta sonrasına
+    // ertelendi ki `received_bytes` doğru injected olsun.
+    let maybe_meta = match crate::resume::PartialMeta::load(dir, session_id, payload_id) {
         Ok(opt) => opt,
         Err(e) => {
             tracing::debug!(

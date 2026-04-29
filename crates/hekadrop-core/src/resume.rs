@@ -561,11 +561,20 @@ pub fn cleanup_sweep(
     let now = Utc::now();
     let ttl = chrono::Duration::days(ttl_days);
     let mut survivors: Vec<Candidate> = Vec::with_capacity(candidates.len());
+    // PR #135 medium (3 yorum birleşik): aktif transferlerin `.part` boyutu
+    // budget hesabından dışarı bırakılırsa overshoot oluşur (in_use 4 GiB +
+    // survivors 1 GiB, budget 5 GiB → sweep "1 GiB ≤ 5 GiB OK" der ama disk
+    // gerçek 5 GiB sınırını zaten aşmış). `in_use_size` ayrı topla, budget
+    // karşılaştırmasında ekle; LRU evict yine yalnız survivors üstünde döner
+    // (in_use dosyalar dokunulmaz). `bytes_remaining` final disk truth'unu
+    // yansıtır (in_use + survivors).
+    let mut in_use_size: u64 = 0;
 
     for cand in candidates {
         if in_use.contains(&(cand.session_id, cand.payload_id)) {
-            // Aktif transfer — dokunma; budget hesabına da girmesin (caller
-            // sweep çıktıktan sonra hâlâ yazmayı sürdürebilir).
+            // Aktif transfer — dokunma + LRU adayı değil; ancak boyutu disk
+            // gerçeğine dahil → budget hesabında say.
+            in_use_size = in_use_size.saturating_add(cand.part_size);
             report.kept_in_use = report.kept_in_use.saturating_add(1);
             continue;
         }
@@ -580,14 +589,15 @@ pub fn cleanup_sweep(
         survivors.push(cand);
     }
 
-    // Aşama 2: Budget LRU pass.
-    let total: u64 = survivors
+    // Aşama 2: Budget LRU pass — `in_use_size`'ı dahil ederek karşılaştır.
+    let survivor_total: u64 = survivors
         .iter()
         .map(|c| c.part_size)
         .fold(0u64, u64::saturating_add);
+    let total = survivor_total.saturating_add(in_use_size);
 
     if total > budget_bytes {
-        // Eski-ilk sırala (ascending updated_at).
+        // Eski-ilk sırala (ascending updated_at) — yalnız survivors evict edilebilir.
         survivors.sort_by_key(|c| c.updated_at);
         let mut current = total;
         let mut idx = 0;
@@ -600,6 +610,9 @@ pub fn cleanup_sweep(
             current = current.saturating_sub(freed);
             idx += 1;
         }
+        // INVARIANT: `current` >= `in_use_size` her zaman (yalnız survivors evict
+        // edilir). `current > budget_bytes` hâlâ true ise budget overshoot
+        // in_use dosyaları yüzünden kaçınılmaz — caller log/metric ile farkında.
         report.bytes_remaining = current;
     } else {
         report.bytes_remaining = total;
@@ -881,10 +894,73 @@ mod tests {
 
         assert_eq!(report.kept_in_use, 2, "in_use çiftleri korunmalı");
         assert_eq!(report.removed_ttl, 1, "TTL aşan tek çift silinmeli");
+        // PR #135 medium: in_use boyutu `bytes_remaining`'e dahil — disk
+        // gerçeği = 2 × 1024 (in_use) + 0 survivor = 2048.
+        assert_eq!(report.bytes_remaining, 2048);
         // in_use çiftleri hâlâ yerinde olmalı (.meta + .part).
         assert!(dir.join(meta_filename(1, 100)).exists());
         assert!(dir.join(meta_filename(2, 200)).exists());
         assert!(!dir.join(meta_filename(3, 300)).exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_in_use_counts_toward_budget() {
+        // PR #135 medium (3 yorum birleşik): aktif transferin `.part` boyutu
+        // budget hesabına girmeli — yoksa in_use 4 GiB + survivors 1 GiB +
+        // budget 5 GiB durumunda sweep "OK" der ama disk gerçek 5 GiB +
+        // sonraki write → 5 GiB sınırı aşılır.
+        //
+        // Test scale: in_use 3 MiB + 2 survivor × 2 MiB = 7 MiB total.
+        // Budget 5 MiB → in_use dahil edildiği için survivors üstünden 2 MiB
+        // (en eski) evict edilmeli. Edilmezse (eski davranış) 4 MiB ≤ 5 MiB
+        // OK görünür ve LRU tetiklenmez.
+        let dir = unique_tmp_dir("cleanup-in-use-budget");
+        let now = Utc::now();
+        let three_mib = 3 * 1024 * 1024;
+        let two_mib = 2 * 1024 * 1024;
+
+        // in_use: 3 MiB.
+        write_pair(&dir, 1, 100, now, Some(three_mib));
+        // Survivors: 2 MiB her biri, ikincisi yeni.
+        write_pair(
+            &dir,
+            2,
+            200,
+            now - chrono::Duration::hours(2),
+            Some(two_mib),
+        ); // en eski
+        write_pair(
+            &dir,
+            3,
+            300,
+            now - chrono::Duration::hours(1),
+            Some(two_mib),
+        );
+
+        let mut in_use = HashSet::new();
+        in_use.insert((1i64, 100i64));
+
+        let budget: u64 = 5 * 1024 * 1024;
+        let report = cleanup_sweep(&dir, RESUME_TTL_DAYS, budget, &in_use);
+
+        assert_eq!(report.kept_in_use, 1);
+        assert_eq!(report.removed_ttl, 0);
+        assert_eq!(
+            report.removed_budget, 1,
+            "in_use boyutu (3 MiB) dahil edildiği için en eski survivor evict edilmeli"
+        );
+        assert_eq!(report.bytes_freed as usize, two_mib);
+        // En eski survivor (2,200) evict; (1,100) in_use korundu; (3,300) survivor.
+        assert!(dir.join(meta_filename(1, 100)).exists(), "in_use korunmalı");
+        assert!(
+            !dir.join(meta_filename(2, 200)).exists(),
+            "en eski survivor evict"
+        );
+        assert!(dir.join(meta_filename(3, 300)).exists());
+        // bytes_remaining = in_use (3 MiB) + survivor (2 MiB) = 5 MiB.
+        assert_eq!(report.bytes_remaining as usize, 5 * 1024 * 1024);
 
         let _ = fs::remove_dir_all(&dir);
     }
