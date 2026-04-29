@@ -329,9 +329,11 @@ fn extract_bundle_inner(
                 let _ = out.sync_all();
 
                 // RFC-0005 §3.2 — `mode` opsiyonel, best-effort uygula.
-                // sync_all sonrası — yazma kompleti garanti, sonra metadata.
+                // PR #149 medium yorumu (Gemini): drop öncesi `File::set_permissions`
+                // file handle üzerinden race-free; close-then-chmod path race'i
+                // yok (staging dir 0700 olsa bile defense-in-depth).
+                apply_mode_best_effort_via_handle(&out, *mode);
                 drop(out);
-                apply_mode_best_effort(&joined, *mode);
             }
         }
     }
@@ -350,7 +352,11 @@ fn extract_bundle_inner(
                 let _ = fs::remove_dir_all(&final_path);
                 return Err(copy_err);
             }
-            // Source'u sil (best-effort; başarısız olursa Drop yine deneyecek).
+            // Source'u sil (best-effort). NOT (PR #148 medium): Drop guard
+            // yalnızca staging dir'i izler; eğer burada başarısız olursak
+            // staging artık kabul edilmiş success path üzerinde olduğundan
+            // (rename hedefi final_path tamam) Drop *staging*'i tekrar dener.
+            // final_path zaten merge'lenmiş gerçek hedef, dokunulmaz.
             let _ = fs::remove_dir_all(staging_dir);
         }
         Err(e) => return Err(ExtractError::Io(e)),
@@ -419,6 +425,21 @@ fn apply_mode_best_effort(path: &Path, mode: Option<u32>) {
 #[cfg(not(unix))]
 fn apply_mode_best_effort(_path: &Path, _mode: Option<u32>) {
     // No-op: NTFS ACL modeli POSIX mode bit'lerini temsil etmez.
+}
+
+/// Race-free fchmod alternatifi (PR #149 medium): file handle hâlâ açıkken
+/// `File::set_permissions` çağırarak path lookup race'i bypass et.
+#[cfg(unix)]
+fn apply_mode_best_effort_via_handle(file: &fs::File, mode: Option<u32>) {
+    if let Some(m) = mode {
+        let safe = m & 0o777;
+        let _ = file.set_permissions(std::fs::Permissions::from_mode(safe));
+    }
+}
+
+#[cfg(not(unix))]
+fn apply_mode_best_effort_via_handle(_file: &fs::File, _mode: Option<u32>) {
+    // No-op (Windows).
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
