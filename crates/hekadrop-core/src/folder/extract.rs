@@ -332,8 +332,13 @@ fn extract_bundle_inner(
     match fs::rename(staging_dir, &final_path) {
         Ok(()) => {}
         Err(e) if is_cross_device(&e) => {
-            // Recursive copy + delete fallback.
-            recursive_copy_dir(staging_dir, &final_path)?;
+            // PR #145 high yorumu (Gemini): Recursive copy partial-failure'da
+            // (ör. disk dolu) `final_path` altında kısmi dosya bırakırsa
+            // atomic-reject vaadi bozulur. Hata olursa final_path'i de temizle.
+            if let Err(copy_err) = recursive_copy_dir(staging_dir, &final_path) {
+                let _ = fs::remove_dir_all(&final_path);
+                return Err(copy_err);
+            }
             // Source'u sil (best-effort; başarısız olursa Drop yine deneyecek).
             let _ = fs::remove_dir_all(staging_dir);
         }

@@ -104,10 +104,15 @@ impl UiPort for UiAdapter {
                 // duplicate olur (klasör zaten parent'ı olur), o yüzden
                 // file path'iyle aynı helper'a delege; OS-bazlı reveal davranışı
                 // file için optimal ama klasör için de bozulmaz (parent dir açar).
-                let title = crate::i18n::t(title_key);
+                //
+                // PR #147 high yorumu (Gemini): title key
+                // `notification.folder_received.title` `{0}` placeholder içeriyor.
+                // `i18n::t` (format'sız) raw string sızdırıyordu. Hem title hem
+                // body için `tf` kullan, aynı args setini ver.
                 let args_refs: Vec<&str> = body_args.iter().map(String::as_str).collect();
+                let title = crate::i18n::tf(title_key, &args_refs);
                 let body = crate::i18n::tf(body_key, &args_refs);
-                crate::ui::notify_file_received(title, &body, path);
+                crate::ui::notify_file_received(&title, &body, path);
             }
             UiNotification::ToastRaw { title, body } => {
                 crate::ui::notify(&title, &body);
