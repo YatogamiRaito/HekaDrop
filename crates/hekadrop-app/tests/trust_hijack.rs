@@ -61,8 +61,7 @@ use serde_json::json;
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 #[test]
@@ -247,7 +246,7 @@ mod issue_17_rate_limit {
         }
 
         fn queue_len(&self, ip: IpAddr) -> usize {
-            self.windows.read().get(&ip).map(|q| q.len()).unwrap_or(0)
+            self.windows.read().get(&ip).map_or(0, |q| q.len())
         }
     }
 

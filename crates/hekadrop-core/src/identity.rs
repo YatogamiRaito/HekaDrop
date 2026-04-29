@@ -190,8 +190,7 @@ fn harden_identity_file_acl(path: &std::path::Path) -> Result<()> {
     // doğrudan `%SystemRoot%\System32\icacls.exe` mutlak yolundan çağırırız.
     // `%SystemRoot%` env yoksa tipik varsayılan `C:\Windows` fallback.
     let icacls_path = std::env::var_os("SystemRoot")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from)
         .join("System32")
         .join("icacls.exe");
 

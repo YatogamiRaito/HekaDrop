@@ -408,8 +408,8 @@ pub(crate) fn notify_file_received(title: &str, body: &str, path: std::path::Pat
         let spawned = std::thread::Builder::new()
             .name("hekadrop-notify".into())
             .spawn(move || {
-                let _ = &path; // ileride callback için korunuyor
                 use notify_rust::Notification;
+                let _ = &path; // ileride callback için korunuyor
                 if let Err(e) = Notification::new()
                     .appname("HekaDrop")
                     .summary(&title)
@@ -1097,8 +1097,7 @@ fn have(bin: &str) -> bool {
         .arg("-c")
         .arg(format!("command -v {bin} >/dev/null 2>&1"))
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 fn human_size(bytes: i64) -> String {

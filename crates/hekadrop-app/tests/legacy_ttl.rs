@@ -42,8 +42,7 @@ use hekadrop::settings::{Settings, TrustedDevice};
 fn now_epoch() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// Legacy kayıt (`hash = None`) 90 günden eski ise `prune_expired` silmeli.

@@ -211,8 +211,11 @@ hedefini karşılıyor. Aktif iş **RFC-0003** (chunk-HMAC + capabilities exchan
 ## Deferred strictness sweep'leri (PR #87 body'sinde liste)
 
 Workspace'a eklenmemiş ama eklenmeli lint'ler — ayrı PR serisi:
-`clippy::pedantic` (~1,228), `clippy::doc_markdown` (445+792), `unreachable_pub` (349), `uninlined_format_args` (auto-fix yapıldı, lint enable yok), `match_same_arms` (68), `cast_possible_wrap` (36 — security audit gerek), `items_after_statements` (33), `map_unwrap_or` (28), vs.
+`clippy::pedantic` (~1,228), `clippy::doc_markdown` (445+792), `unreachable_pub` (349), `uninlined_format_args` (auto-fix yapıldı, lint enable yok), `match_same_arms` (68), `cast_possible_wrap` (36 — security audit gerek), vs.
 
-Enforce edilenler (sweep history): `clippy::must_use_candidate` (37 source `#[must_use]` + proto module-level allow generated kod için).
+Enforce edilenler (sweep history):
+- `clippy::must_use_candidate` (37 source `#[must_use]` + proto module-level allow generated kod için).
+- `clippy::items_after_statements` (7 site fix — const/use/inner-fn yukarı taşındı).
+- `clippy::map_unwrap_or` (13 site auto-fix — `.map(f).unwrap_or(d)` → `.map_or(d, f)`).
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.

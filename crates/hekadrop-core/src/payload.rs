@@ -325,17 +325,17 @@ impl PayloadAssembler {
         body: &[u8],
         last_chunk: bool,
     ) -> Result<Option<CompletedPayload>> {
+        // SECURITY: BYTES payload'ı clipboard/URL/kısa metin için; limitsiz
+        // büyümesi memory exhaustion (OOM DoS) vektörüdür. 4 MiB'lik sert
+        // bir üst sınır uyguluyoruz — gerçek kullanım için fazlasıyla
+        // yeterli (clipboard metni tipik <100 KB, URL <4 KB).
+        const MAX_BYTES_BUFFER: usize = 4 * 1024 * 1024;
         if !body.is_empty() {
             let now = Instant::now();
             let buf = self.bytes_buffers.entry(id).or_insert_with(|| BytesBuf {
                 data: Vec::new(),
                 last_chunk_at: now,
             });
-            // SECURITY: BYTES payload'ı clipboard/URL/kısa metin için; limitsiz
-            // büyümesi memory exhaustion (OOM DoS) vektörüdür. 4 MiB'lik sert
-            // bir üst sınır uyguluyoruz — gerçek kullanım için fazlasıyla
-            // yeterli (clipboard metni tipik <100 KB, URL <4 KB).
-            const MAX_BYTES_BUFFER: usize = 4 * 1024 * 1024;
             if buf.data.len().saturating_add(body.len()) > MAX_BYTES_BUFFER {
                 self.bytes_buffers.remove(&id);
                 return Err(HekaError::PayloadIo(format!(
@@ -367,6 +367,12 @@ impl PayloadAssembler {
         last_chunk: bool,
     ) -> Result<Option<CompletedPayload>> {
         use std::collections::hash_map::Entry;
+
+        // Quick Share pratikte 1 TiB'den büyük tek dosya göndermez —
+        // 1 TiB üstü değer neredeyse kesin kötü niyetli / broken peer.
+        // Bu sınırı koymadan `(written*100)/total` progress aritmetiği ve
+        // `i64 → u64` cast'lerde sürpriz davranışlara yol açar.
+        const MAX_FILE_BYTES: i64 = 1 << 40; // 1 TiB
 
         // RFC-0003 §2 ordering invariant: chunk-HMAC capability aktif iken
         // her FILE data chunk'ı bir ChunkIntegrity envelope'u beklemeli.
@@ -403,11 +409,7 @@ impl PayloadAssembler {
             if total_size < 0 {
                 return Err(HekaError::PayloadSizeNegative(total_size).into());
             }
-            // Quick Share pratikte 1 TiB'den büyük tek dosya göndermez —
-            // 1 TiB üstü değer neredeyse kesin kötü niyetli / broken peer.
-            // Bu sınırı koymadan `(written*100)/total` progress aritmetiği ve
-            // `i64 → u64` cast'lerde sürpriz davranışlara yol açar.
-            const MAX_FILE_BYTES: i64 = 1 << 40; // 1 TiB
+            // MAX_FILE_BYTES fonksiyon başında tanımlı (1 TiB üstü reject).
             if total_size > MAX_FILE_BYTES {
                 return Err(HekaError::PayloadSizeAbsurd(total_size).into());
             }
@@ -1196,7 +1198,7 @@ mod tests {
         // body ingest pending'e düşer, henüz disk'te bir şey yok.
         assert!(a.ingest(&f0).await.unwrap().is_none());
         // verify_chunk_tag çağrılmadan dosya boyutu hâlâ 0 olmalı (placeholder).
-        let on_disk_after_body0 = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+        let on_disk_after_body0 = std::fs::metadata(&tmp).map_or(0, |m| m.len());
         assert_eq!(
             on_disk_after_body0, 0,
             "verify öncesi disk'e yazma olmamalı"
