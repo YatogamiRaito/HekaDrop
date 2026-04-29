@@ -957,9 +957,40 @@ async fn handle_sharing_frame(
                 } else {
                     None
                 };
-                for (pid, path, display_name, announced_size) in planned_files {
+                for (pid, fresh_path, display_name, announced_size) in planned_files {
+                    // PR-G: RESUME_V1 + meta valid + meta.dest_path mevcut →
+                    // fresh placeholder'ı sil + meta.dest_path'i register et
+                    // (mevcut `.part` üstüne devam). Aksi halde fresh_path.
+                    let actual_path = if let Some(sid) = session_id {
+                        match resolve_resume_path(sid, pid, &display_name, announced_size) {
+                            Some(resume_path) => {
+                                // Fresh placeholder boş — sil, resume path'e geç.
+                                if let Err(e) = std::fs::remove_file(&fresh_path) {
+                                    if e.kind() != std::io::ErrorKind::NotFound {
+                                        tracing::debug!(
+                                            "[{}] resume swap: fresh placeholder silinemedi {}: {}",
+                                            peer,
+                                            crate::log_redact::path_basename(&fresh_path),
+                                            e
+                                        );
+                                    }
+                                }
+                                tracing::info!(
+                                    "[{}] resume aktif: payload_id={} → mevcut .part'a devam ({})",
+                                    peer,
+                                    pid,
+                                    crate::log_redact::path_basename(&resume_path)
+                                );
+                                resume_path
+                            }
+                            None => fresh_path,
+                        }
+                    } else {
+                        fresh_path
+                    };
+
                     assembler
-                        .register_file_destination(pid, path)
+                        .register_file_destination(pid, actual_path)
                         .context("dosya hedefi kaydı")?;
                     pending_names.insert(pid, display_name.clone());
 
@@ -1131,6 +1162,60 @@ fn human_size(bytes: i64) -> String {
     }
 }
 
+/// PR-G — Introduction handler'ı `unique_downloads_path`'le fresh placeholder
+/// rezerve ettikten sonra bu fonksiyonu çağırır. Eğer geçerli bir resume
+/// `.meta` varsa + `meta.dest_path` mevcut + dosya boyutu `received_bytes`
+/// ile eşleşiyorsa **mevcut `.part` path'i** döner; caller fresh placeholder'ı
+/// silip bu path'i register eder. Aksi halde `None` (fresh transfer).
+///
+/// Validate adımları (RFC §5'teki MUST'larla birebir):
+/// - `partial_dir` resolve OK
+/// - `.meta` load OK + `validate()` OK
+/// - `meta.file_name == announced display_name`
+/// - `meta.total_size == announced_total_size`
+/// - `meta.updated_at` TTL içinde
+/// - `meta.dest_path` non-empty + `Path::exists` + `metadata.len() ==
+///   meta.received_bytes` (disk doğrulaması)
+fn resolve_resume_path(
+    session_id: i64,
+    payload_id: i64,
+    announced_display_name: &str,
+    announced_total_size: i64,
+) -> Option<std::path::PathBuf> {
+    let dir = crate::resume::partial_dir().ok()?;
+    let meta = crate::resume::PartialMeta::load(&dir, session_id, payload_id)
+        .ok()
+        .flatten()?;
+    if meta.dest_path.is_empty() {
+        return None;
+    }
+    if meta.file_name != announced_display_name {
+        return None;
+    }
+    if meta.total_size != announced_total_size {
+        return None;
+    }
+    let age_days = (chrono::Utc::now() - meta.updated_at).num_days();
+    if age_days > crate::resume::RESUME_TTL_DAYS {
+        return None;
+    }
+    let path = std::path::PathBuf::from(&meta.dest_path);
+    let md = std::fs::metadata(&path).ok()?;
+    if !md.is_file() {
+        return None;
+    }
+    // SECURITY: untrusted-disk size — `meta.received_bytes` ile eşleşmesi
+    // resume offset semantiğinin disk gerçeğine oturduğunu garanti eder.
+    // `as u64` bit-cast (u64 rendering); validate() received_bytes >= 0
+    // garantilediği için sign loss yok.
+    #[allow(clippy::cast_sign_loss)] // INVARIANT: validate() guards received_bytes >= 0
+    let expected = meta.received_bytes as u64;
+    if md.len() != expected {
+        return None;
+    }
+    Some(path)
+}
+
 /// RFC-0004 §3.3 + §5 — Introduction sonrası bir dosya için resume
 /// orchestration:
 ///
@@ -1169,22 +1254,10 @@ async fn handle_resume_for_file(
     // 1. partial_dir resolve. HOME yoksa silently skip → fresh transfer.
     let dir = crate::resume::partial_dir().context("resume: partial_dir resolve")?;
 
-    // 2. Resume state'i her durumda enable et — fresh transfer de checkpoint
-    //    yazsın. Hata yutulur, fresh hâli devam eder.
-    if let Err(e) = assembler.enable_resume(
-        payload_id,
-        session_id,
-        peer_endpoint_id.to_string(),
-        file_name.to_string(),
-    ) {
-        tracing::debug!(
-            "resume enable failed (payload_id={}): {} — checkpoint kapalı, fresh devam",
-            payload_id,
-            e
-        );
-    }
-
-    // 3. `.meta` lookup. NotFound → fresh; load Err → silently skip.
+    // 2. `.meta` lookup. NotFound → fresh; load Err → silently skip.
+    //    PR-G: meta validate sonucuna göre `enable_resume_with_offset` ya da
+    //    `enable_resume` (fresh) çağrılır — resume aktivasyonu meta sonrasına
+    //    ertelendi ki `received_bytes` doğru injected olsun.
     let maybe_meta = match crate::resume::PartialMeta::load(&dir, session_id, payload_id) {
         Ok(opt) => opt,
         Err(e) => {
@@ -1193,15 +1266,29 @@ async fn handle_resume_for_file(
                 payload_id,
                 e
             );
+            // Fresh enable — `.meta` yazsın ki sonraki kesintide resume
+            // şansı doğsun.
+            let _ = assembler.enable_resume(
+                payload_id,
+                session_id,
+                peer_endpoint_id.to_string(),
+                file_name.to_string(),
+            );
             return Ok(());
         }
     };
     let Some(meta) = maybe_meta else {
-        // Eşleşen meta yok → ResumeHint emit etme; fresh devam.
+        // Eşleşen meta yok → fresh enable + ResumeHint emit etme.
+        let _ = assembler.enable_resume(
+            payload_id,
+            session_id,
+            peer_endpoint_id.to_string(),
+            file_name.to_string(),
+        );
         return Ok(());
     };
 
-    // 4. Receiver MUST invariant validate (RFC §5).
+    // 3. Receiver MUST invariant validate (RFC §5).
     let now = chrono::Utc::now();
     let age_days = (now - meta.updated_at).num_days();
     let stale = age_days > crate::resume::RESUME_TTL_DAYS
@@ -1219,29 +1306,90 @@ async fn handle_resume_for_file(
         );
         let path = dir.join(crate::resume::meta_filename(session_id, payload_id));
         let _ = std::fs::remove_file(&path);
+        // Fresh enable — sonraki kesintide yeni `.meta` yazılır.
+        let _ = assembler.enable_resume(
+            payload_id,
+            session_id,
+            peer_endpoint_id.to_string(),
+            file_name.to_string(),
+        );
+        return Ok(());
+    }
+
+    // 4. Meta valid + RESUME_V1 aktif → resume offset ile enable et.
+    //    PR-G: `enable_resume_with_offset` `received_bytes` + chunk_index +
+    //    `last_chunk_tag_b64` inject eder; ingest_file ilk chunk'ta `.part`'ı
+    //    `truncate(false)` + `seek(received_bytes)` ile açar, hasher önceki
+    //    bytes ile feed edilir. `next_chunk_index = received_bytes /
+    //    chunk_size` — `validate()` chunk_size == CHUNK_SIZE garantili.
+    let chunk_size_i64 = i64::from(meta.chunk_size);
+    let next_chunk_idx = if chunk_size_i64 == 0 {
+        0
+    } else {
+        meta.received_bytes / chunk_size_i64
+    };
+    if let Err(e) = assembler.enable_resume_with_offset(
+        payload_id,
+        session_id,
+        peer_endpoint_id.to_string(),
+        file_name.to_string(),
+        meta.received_bytes,
+        next_chunk_idx,
+        meta.chunk_hmac_chain_b64.clone(),
+    ) {
+        tracing::debug!(
+            "resume enable_with_offset failed (payload_id={}, offset={}): {} — fresh devam",
+            payload_id,
+            meta.received_bytes,
+            e
+        );
+        // Fresh fallback.
+        let _ = assembler.enable_resume(
+            payload_id,
+            session_id,
+            peer_endpoint_id.to_string(),
+            file_name.to_string(),
+        );
         return Ok(());
     }
 
     // 5. partial_hash recompute (defense-in-depth — disk corruption /
-    //    concurrent edit). `.part` yoksa veya kısaysa Err döner → fresh.
-    //    Bu PR'da `.part` path'ini caller bilmiyor (register henüz pending);
-    //    PR-E'de receiver `.part` re-open + base_offset semantiği eklenince
-    //    burada gerçek hash hesaplanacak. Şimdilik `.meta`'da kayıtlı son
-    //    chunk tag'i ResumeHint'e taşınır (sender PR-D fast-path'e karar
-    //    verir; full hash recompute olmazsa zaten reject döner).
+    //    concurrent edit). PR-G: `meta.dest_path` mevcut → gerçek hash
+    //    hesaplanır. Hash hesaplanamazsa (path empty / yok / kısa) hint
+    //    yine emit edilir ama `partial_hash = []` (sender boşa REJECT döner;
+    //    receiver fresh restart'a düşer — best-effort).
     let last_tag_bytes = BASE64_STD
         .decode(&meta.chunk_hmac_chain_b64)
         .unwrap_or_default();
+
+    let partial_hash_bytes: Vec<u8> = if meta.dest_path.is_empty() {
+        Vec::new()
+    } else {
+        // SECURITY: receiver tarafı kendi diskindeki `.part`'ı doğruluyor —
+        // `meta.received_bytes` validate'lı. `as u64` bit-cast (validate
+        // received_bytes >= 0 garantili).
+        #[allow(clippy::cast_sign_loss)] // INVARIANT: validate() guards received_bytes >= 0
+        let off_u = meta.received_bytes as u64;
+        let dest_path = std::path::Path::new(&meta.dest_path);
+        match crate::resume::partial_hash_streaming(dest_path, off_u) {
+            Ok(h) => h.to_vec(),
+            Err(e) => {
+                tracing::debug!(
+                    "resume partial_hash compute failed (payload_id={}, path={}): {} — fresh fallback",
+                    payload_id,
+                    crate::log_redact::path_basename(dest_path),
+                    e
+                );
+                Vec::new()
+            }
+        }
+    };
 
     let hint = ResumeHint {
         session_id,
         payload_id,
         offset: meta.received_bytes,
-        // PR-E: `.part` üstünde recompute edilen full SHA-256. Bu PR'da
-        // `.part` re-open semantiği yok → boş (sender PR-D'de boş hash'i
-        // mismatch sayar; ALL_SUPPORTED `RESUME_V1` aktif olmadığı sürece
-        // bu kod path'i pratikte ölü).
-        partial_hash: Vec::new().into(),
+        partial_hash: partial_hash_bytes.into(),
         capabilities_version: crate::capabilities::CAPABILITIES_VERSION,
         last_chunk_tag: last_tag_bytes.into(),
     };

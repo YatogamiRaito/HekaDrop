@@ -211,9 +211,9 @@ mod tests {
         assert_eq!(client_active.raw(), features::ALL_SUPPORTED);
         assert_eq!(server_active.raw(), features::ALL_SUPPORTED);
         assert!(client_active.has(features::CHUNK_HMAC_V1));
-        // PR #136 high sonrası RESUME_V1 ALL_SUPPORTED'dan çıktı (receiver
-        // truncate(true) bug'ı). FOLDER_STREAM_V1 (RFC-0005) hâlâ implementasyonsuz.
-        assert!(!client_active.has(features::RESUME_V1));
+        // PR-G: RESUME_V1 ALL_SUPPORTED'a geri eklendi. FOLDER_STREAM_V1
+        // (RFC-0005) hâlâ implementasyonsuz → advertise edilmez.
+        assert!(client_active.has(features::RESUME_V1));
         assert!(!client_active.has(features::FOLDER_STREAM_V1));
         assert!(!client_active.is_legacy());
         // Genuine HekaDrop path'inde leftover olmamalı.

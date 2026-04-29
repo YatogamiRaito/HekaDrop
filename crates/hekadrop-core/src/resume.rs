@@ -217,6 +217,16 @@ pub struct PartialMeta {
     pub peer_endpoint_id: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// PR-G: receiver-side absolute path of the partial download file. When
+    /// non-empty, [`connection`] resume orchestration reuses this exact path
+    /// (skipping fresh `unique_downloads_path` placeholder allocation) so the
+    /// existing `.part` bytes survive the second handshake.
+    ///
+    /// Optional (`#[serde(default)]`) — backward-compatible with older `.meta`
+    /// files that predate the field; on absence caller falls back to the
+    /// fresh placeholder path (resume effectively no-op).
+    #[serde(default)]
+    pub dest_path: String,
 }
 
 #[derive(Debug, Error)]
@@ -658,6 +668,7 @@ mod tests {
             peer_endpoint_id: "ABCD".to_string(),
             created_at: now,
             updated_at: now,
+            dest_path: String::new(),
         }
     }
 
@@ -826,6 +837,7 @@ mod tests {
             peer_endpoint_id: "PEER".to_string(),
             created_at: updated_at,
             updated_at,
+            dest_path: String::new(),
         };
         // store_atomic validate eder; total/received eşit + valid → OK.
         meta.store_atomic(dir).unwrap();

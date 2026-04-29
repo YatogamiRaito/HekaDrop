@@ -45,15 +45,14 @@ pub mod features {
     /// `resume.rs` primitives + receiver `.meta` persist + `ResumeHint` emit
     /// + sender `wait_for_resume_hint_or_zero` verify + cleanup sweep).
     ///
-    /// **PR #136 Gemini high yorumu sonrası geri kapatıldı:** envelope/sender/
-    /// receiver state machine'i hazır ama `PayloadAssembler::ingest_file`
-    /// dosyayı `OpenOptions::truncate(true)` ile her zaman sıfırlıyor
-    /// (`payload.rs:561`). Resume aktifken receiver `.part`'ı silip baştan
-    /// yazıyor → veri kaybı / korruption. Receiver append/seek orchestration
-    /// tamamlanana kadar bit advertise EDİLMEZ; sender + receiver state
-    /// machine kodu hazır kalır (envelope dispatch'i + opsiyonel resume hint
-    /// path testleri etkilenmez, capability gate'i kapalı).
-    pub const ALL_SUPPORTED: u64 = CHUNK_HMAC_V1;
+    /// **PR #136 Gemini high yorumu sonrası geri kapatıldı** (receiver
+    /// `truncate(true)` → veri kaybı). **PR-G ile geri açıldı:**
+    /// `payload.rs::ingest_file` artık resume aktifken `truncate(false)` +
+    /// `seek(received_bytes)` ile mevcut `.part`'a devam eder; hasher önceki
+    /// byte'larla feed edilir (final SHA-256 chain tutarlı kalır);
+    /// `connection.rs::resolve_resume_path` Introduction handler'ında fresh
+    /// placeholder yerine `meta.dest_path`'i register eder.
+    pub const ALL_SUPPORTED: u64 = CHUNK_HMAC_V1 | RESUME_V1;
 
     /// Bu build için reserved (henüz hiçbir RFC'nin sahip olmadığı) bit'ler.
     /// Test'lerde forward-compat akışını doğrulamak için kullanılır.
@@ -377,12 +376,16 @@ mod tests {
     fn all_supported_only_has_implemented_features() {
         // PR #103 review (Copilot): ALL_SUPPORTED yalnızca implementasyonu
         // hazır feature'ları içerir. RFC-0004 (RESUME_V1) PR-F'de açıldı,
-        // **PR #136 high yorumu sonrası geri kapatıldı** (receiver
-        // truncate(true) → resume body sıfırlama riski). RFC-0005
-        // (FOLDER_STREAM_V1) hâlâ unimplemented → advertise edilmez.
-        assert_eq!(features::ALL_SUPPORTED, features::CHUNK_HMAC_V1);
+        // PR #136 high yorumu sonrası geri kapatıldı (receiver truncate(true)
+        // → resume body sıfırlama riski). **PR-G ile geri açıldı**: receiver
+        // append/seek + hasher feed entegre. RFC-0005 (FOLDER_STREAM_V1)
+        // hâlâ unimplemented → advertise edilmez.
+        assert_eq!(
+            features::ALL_SUPPORTED,
+            features::CHUNK_HMAC_V1 | features::RESUME_V1
+        );
         assert_ne!(features::ALL_SUPPORTED & features::CHUNK_HMAC_V1, 0);
-        assert_eq!(features::ALL_SUPPORTED & features::RESUME_V1, 0);
+        assert_ne!(features::ALL_SUPPORTED & features::RESUME_V1, 0);
         assert_eq!(features::ALL_SUPPORTED & features::FOLDER_STREAM_V1, 0);
     }
 }
