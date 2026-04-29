@@ -377,11 +377,10 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                         // eder; aksi halde ResumeReject + `start_offset = 0`
                         // legacy davranış.
                         //
-                        // PR-D NOT: `RESUME_V1` capability hâlâ
-                        // ALL_SUPPORTED'da değil (capabilities.rs); bu kod
-                        // path'i pratikte ölü ama receiver PR-C ResumeHint
-                        // emit eder ve bizim consume tarafımız sağlamla
-                        // testleri yeşil tutar. Capability gate açma PR-F.
+                        // PR-F: `RESUME_V1` artık `ALL_SUPPORTED`'da; her iki
+                        // uç da bit'i advertise eder → bu code path canlı
+                        // (receiver `.meta` lookup → `ResumeHint` emit →
+                        // sender consume + verify + seek).
                         let our_session_id = crate::resume::session_id_i64(&keys.auth_key);
                         let known_payload_ids: Vec<i64> =
                             plans.iter().map(|p| p.payload_id).collect();
