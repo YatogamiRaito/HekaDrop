@@ -198,6 +198,14 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     // RFC-0003 §3.3 — capabilities exchange tek seferlik, PairedKeyResult
     // arm'ında tetiklenir. Peer `extension_supported = false` ise atlanır.
     let mut capabilities_exchanged = false;
+    // PR #112 Gemini medium: aktif capabilities transferin geri kalanında
+    // (chunk-HMAC verify pipeline'ı, resume hint emit, folder bundle gating)
+    // kullanılabilsin diye loop dışında yaşamalı. Default: legacy (legacy
+    // peer'larla geriye uyumluluk). Consumer pipeline (chunk-HMAC emit) henüz
+    // bağlı değil — initial assignment intentionally unused; bu PR sender
+    // state machine entegrasyon noktası, downstream PR'lar bu değeri okuyacak.
+    #[allow(unused_assignments)]
+    let mut active_caps = crate::capabilities::ActiveCapabilities::legacy();
     let peer_label = req.device.name.clone();
     let transfer_id = format!("out:{}:{}", req.device.addr, req.device.port);
     let _guard = state::TransferGuard::new(Arc::clone(&state), &transfer_id);
@@ -278,13 +286,16 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                 crate::negotiation::DEFAULT_CAPABILITIES_TIMEOUT,
                             )
                             .await;
-                            let active = outcome.active;
+                            // PR #112 Gemini medium: outcome.active outer-scope
+                            // `active_caps`'e atanır → chunk-HMAC pipeline,
+                            // resume hint, folder gating buradan okur.
+                            active_caps = outcome.active;
                             info!(
                                 "[sender] active capabilities: 0x{:04x} (chunk_hmac={}, resume={}, folder={})",
-                                active.raw(),
-                                active.has(crate::capabilities::features::CHUNK_HMAC_V1),
-                                active.has(crate::capabilities::features::RESUME_V1),
-                                active.has(crate::capabilities::features::FOLDER_STREAM_V1),
+                                active_caps.raw(),
+                                active_caps.has(crate::capabilities::features::CHUNK_HMAC_V1),
+                                active_caps.has(crate::capabilities::features::RESUME_V1),
+                                active_caps.has(crate::capabilities::features::FOLDER_STREAM_V1),
                             );
                             // Frame loss önlemi (PR #110 high yorumu): peer
                             // extension_supported=true demiş ama legacy
@@ -298,9 +309,6 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                 );
                             }
                             capabilities_exchanged = true;
-                            // NOT: `active` per-bağlantı state'e (chunk-HMAC
-                            // entegrasyonu sıradaki PR'ında kullanılacak)
-                            // taşınmadı; şimdilik log + observability.
                         }
 
                         if !introduction_sent {
