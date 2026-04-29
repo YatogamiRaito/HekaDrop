@@ -46,6 +46,10 @@ pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod file_size_guard;
+// RFC-0005 — folder_stream_v1 payload primitives. PR-B: stateless
+// HEKABUND encoder/decoder + manifest serde + sanitize. PR-C/D
+// sender/receiver consumers.
+pub mod folder;
 pub mod frame;
 pub mod identity;
 pub mod log_redact;
