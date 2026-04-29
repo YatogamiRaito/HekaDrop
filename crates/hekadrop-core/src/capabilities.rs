@@ -37,10 +37,15 @@ pub mod features {
     ///
     /// **Yalnızca implementasyonu hazır feature'lar advertise edilir** (PR #103
     /// Copilot review): hâlihazırda peer'a bir feature'ı reklam etmek "biz bu
-    /// extension frame'lerini doğru handle edebiliriz" sözleşmesidir. `RESUME_V1`
-    /// (RFC-0004) ve `FOLDER_STREAM_V1` (RFC-0005) implementasyonu henüz yok →
-    /// advertise EDİLMEZ. Implementasyon merge olunca buraya geri eklenir.
-    pub const ALL_SUPPORTED: u64 = CHUNK_HMAC_V1;
+    /// extension frame'lerini doğru handle edebiliriz" sözleşmesidir.
+    /// `FOLDER_STREAM_V1` (RFC-0005) implementasyonu henüz yok → advertise
+    /// EDİLMEZ. Implementasyon merge olunca buraya geri eklenir.
+    ///
+    /// `RESUME_V1` (RFC-0004) PR-A→PR-F zinciriyle merge oldu (proto schema +
+    /// `resume.rs` primitives + receiver `.meta` persist + `ResumeHint` emit
+    /// + sender `wait_for_resume_hint_or_zero` verify + cleanup sweep) →
+    ///   PR-F'de bit `ALL_SUPPORTED`'a geri eklendi.
+    pub const ALL_SUPPORTED: u64 = CHUNK_HMAC_V1 | RESUME_V1;
 
     /// Bu build için reserved (henüz hiçbir RFC'nin sahip olmadığı) bit'ler.
     /// Test'lerde forward-compat akışını doğrulamak için kullanılır.
@@ -363,11 +368,14 @@ mod tests {
     #[test]
     fn all_supported_only_has_implemented_features() {
         // PR #103 review (Copilot): ALL_SUPPORTED yalnızca implementasyonu
-        // hazır feature'ları içerir. RFC-0004 (RESUME_V1) ve RFC-0005
-        // (FOLDER_STREAM_V1) implementasyonu merge olunca bu test ve
-        // ALL_SUPPORTED birlikte güncellenir.
-        assert_eq!(features::ALL_SUPPORTED, features::CHUNK_HMAC_V1);
-        assert_eq!(features::ALL_SUPPORTED & features::RESUME_V1, 0);
+        // hazır feature'ları içerir. RFC-0004 (RESUME_V1) PR-F ile aktif edildi;
+        // RFC-0005 (FOLDER_STREAM_V1) hâlâ unimplemented → advertise edilmez.
+        assert_eq!(
+            features::ALL_SUPPORTED,
+            features::CHUNK_HMAC_V1 | features::RESUME_V1
+        );
+        assert_ne!(features::ALL_SUPPORTED & features::CHUNK_HMAC_V1, 0);
+        assert_ne!(features::ALL_SUPPORTED & features::RESUME_V1, 0);
         assert_eq!(features::ALL_SUPPORTED & features::FOLDER_STREAM_V1, 0);
     }
 }
