@@ -69,6 +69,7 @@ impl Stats {
     }
 
     /// Convenience: hata olursa default + hata bilgisi.
+    #[must_use]
     pub fn load_or_default(path: &Path) -> (Self, Option<crate::settings::LoadError>) {
         match Self::load(path) {
             Ok(s) => (s, None),
@@ -121,6 +122,7 @@ impl Stats {
     }
 
     /// En büyük aktarım hacmine sahip RX cihazı (name, bytes).
+    #[must_use]
     pub fn top_rx_device(&self) -> Option<(String, u64)> {
         self.per_device_rx
             .iter()
@@ -128,6 +130,7 @@ impl Stats {
             .map(|(n, s)| (n.clone(), s.bytes))
     }
 
+    #[must_use]
     pub fn top_tx_device(&self) -> Option<(String, u64)> {
         self.per_device_tx
             .iter()

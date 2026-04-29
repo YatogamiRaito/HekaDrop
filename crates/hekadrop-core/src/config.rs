@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 const NEARBY_SHARING_MARKER: &[u8] = b"NearbySharing";
 
 /// `_<hex>._tcp.local.` — Quick Share mDNS servis tipi.
+#[must_use]
 pub fn service_type() -> String {
     let hash = Sha256::digest(NEARBY_SHARING_MARKER);
     format!("_{}._tcp.local.", hex::encode_upper(&hash[..6]))
@@ -15,6 +16,7 @@ pub fn service_type() -> String {
 // shim'di — `platform` app'a ait olduğu için core'a sığmadı. Tek call site
 // (`settings::resolved_device_name`) artık platform helper'ı doğrudan çağırıyor.
 
+#[must_use]
 pub fn random_endpoint_id() -> [u8; 4] {
     const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let mut rng = rand::thread_rng();
@@ -27,6 +29,7 @@ pub fn random_endpoint_id() -> [u8; 4] {
 
 /// mDNS instance name (10 bayt, URL-safe base64, paddingsiz).
 /// Yerleşim: [0x23, id×4, 0xFC, 0x9F, 0x5E, 0x00, 0x00]
+#[must_use]
 pub fn instance_name(endpoint_id: [u8; 4]) -> String {
     let mut bytes = [0u8; 10];
     bytes[0] = 0x23; // PCP
@@ -87,6 +90,7 @@ fn clamp_to_utf8_boundary(name: &str, max: usize) -> &[u8] {
 ///   `[17]`     ad uzunluğu (u8)
 ///   `[18..]`   UTF-8 cihaz adı (max [`MAX_DEVICE_NAME_BYTES`] bayt — bkz.
 ///              RFC 6763 §6.1 TXT record limit derivasyonu)
+#[must_use]
 pub fn endpoint_info(device_name: &str) -> Vec<u8> {
     let name_bytes = clamp_to_utf8_boundary(device_name, MAX_DEVICE_NAME_BYTES);
     let mut out = Vec::with_capacity(ENDPOINT_INFO_HEADER_LEN + name_bytes.len());
@@ -106,6 +110,7 @@ pub fn endpoint_info(device_name: &str) -> Vec<u8> {
     out
 }
 
+#[must_use]
 pub fn endpoint_info_b64(device_name: &str) -> String {
     URL_SAFE_NO_PAD.encode(endpoint_info(device_name))
 }

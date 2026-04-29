@@ -40,6 +40,7 @@ pub enum FileSizeGuard {
 }
 
 /// Tek bir `FileMetadata.size` değerini sınıflandırır.
+#[must_use]
 pub fn classify_file_size(size: i64) -> FileSizeGuard {
     if size < 0 {
         FileSizeGuard::Clamped

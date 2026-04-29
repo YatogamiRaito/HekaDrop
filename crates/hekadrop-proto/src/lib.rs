@@ -20,7 +20,9 @@
 //!   `clippy::all` (prost-generated derive'lar), `unused_qualifications`
 //!   (prost fully-qualified path kullanır), `rustdoc::invalid_html_tags`
 //!   (proto comment'lardaki `<...>` benzeri token'lar), `dead_code`
-//!   (test'lerde kullanılmayan tipler için).
+//!   (test'lerde kullanılmayan tipler için), `clippy::must_use_candidate`
+//!   (prost-generated `as_str_name` / `from_str_name` enum helper'ları —
+//!   workspace-wide enforce'a dahil edildi, generated kod düzeltilemez).
 //!
 //! Daha iyi olası iyileştirme (yapılmadı, GH issue'da takip edilmeli):
 //! `prost-build` config'inde `.message_attribute()` ile generated kod'a
@@ -30,6 +32,7 @@
 #[allow(
     clippy::all,
     clippy::doc_markdown,
+    clippy::must_use_candidate,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -44,6 +47,7 @@ pub mod securegcm {
 #[allow(
     clippy::all,
     clippy::doc_markdown,
+    clippy::must_use_candidate,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -58,6 +62,7 @@ pub mod securemessage {
 #[allow(
     clippy::all,
     clippy::doc_markdown,
+    clippy::must_use_candidate,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -84,6 +89,7 @@ pub mod location {
 #[allow(
     clippy::all,
     clippy::doc_markdown,
+    clippy::must_use_candidate,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -110,6 +116,7 @@ pub mod sharing {
 #[allow(
     clippy::all,
     clippy::doc_markdown,
+    clippy::must_use_candidate,
     non_snake_case,
     non_camel_case_types,
     dead_code,

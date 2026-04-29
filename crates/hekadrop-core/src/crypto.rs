@@ -13,6 +13,7 @@ type HmacSha256 = Hmac<Sha256>;
 type Aes256CbcEnc = Encryptor<Aes256>;
 type Aes256CbcDec = Decryptor<Aes256>;
 
+#[must_use]
 pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
     let hk = Hkdf::<Sha256>::new(Some(salt), ikm);
     let mut out = vec![0u8; len];
@@ -25,6 +26,7 @@ pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> 
     out
 }
 
+#[must_use]
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(data);
@@ -39,6 +41,7 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
 ///   hash=0, mult=1
 ///   for b in key: hash = (hash + `b_signed` * mult) % 9973, mult = (mult * 31) % 9973
 ///   pin = abs(hash) 4 hane
+#[must_use]
 pub fn pin_code_from_auth_key(key: &[u8]) -> String {
     let mut hash: i64 = 0;
     let mut mult: i64 = 1;
@@ -65,11 +68,13 @@ pub fn pin_code_from_auth_key(key: &[u8]) -> String {
 /// (256-bit entropi) kullanıyoruz — brute-force mümkün değil, fingerprint
 /// sender + receiver log'larını handshake boyunca ilişkilendirmeye
 /// yeter ama zayıf PIN uzayını hedef almaz.
+#[must_use]
 pub fn session_fingerprint(auth_key: &[u8]) -> String {
     let digest = sha256(auth_key);
     hex::encode(&digest[..3]) // 6 hex karakter
 }
 
+#[must_use]
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     // INVARIANT: HMAC-SHA256 spec'i (RFC 2104) tüm key uzunluklarını kabul eder
     // (kısa key zero-pad'lenir, uzun key SHA-256'dan geçer). `new_from_slice`
@@ -85,6 +90,7 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     out
 }
 
+#[must_use]
 pub fn hmac_sha256_verify(key: &[u8], data: &[u8], tag: &[u8]) -> bool {
     // SECURITY: `ct_eq` eşit-olmayan slice'larda sessiz false döner. Erken ve
     // açık reddedip caller'ın bu durumu ayırt edebilmesini (ve log/metric'e
@@ -97,6 +103,7 @@ pub fn hmac_sha256_verify(key: &[u8], data: &[u8], tag: &[u8]) -> bool {
     computed.ct_eq(tag).into()
 }
 
+#[must_use]
 pub fn aes256_cbc_encrypt(key: &[u8; 32], iv: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
     Aes256CbcEnc::new(key.into(), iv.into()).encrypt_padded_vec_mut::<Pkcs7>(plaintext)
 }
@@ -110,6 +117,7 @@ pub fn aes256_cbc_decrypt(
 }
 
 /// D2D key derivation sonrası secure-message HMAC salt'ı: SHA256("SecureMessage").
+#[must_use]
 pub fn secure_message_salt() -> [u8; 32] {
     sha256(b"SecureMessage")
 }

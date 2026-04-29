@@ -75,6 +75,7 @@ impl LogLevel {
     /// `hekadrop` crate'i için seviye set edilir; directive'e dahil
     /// olmayan modüller (tokio/hyper vb.) `EnvFilter` default'una (warn)
     /// düşer.
+    #[must_use]
     pub fn filter_directive(self) -> &'static str {
         match self {
             Self::Error => "hekadrop=error",
@@ -86,6 +87,7 @@ impl LogLevel {
 
     /// UI / JSON için küçük harfli etiket — serde `rename_all = "lowercase"`
     /// ile aynı değer. IPC JSON parsing tarafında string karşılaştırması için.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Error => "error",
@@ -97,6 +99,7 @@ impl LogLevel {
 
     /// UI'dan gelen serbest string değeri `LogLevel`'e çevirir; bilinmeyen
     /// değerler `Info` default'una düşer (invalid input'ta sessiz güven).
+    #[must_use]
     pub fn parse_or_default(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
             "error" => Self::Error,
@@ -190,6 +193,7 @@ fn now_epoch() -> u64 {
 impl TrustedDevice {
     /// UI'da "Samsung A52 (a1b2c3d4)" şeklinde göstermek için kısa format.
     /// ID boşsa (legacy kayıt) sadece ad döner.
+    #[must_use]
     pub fn display(&self) -> String {
         if self.id.is_empty() {
             self.name.clone()
@@ -312,6 +316,7 @@ impl Settings {
     // by-value `*hash` deref talebi kod akışını bozar. 2 byte pass-by-ref overhead
     // kabul edilebilir; bu yöntem hot path değil (trust kontrolü, frame başına ≤1).
     #[allow(clippy::trivially_copy_pass_by_ref)]
+    #[must_use]
     pub fn is_trusted_by_hash(&self, hash: &[u8; 6]) -> bool {
         let now = now_epoch();
         let ttl = self.trust_ttl_secs;
@@ -327,6 +332,7 @@ impl Settings {
     /// olarak kullanılır. Üç sürüm sonra (v0.7'de) legacy yolu tamamen
     /// devre dışı kalacak. TTL bu yolda uygulanmaz — legacy kayıtlar zaten
     /// timestamp içermiyor, kullanıcı eski kararını kaybetmemeli.
+    #[must_use]
     pub fn is_trusted_legacy(&self, device_name: &str, id: &str) -> bool {
         if device_name.is_empty() {
             return false;
@@ -344,6 +350,7 @@ impl Settings {
     /// çalıştırır, TTL kontrolü yapmaz. Yeni kodun `is_trusted_by_hash`
     /// kullanması beklenir.
     #[allow(dead_code)]
+    #[must_use]
     pub fn is_trusted(&self, device_name: &str, id: &str) -> bool {
         self.is_trusted_legacy(device_name, id)
     }
@@ -514,6 +521,7 @@ impl Settings {
     /// yolu `push_trusted_to_ui` içindeki yapılandırılmış JSON'u tercih
     /// eder; bu fonksiyon legacy IPC çağrıları ve testler için korunur.
     #[allow(dead_code)]
+    #[must_use]
     pub fn trusted_display_list(&self) -> Vec<String> {
         self.trusted_devices.iter().map(|d| d.display()).collect()
     }
@@ -569,6 +577,7 @@ impl Settings {
     /// Convenience: hata olursa default dön + hata bilgisini de dışa ver.
     /// Caller `Option<LoadError>`'ı log'a basıp UI'a notification gönderir,
     /// `Corrupt` durumunda dosyayı [`backup_corrupt_file`] ile yedekler.
+    #[must_use]
     pub fn load_or_default(path: &Path) -> (Self, Option<LoadError>) {
         match Self::load(path) {
             Ok(s) => (s, None),
