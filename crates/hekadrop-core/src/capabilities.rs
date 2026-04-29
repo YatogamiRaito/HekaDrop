@@ -144,6 +144,23 @@ pub fn build_resume_hint_frame(hint: hekadrop_proto::hekadrop_ext::ResumeHint) -
     }
 }
 
+/// `HekaDropFrame { resume_reject = ... }` envelope'unu inşa et.
+///
+/// RFC-0004 §3.2 + §6 + capabilities.md §3.1 slot 13. Sender, peer'dan
+/// gelen `ResumeHint` spec §5 invariant'larından birini ihlal ettiğinde
+/// emit eder; receiver bu frame'i alınca §6 reason matrix'ine göre
+/// `.part`/`.meta` cleanup yapar (PR-E).
+#[must_use]
+pub fn build_resume_reject_frame(
+    reject: hekadrop_proto::hekadrop_ext::ResumeReject,
+) -> HekaDropFrame {
+    use hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload;
+    HekaDropFrame {
+        version: ENVELOPE_VERSION,
+        payload: Some(Payload::ResumeReject(reject)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
