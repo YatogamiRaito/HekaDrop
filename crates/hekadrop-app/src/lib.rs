@@ -52,8 +52,8 @@
 // (binary `src/main.rs` direkt `hekadrop_core::xxx` kullanır; lib bağımsız
 // derlenir). Yeni core sembolü eklendiğinde tek mecburi update buradadır.
 pub use hekadrop_core::{
-    config, connection, crypto, discovery_types, error, file_size_guard, frame, identity,
-    log_redact, payload, secure, sender, server, settings, stats, ui_port, ukey2,
+    capabilities, config, connection, crypto, discovery_types, error, file_size_guard, frame,
+    identity, log_redact, payload, resume, secure, sender, server, settings, stats, ui_port, ukey2,
 };
 
 // RFC-0001 §5 Adım 2: protobuf bindings `hekadrop-proto` crate'inden

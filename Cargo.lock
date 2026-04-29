@@ -1499,6 +1499,7 @@ dependencies = [
  "base64",
  "bytes",
  "cbc",
+ "chrono",
  "cipher",
  "criterion",
  "elliptic-curve",

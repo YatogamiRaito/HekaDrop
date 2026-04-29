@@ -14,8 +14,12 @@
 
 use crate::chunk_hmac;
 use crate::error::HekaError;
+use crate::resume;
 use anyhow::{anyhow, Context, Result};
+use base64::engine::general_purpose::STANDARD as BASE64_STD;
+use base64::Engine;
 use bytes::Bytes;
+use chrono::Utc;
 use hekadrop_proto::hekadrop_ext::ChunkIntegrity;
 use hekadrop_proto::location::nearby::connections::{
     payload_transfer_frame::payload_header::PayloadType, PayloadTransferFrame,
@@ -26,7 +30,16 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tracing::warn;
+use tracing::{debug, warn};
+
+/// RFC-0004 §3.3: receiver `.meta` checkpoint cadansı.
+///
+/// Her N verified chunk'ta bir `.meta` sidecar atomic write edilir. Daha sık
+/// yazma fsync overhead artırır; daha seyrek yazma resume offset granülerliği
+/// kaybeder (crash sonrası en fazla `N * CHUNK_SIZE` bayt yeniden gönderilir).
+/// 16 chunk × 512 KiB = 8 MiB tipik kayıp üst sınırı (v0.8.0 hardcoded; v0.8.1
+/// settings'e taşınır).
+pub const CHECKPOINT_INTERVAL_CHUNKS: u32 = 16;
 
 /// `BufWriter` iç tampon boyutu. 128 KiB, Quick Share'in 512 KiB chunk'ları için
 /// ~4 chunk'lık tampon sağlar; syscall sayısını düşürürken RAM maliyeti düşük.
@@ -113,6 +126,42 @@ struct FileSink {
     /// `ChunkIntegrity.chunk_index`'i bununla karşılaştırır → out-of-order
     /// veya skipped chunk anında protokol ihlali.
     next_chunk_index: i64,
+    /// RFC-0004 §3.3: resume `.meta` sidecar persist state. `None` →
+    /// `RESUME_V1` capability negotiate edilmemiş veya caller resume
+    /// enable etmemiş; klasik akış. `Some(...)` → her checkpoint'te
+    /// `PartialMeta::store_atomic` ile diske yazılır, finalize/cancel'da
+    /// `.meta` silinir.
+    resume_state: Option<ResumeState>,
+}
+
+/// `FileSink`'in resume tracking alanları. Yalnız `RESUME_V1` aktif iken
+/// caller [`PayloadAssembler::enable_resume`] ile ekler.
+///
+/// Bu PR (PR-C) scope: receiver fresh transfer'da `.meta` yazar; verify
+/// edilmiş chunk sayısı `CHECKPOINT_INTERVAL_CHUNKS`'a ulaşınca atomic
+/// flush. PR-E scope: receiver mevcut `.part` üstüne devam (`base_offset`
+/// > 0) — bu PR'da `base_offset = 0` (always fresh from this codepath).
+struct ResumeState {
+    /// `partial_dir()` cache'i (her checkpoint'te HOME resolve etmemek için).
+    partial_dir: PathBuf,
+    /// `resume::session_id_i64(auth_key)` — caller türetir.
+    session_id: i64,
+    /// Sanitize edilmiş hedef dosya adı (`sanitize_received_name` sonrası).
+    /// `.meta.file_name` alanına yazılır; sender resume hint validate ederken
+    /// `Introduction.file_name` ile karşılaştırır.
+    file_name: String,
+    /// mDNS endpoint id of the peer. Sender resume eligibility filtresi (PR-D).
+    peer_endpoint_id: String,
+    /// Son verify edilmiş chunk-HMAC tag'i (base64 STANDARD). PR-D fast-path:
+    /// sender resume hint'inde son tag'i geri alarak yalnız son chunk'ı
+    /// re-verify eder. İlk checkpoint öncesi boş string.
+    last_chunk_tag_b64: String,
+    /// Son `.meta` flush'undan beri verify edilmiş chunk sayısı. ≥
+    /// `CHECKPOINT_INTERVAL_CHUNKS` olunca flush + sıfırlanır.
+    chunks_since_checkpoint: u32,
+    /// `.meta` ilk yazımda set edilen UTC timestamp (TTL hesabı). `Some(t)` →
+    /// daha önce yazıldı; `None` → ilk yazım `created_at = now`.
+    created_at: Option<chrono::DateTime<Utc>>,
 }
 
 /// Verify-bekleyen chunk için geçici buffer. Body sahipli (`Vec<u8>`)
@@ -138,6 +187,15 @@ struct PendingDest {
     registered_at: Instant,
 }
 
+/// Caller `enable_resume` çağırınca buraya biriktirilir; ilk FILE chunk
+/// geldiğinde `FileSink.resume_state`'e taşınır. Pre-chunk pending state.
+struct PendingResume {
+    partial_dir: PathBuf,
+    session_id: i64,
+    peer_endpoint_id: String,
+    file_name: String,
+}
+
 #[derive(Default)]
 pub struct PayloadAssembler {
     bytes_buffers: HashMap<i64, BytesBuf>,
@@ -153,6 +211,9 @@ pub struct PayloadAssembler {
     /// ile set edilir; transfer süresince değişmez (mid-flight downgrade
     /// engelleme — capabilities.md §6).
     chunk_hmac_key: Option<[u8; 32]>,
+    /// RFC-0004 §3.3: resume `.meta` enable edilmiş ama henüz ilk chunk'ı
+    /// gelmemiş payload'lar. İlk chunk geldiğinde `FileSink`'e taşınır.
+    pending_resume: HashMap<i64, PendingResume>,
 }
 
 impl PayloadAssembler {
@@ -174,6 +235,42 @@ impl PayloadAssembler {
     #[must_use]
     pub fn chunk_hmac_enabled(&self) -> bool {
         self.chunk_hmac_key.is_some()
+    }
+
+    /// RFC-0004 §3.3: bir FILE payload için resume `.meta` persist etmeyi
+    /// aktive et. Caller `RESUME_V1` capability negotiate edilmiş + bu
+    /// payload'ın destination'ı zaten `register_file_destination` ile
+    /// kayıtlı olduktan SONRA bu fonksiyonu çağırır (Introduction handler).
+    ///
+    /// Çağrı sırası:
+    /// 1. `register_file_destination(payload_id, path)` — pending dest kaydı.
+    /// 2. `enable_resume(payload_id, session_id, peer_endpoint_id, file_name)` —
+    ///    bu fonksiyon. Pending olarak `resume_state` biriktirir; ilk chunk
+    ///    geldiğinde `FileSink` oluşturulurken state'e taşınır.
+    ///
+    /// `partial_dir` resolve edilirken `HOME`/`USERPROFILE` yoksa hata döner;
+    /// caller silently skip etmeli (resume best-effort, fresh transfer
+    /// devam eder). Bu yüzden `Result` döner — `?` ile yutmak yerine
+    /// caller `.ok()` ile handle eder.
+    pub fn enable_resume(
+        &mut self,
+        payload_id: i64,
+        session_id: i64,
+        peer_endpoint_id: String,
+        file_name: String,
+    ) -> Result<()> {
+        let partial_dir = resume::partial_dir()
+            .with_context(|| "resume: partial_dir() resolve hatası — fresh transfer")?;
+        self.pending_resume.insert(
+            payload_id,
+            PendingResume {
+                partial_dir,
+                session_id,
+                peer_endpoint_id,
+                file_name,
+            },
+        );
+        Ok(())
     }
 
     /// Introduction sırasında onaylanan dosya için diskteki hedef yolu kaydeder.
@@ -210,11 +307,20 @@ impl PayloadAssembler {
     pub fn cancel(&mut self, payload_id: i64) {
         self.bytes_buffers.remove(&payload_id);
         if let Some(sink) = self.file_sinks.remove(&payload_id) {
+            // RFC-0004 §3.3: cancel = `.meta` cleanup (sender bu transfer'i
+            // resume edemez; receiver fresh start beklenir). FileSink'ten
+            // resume_state taşınır.
+            if let Some(rs) = sink.resume_state.as_ref() {
+                remove_resume_meta(payload_id, rs);
+            }
             remove_partial_file(&sink.path);
         }
         if let Some(dest) = self.pending_destinations.remove(&payload_id) {
             remove_partial_file(&dest.path);
         }
+        // pending_resume sinki olmadan biriktirildi (Introduction sonrası,
+        // ilk chunk öncesi cancel) — sessizce drop, henüz `.meta` yazılmadı.
+        self.pending_resume.remove(&payload_id);
     }
 
     /// Belirli süreden uzun sessiz kalmış partial'ları düşürür.
@@ -244,10 +350,18 @@ impl PayloadAssembler {
 
         let mut dropped_files = 0usize;
         let mut stale_file_paths: Vec<PathBuf> = Vec::new();
-        self.file_sinks.retain(|_, sink| {
+        // RFC-0004 §3.3: stale file_sink GC'sinde `.meta` da silinir; aksi
+        // halde "stale partial silinir ama .meta kalır" → sender resume hint
+        // gönderir, receiver bulamadığı dosya için reject döner. Tutarlı
+        // cleanup tek yerde.
+        let mut stale_metas: Vec<(i64, ResumeState)> = Vec::new();
+        self.file_sinks.retain(|id, sink| {
             if sink.last_chunk_at < cutoff {
                 dropped_files += 1;
                 stale_file_paths.push(sink.path.clone());
+                if let Some(rs) = sink.resume_state.take() {
+                    stale_metas.push((*id, rs));
+                }
                 false
             } else {
                 true
@@ -255,6 +369,9 @@ impl PayloadAssembler {
         });
         for p in stale_file_paths {
             remove_partial_file(&p);
+        }
+        for (pid, rs) in &stale_metas {
+            remove_resume_meta(*pid, rs);
         }
 
         let mut dropped_pending = 0usize;
@@ -445,6 +562,17 @@ impl PayloadAssembler {
                 .open(&dest.path)
                 .with_context(|| format!("dosya açılamadı: {}", dest.path.display()))?;
             let writer = BufWriter::with_capacity(FILE_WRITE_BUF_CAPACITY, file);
+            // RFC-0004 §3.3: pending_resume varsa state'i FileSink'e taşı.
+            // Aksi halde resume_state = None — `.meta` yazılmaz.
+            let resume_state = self.pending_resume.remove(&id).map(|pr| ResumeState {
+                partial_dir: pr.partial_dir,
+                session_id: pr.session_id,
+                file_name: pr.file_name,
+                peer_endpoint_id: pr.peer_endpoint_id,
+                last_chunk_tag_b64: String::new(),
+                chunks_since_checkpoint: 0,
+                created_at: None,
+            });
             slot.insert(FileSink {
                 writer,
                 path: dest.path,
@@ -454,6 +582,7 @@ impl PayloadAssembler {
                 last_chunk_at: Instant::now(),
                 pending_chunk: None,
                 next_chunk_index: 0,
+                resume_state,
             });
         }
 
@@ -573,6 +702,10 @@ impl PayloadAssembler {
                     sink.path.display()
                 )
             })?;
+            // RFC-0004 §3.3: dosya tamamlandı, `.meta` artık gereksiz — sil.
+            if let Some(rs) = sink.resume_state.as_ref() {
+                remove_resume_meta(id, rs);
+            }
             let digest = sink.hasher.finalize();
             let mut sha256 = [0u8; 32];
             sha256.copy_from_slice(&digest);
@@ -692,6 +825,23 @@ impl PayloadAssembler {
             .ok_or_else(|| HekaError::PayloadIo(format!("chunk_index taştı (id={id})")))?;
         sink.last_chunk_at = Instant::now();
 
+        // RFC-0004 §3.3: resume state varsa son tag'i kaydet + checkpoint
+        // gerekiyorsa `.meta` flush et. Tag base64 STANDARD encoding (RFC §3.2).
+        if let Some(rs) = sink.resume_state.as_mut() {
+            rs.last_chunk_tag_b64 = BASE64_STD.encode(&ci.tag);
+            rs.chunks_since_checkpoint = rs.chunks_since_checkpoint.saturating_add(1);
+            if rs.chunks_since_checkpoint >= CHECKPOINT_INTERVAL_CHUNKS {
+                // last_chunk değilse flush; last_chunk verify'da finalize
+                // yolunda `.meta` zaten silinecek — ekstra write gereksiz.
+                if !pending.last_chunk {
+                    write_resume_checkpoint(id, sink, false);
+                    if let Some(rs) = sink.resume_state.as_mut() {
+                        rs.chunks_since_checkpoint = 0;
+                    }
+                }
+            }
+        }
+
         // Bu chunk last_chunk mı? Eğer öyle ise hemen finalize et — caller
         // ayrıca empty terminator beklemez (chunk-HMAC modunda tag-verified
         // last_chunk completion sinyali olarak yeterli; empty terminator
@@ -721,6 +871,10 @@ impl PayloadAssembler {
                     sink.path.display()
                 )
             })?;
+            // RFC-0004 §3.3: dosya tamamlandı, `.meta` artık gereksiz — sil.
+            if let Some(rs) = sink.resume_state.as_ref() {
+                remove_resume_meta(id, rs);
+            }
             let digest = sink.hasher.finalize();
             let mut sha256 = [0u8; 32];
             sha256.copy_from_slice(&digest);
@@ -751,6 +905,63 @@ fn remove_partial_file(path: &std::path::Path) {
                 crate::log_redact::path_basename(path),
                 e
             );
+        }
+    }
+}
+
+/// RFC-0004 §3.3: `.meta` sidecar atomic write — checkpoint + finalize/cancel
+/// yollarından çağrılır. `is_final = false` → mid-transfer checkpoint (best-
+/// effort; hata yutulur, fresh transfer devam eder). `is_final` semantik
+/// değil — şu an yalnız debug log farkı (gelecekte fsync skip vs eklenebilir).
+///
+/// Sink lock zaten caller tarafında alınmış olduğu için `&mut FileSink` alır;
+/// `resume_state.created_at` ilk yazımda set edilir.
+fn write_resume_checkpoint(payload_id: i64, sink: &mut FileSink, is_final: bool) {
+    let Some(rs) = sink.resume_state.as_mut() else {
+        return;
+    };
+    let now = Utc::now();
+    let created_at = *rs.created_at.get_or_insert(now);
+    // INVARIANT: bit-cast — meta_filename / parse_session_hex round-trip
+    // semantiğine birebir uyumlu, no value change. Negative i64'ler 16-char
+    // hex'e ffff... olarak render olur.
+    #[allow(clippy::cast_sign_loss)] // INVARIANT: bit-cast for hex rendering, not arithmetic
+    let session_hex = format!("{:016x}", rs.session_id as u64);
+    let meta = resume::PartialMeta {
+        version: 1,
+        session_id_hex: session_hex,
+        payload_id,
+        file_name: rs.file_name.clone(),
+        total_size: sink.total_size,
+        received_bytes: sink.written,
+        chunk_size: resume::CHUNK_SIZE,
+        chunk_hmac_chain_b64: rs.last_chunk_tag_b64.clone(),
+        peer_endpoint_id: rs.peer_endpoint_id.clone(),
+        created_at,
+        updated_at: now,
+    };
+    if let Err(e) = meta.store_atomic(&rs.partial_dir) {
+        debug!(
+            "resume checkpoint write failed (payload_id={}, final={}): {}",
+            payload_id, is_final, e
+        );
+    } else {
+        debug!(
+            "resume checkpoint written (payload_id={}, received_bytes={}, final={})",
+            payload_id, sink.written, is_final
+        );
+    }
+}
+
+/// `.meta` dosyasını sessizce siler (finalize / cancel sonrası). `NotFound`
+/// silently ok; diğer hatalar debug log.
+fn remove_resume_meta(payload_id: i64, rs: &ResumeState) {
+    let path = rs
+        .partial_dir
+        .join(resume::meta_filename(rs.session_id, payload_id));
+    if let Err(e) = std::fs::remove_file(&path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            debug!("resume .meta silinemedi (payload_id={}): {}", payload_id, e);
         }
     }
 }
