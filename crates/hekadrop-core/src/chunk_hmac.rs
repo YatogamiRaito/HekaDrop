@@ -110,7 +110,7 @@ pub fn compute_tag(
     chunk_index: i64,
     offset: i64,
     body: &[u8],
-) -> Result<[u8; 32], ChunkBuildError> {
+) -> Result<[u8; TAG_LEN], ChunkBuildError> {
     let prefix = encode_hmac_prefix(payload_id, chunk_index, offset, body.len())?;
 
     // INVARIANT: `Hmac::<Sha256>::new_from_slice` HMAC-SHA256 spec'i (RFC 2104)
@@ -122,11 +122,7 @@ pub fn compute_tag(
         .expect("HMAC-SHA256 her key uzunluğunu kabul eder");
     mac.update(&prefix);
     mac.update(body);
-    let result = mac.finalize().into_bytes();
-
-    let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&result);
-    Ok(tag)
+    Ok(mac.finalize().into_bytes().into())
 }
 
 /// Receiver-side: peer'ın yolladığı [`ChunkIntegrity`] mesajını local

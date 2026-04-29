@@ -16,14 +16,14 @@ hekadrop-core    protocol engine — kripto, frame, UKEY2, secure, payload,
                    server, ui_port (trait + UiNotification enum). UI/i18n/
                    global-state YOK.
    ↑
-hekadrop-net     mDNS discovery + advertising. Core'a bağımlı değil; app
+hekadrop-net     mDNS discovery + advertising. Core buna bağımlı değil; app
                    tarafından orchestrate edilir.
    ↑
 hekadrop-cli     headless CLI binary stub.
    ↑
 hekadrop-app     binary + UI (tao/wry/tray-icon) + platform shims +
                    state singleton plumbing + i18n + UiPort/PlatformOps
-                   trait impl'leri (UiAdapter).
+                   trait impl'leri (UiAdapter / PlatformAdapter).
 ```
 
 App `pub use hekadrop_core::*` shim ile core sembollerini re-export eder; in-tree call site'lar (`crate::crypto::*`, `crate::error::*`) dokunulmadan derlenir.
