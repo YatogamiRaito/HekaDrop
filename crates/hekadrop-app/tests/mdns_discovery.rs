@@ -57,16 +57,26 @@ fn instance_name(endpoint_id: &[u8; 4]) -> String {
 ///   [0]      bitmap (cihaz tipi << 1)
 ///   [1..17]  16 bayt rastgele
 ///   [17]     ad uzunluğu (u8)
-///   [18..]   UTF-8 cihaz adı
+///   [18..]   UTF-8 cihaz adı (RFC 6763 §6.1: `n=<base64>` ≤ 255 bayt
+///            zorunluluğu nedeniyle ad ≤ 171 bayt)
 fn endpoint_info(device_name: &str, random: &[u8; 16]) -> Vec<u8> {
+    // src/config.rs MAX_DEVICE_NAME_BYTES değeriyle birebir tutmalı.
+    const MAX_DEVICE_NAME_BYTES: usize = 171;
+
     let mut out = Vec::with_capacity(18 + device_name.len());
     out.push(DEVICE_TYPE_COMPUTER << 1);
     out.extend_from_slice(random);
 
-    let mut name_bytes = device_name.as_bytes();
-    if name_bytes.len() > 255 {
-        name_bytes = &name_bytes[..255];
-    }
+    let bytes = device_name.as_bytes();
+    let name_bytes = if bytes.len() <= MAX_DEVICE_NAME_BYTES {
+        bytes
+    } else {
+        let mut end = MAX_DEVICE_NAME_BYTES;
+        while end > 0 && !device_name.is_char_boundary(end) {
+            end -= 1;
+        }
+        &bytes[..end]
+    };
     out.push(name_bytes.len() as u8);
     out.extend_from_slice(name_bytes);
     out
@@ -144,15 +154,25 @@ fn endpoint_info_utf8_turkce_karakter() {
     assert_eq!(name, "Ömer");
 }
 
+/// RFC 6763 §6.1 — `n=<base64>` toplam ≤ 255 bayt; bu nedenle ham ad
+/// alanı 171 bayt'ta clamp'lenir. Eski davranış (255 bayt'a clamp) Quick
+/// Share / Android tarafında TXT entry'nin drop edilmesine yol açıyordu.
 #[test]
-fn endpoint_info_255_bayt_ustunde_truncate() {
+fn endpoint_info_171_bayt_ustunde_truncate_rfc6763() {
     let random = [0u8; 16];
     // 300 karakter ASCII
     let long = "A".repeat(300);
     let info = endpoint_info(&long, &random);
-    // `u8` max 255 → kayda giren ad 255 bayt olmalı
-    assert_eq!(info[17], 255);
-    assert_eq!(info.len(), 18 + 255);
+    assert_eq!(info[17], 171, "ad uzunluğu 171 bayt'a clamp edilmeli");
+    assert_eq!(info.len(), 18 + 171);
+
+    // Bu raw payload'un base64'ü `n=` ile birlikte 255 bayt sınırını aşmamalı.
+    let b64 = URL_SAFE_NO_PAD.encode(&info);
+    let txt_entry_len = "n=".len() + b64.len();
+    assert!(
+        txt_entry_len <= 255,
+        "n=<base64> = {txt_entry_len} bayt > 255 (RFC 6763 §6.1 ihlali)",
+    );
 }
 
 #[test]
