@@ -904,28 +904,56 @@ async fn handle_sharing_frame(
                             format!("{:016x}", crate::resume::session_id_i64(auth_key) as u64);
                         let bundle_path =
                             downloads_dir.join(format!(".hekadrop-temp-{session_hex}.bundle"));
-                        // create_dir_all + atomic placeholder reserve (TOCTOU).
-                        // Bundle marker'ı `planned_bundles` içine biriktirilir;
-                        // `register_bundle_marker` consent accept sonrası
-                        // çağrılır ki cancel/reject yolunda gereksiz state
-                        // kalmasın.
-                        tokio::task::block_in_place(|| -> Result<()> {
-                            std::fs::create_dir_all(&downloads_dir).ok();
-                            // Placeholder reserve — eski .bundle kalıntısı
-                            // varsa temizle (önceki crash artığı).
-                            let _ = std::fs::remove_file(&bundle_path);
-                            std::fs::OpenOptions::new()
-                                .write(true)
-                                .create_new(true)
-                                .open(&bundle_path)
-                                .with_context(|| {
-                                    format!(
-                                        "bundle placeholder rezerve edilemedi: {}",
-                                        bundle_path.display()
-                                    )
-                                })?;
-                            Ok(())
-                        })?;
+                        // RFC-0005 PR-E: bundle resume eligibility pre-check.
+                        // Bundle path session-deterministik (auth_key →
+                        // session_id_i64 → hex). Re-handshake'te aynı session
+                        // hex döndüğü için bundle_path da aynı olur. Eğer
+                        // önceki handshake'ten valid `.meta` + non-empty
+                        // partial bundle dosyası varsa onu KORUMALI; aksi
+                        // halde fresh placeholder (önceki crash artığı /
+                        // farklı session). I-5 invariant: peer-controlled
+                        // payload_id + announced size validate edilmeden
+                        // remove etmiyoruz.
+                        let resume_eligible =
+                            if active_capabilities.has(crate::capabilities::features::RESUME_V1) {
+                                let sid = crate::resume::session_id_i64(auth_key);
+                                crate::resume::partial_dir().ok().is_some_and(|dir| {
+                                    resolve_resume_path(&dir, sid, pid, &name, size)
+                                        .is_some_and(|rp| rp == bundle_path)
+                                })
+                            } else {
+                                false
+                            };
+                        if resume_eligible {
+                            tracing::info!(
+                                "[{}] folder bundle resume eligible — partial korunuyor: {}",
+                                peer,
+                                crate::log_redact::path_basename(&bundle_path)
+                            );
+                        } else {
+                            // create_dir_all + atomic placeholder reserve (TOCTOU).
+                            // Bundle marker'ı `planned_bundles` içine biriktirilir;
+                            // `register_bundle_marker` consent accept sonrası
+                            // çağrılır ki cancel/reject yolunda gereksiz state
+                            // kalmasın.
+                            tokio::task::block_in_place(|| -> Result<()> {
+                                std::fs::create_dir_all(&downloads_dir).ok();
+                                // Placeholder reserve — eski .bundle kalıntısı
+                                // varsa temizle (önceki crash artığı).
+                                let _ = std::fs::remove_file(&bundle_path);
+                                std::fs::OpenOptions::new()
+                                    .write(true)
+                                    .create_new(true)
+                                    .open(&bundle_path)
+                                    .with_context(|| {
+                                        format!(
+                                            "bundle placeholder rezerve edilemedi: {}",
+                                            bundle_path.display()
+                                        )
+                                    })?;
+                                Ok(())
+                            })?;
+                        }
                         let attachment_hash = f.attachment_hash.unwrap_or(0);
                         info!(
                             "[{}] folder bundle Introduction: payload_id={}, mime={}, attachment_hash={:#018x}",
@@ -1154,14 +1182,20 @@ async fn handle_sharing_frame(
                         match resolve_resume_path(dir, sid, pid, &display_name, announced_size) {
                             Some(resume_path) => {
                                 // Fresh placeholder boş — sil, resume path'e geç.
-                                if let Err(e) = std::fs::remove_file(&fresh_path) {
-                                    if e.kind() != std::io::ErrorKind::NotFound {
-                                        tracing::debug!(
-                                            "[{}] resume swap: fresh placeholder silinemedi {}: {}",
-                                            peer,
-                                            crate::log_redact::path_basename(&fresh_path),
-                                            e
-                                        );
+                                // RFC-0005 PR-E: bundle path session-deterministik
+                                // — fresh_path == resume_path olabilir (aynı bundle
+                                // tek payload_id, aynı session_hex). Bu durumda
+                                // remove partial'ı yok eder; skip.
+                                if fresh_path != resume_path {
+                                    if let Err(e) = std::fs::remove_file(&fresh_path) {
+                                        if e.kind() != std::io::ErrorKind::NotFound {
+                                            tracing::debug!(
+                                                "[{}] resume swap: fresh placeholder silinemedi {}: {}",
+                                                peer,
+                                                crate::log_redact::path_basename(&fresh_path),
+                                                e
+                                            );
+                                        }
                                     }
                                 }
                                 tracing::info!(
