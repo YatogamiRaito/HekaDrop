@@ -390,16 +390,25 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                 "[sender] gönderiliyor: {} ({} bayt) payload_id={}",
                                 plan.name, plan.size, plan.payload_id
                             );
-                            let start_offset = wait_for_resume_hint_or_zero(
-                                &mut socket,
-                                &mut ctx,
-                                plan,
-                                our_session_id,
-                                &known_payload_ids,
-                                chunk_hmac_key.as_ref(),
-                                RESUME_HINT_TIMEOUT,
-                            )
-                            .await;
+                            // PR #134 Gemini critical: capability gate ile sar.
+                            // RESUME_V1 inactive ise (legacy peer) `wait_for_resume_hint_or_zero`
+                            // 2 sn timeout bekliyor ve N dosyada N×2sn perf kaybı yaratıyordu.
+                            let start_offset = if active_capabilities
+                                .has(crate::capabilities::features::RESUME_V1)
+                            {
+                                wait_for_resume_hint_or_zero(
+                                    &mut socket,
+                                    &mut ctx,
+                                    plan,
+                                    our_session_id,
+                                    &known_payload_ids,
+                                    chunk_hmac_key.as_ref(),
+                                    RESUME_HINT_TIMEOUT,
+                                )
+                                .await
+                            } else {
+                                0
+                            };
                             send_file_chunks(
                                 &mut socket,
                                 &mut ctx,

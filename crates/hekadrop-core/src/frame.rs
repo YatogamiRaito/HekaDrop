@@ -245,13 +245,11 @@ mod dispatcher_tests {
                 if let Some(Payload::Capabilities(c)) = frame.payload {
                     assert_eq!(c.features, 0x07);
                     let active = ActiveCapabilities::negotiate(features::ALL_SUPPORTED, c.features);
-                    // PR-F: ALL_SUPPORTED = CHUNK_HMAC_V1 | RESUME_V1 (RFC-0004
-                    // implementasyonu tamamlandı). Peer 0x07 (RESUME + FOLDER +
-                    // CHUNK) advertise etse de intersection sadece bizim build'imizin
-                    // bildiği bit'leri tutar — FOLDER_STREAM_V1 (RFC-0005) hâlâ
-                    // implementasyonsuz olduğundan forward-compat ile düşer.
+                    // PR #136 high sonrası RESUME_V1 ALL_SUPPORTED'dan çıktı
+                    // (receiver truncate(true) bug'ı). Şu an sadece CHUNK_HMAC_V1
+                    // aktif — peer 0x07 advertise etse bile intersection ona iner.
                     assert!(active.has(features::CHUNK_HMAC_V1));
-                    assert!(active.has(features::RESUME_V1));
+                    assert!(!active.has(features::RESUME_V1));
                     assert!(!active.has(features::FOLDER_STREAM_V1));
                 } else {
                     panic!("capabilities oneof beklendi");
