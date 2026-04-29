@@ -49,6 +49,7 @@ fn derived_keys_fixed() -> DerivedKeys {
         send_hmac_key: [44u8; 32],
         auth_key: [55u8; 32],
         pin_code: "0000".to_string(),
+        next_secret: [66u8; 32],
     }
 }
 
@@ -66,6 +67,7 @@ fn decrypt_rejects_short_hmac_tag() {
         send_hmac_key: [22u8; 32],
         auth_key: [55u8; 32],
         pin_code: "0000".to_string(),
+        next_secret: [66u8; 32],
     };
     let keys_b = derived_keys_fixed();
 

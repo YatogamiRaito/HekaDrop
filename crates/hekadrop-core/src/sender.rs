@@ -201,11 +201,18 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     // PR #112 Gemini medium: aktif capabilities transferin geri kalanında
     // (chunk-HMAC verify pipeline'ı, resume hint emit, folder bundle gating)
     // kullanılabilsin diye loop dışında yaşamalı. Default: legacy (legacy
-    // peer'larla geriye uyumluluk). Consumer pipeline (chunk-HMAC emit) henüz
-    // bağlı değil — initial assignment intentionally unused; bu PR sender
-    // state machine entegrasyon noktası, downstream PR'lar bu değeri okuyacak.
+    // peer'larla geriye uyumluluk). RFC-0003 §3.5 — `send_file_chunks` her
+    // PayloadTransferFrame'den sonra `chunk_hmac_key.is_some()` ise
+    // ChunkIntegrity envelope'u emit eder.
+    // INVARIANT (CLAUDE.md I-2): legacy() initial value capabilities exchange
+    // atlanırsa (peer extension_supported=false) kullanılan canonical default;
+    // exchange tetiklenirse `outcome.active` ile overwrite olur.
     #[allow(unused_assignments)]
     let mut active_caps = crate::capabilities::ActiveCapabilities::legacy();
+    // RFC-0003 §4.1: chunk-HMAC anahtarı capability negotiation sonrası
+    // `keys.next_secret`'ten HKDF-SHA256 ile türetilir; capability inactive
+    // ise None kalır → sender legacy davranışta.
+    let mut chunk_hmac_key: Option<[u8; 32]> = None;
     let peer_label = req.device.name.clone();
     let transfer_id = format!("out:{}:{}", req.device.addr, req.device.port);
     let _guard = state::TransferGuard::new(Arc::clone(&state), &transfer_id);
@@ -297,6 +304,17 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                 active_caps.has(crate::capabilities::features::RESUME_V1),
                                 active_caps.has(crate::capabilities::features::FOLDER_STREAM_V1),
                             );
+                            // RFC-0003 §4.1: capability aktif ise chunk-HMAC
+                            // anahtarını UKEY2 next_secret'ten türet. Sender
+                            // ve receiver aynı IKM + aynı HKDF label
+                            // (`"hekadrop chunk-hmac v1"`) kullandığı için
+                            // çıktı sembolik olarak eşleşir.
+                            if active_caps.has(crate::capabilities::features::CHUNK_HMAC_V1) {
+                                chunk_hmac_key = Some(crate::chunk_hmac::derive_chunk_hmac_key(
+                                    &keys.next_secret,
+                                ));
+                                info!("[sender] chunk-HMAC anahtarı türetildi (RFC-0003 §4.1)");
+                            }
                             // Frame loss önlemi (PR #110 high yorumu): peer
                             // extension_supported=true demiş ama legacy
                             // OfflineFrame yolladıysa plain bytes leftover'a
@@ -360,6 +378,7 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                 total_bytes,
                                 &cancel_token,
                                 state.as_ref(),
+                                chunk_hmac_key.as_ref(),
                             )
                             .await?;
                             bytes_sent += plan.size;
@@ -872,11 +891,15 @@ async fn send_file_chunks(
     total_bytes: i64,
     cancel: &CancellationToken,
     state: &AppState,
+    chunk_hmac_key: Option<&[u8; 32]>,
 ) -> Result<()> {
     let mut file = tokio::fs::File::open(path).await?;
     let mut buf = vec![0u8; CHUNK_SIZE];
     let mut offset: i64 = 0;
     let mut hasher = Sha256::new();
+    // RFC-0003 §3.2: chunk_index 0-tabanlı per-payload monoton sayaç.
+    // Capability gate altında her gönderilen non-empty chunk başına artar.
+    let mut chunk_index: i64 = 0;
 
     loop {
         // Disk read ile cancel'i paralel bekle — büyük chunk'larda ~512 KB'lık
@@ -904,10 +927,47 @@ async fn send_file_chunks(
         // Hot-path: tek kopya ile sahiplenilmiş `Bytes` üret — protobuf body alanı
         // `bytes::Bytes` (prost bytes feature) olduğundan buradan sonraki encode
         // zincirinde ek kopya oluşmaz (zero-copy reference semantics).
-        let body = Bytes::copy_from_slice(&buf[..n]);
+        let body_slice = &buf[..n];
+        let body = Bytes::copy_from_slice(body_slice);
         let wrapped = wrap_payload_transfer(payload_id, file_size, offset, 0, body);
         let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
         frame::write_frame(socket, &enc).await?;
+
+        // RFC-0003 §2 ordering invariant: PayloadTransferFrame'den HEMEN
+        // SONRA, başka chunk göndermeden önce ChunkIntegrity envelope'unu
+        // emit et. capability gate kapalı (Some(key) yok) → legacy Quick
+        // Share davranışı, tag emission yok.
+        if let Some(key) = chunk_hmac_key {
+            let tag =
+                crate::chunk_hmac::compute_tag(key, payload_id, chunk_index, offset, body_slice)
+                    .with_context(|| {
+                        format!(
+                    "chunk-HMAC tag compute (payload_id={payload_id}, chunk_index={chunk_index})"
+                )
+                    })?;
+            let ci = crate::chunk_hmac::build_chunk_integrity(
+                payload_id,
+                chunk_index,
+                offset,
+                body_slice.len(),
+                tag,
+            )
+            .with_context(|| {
+                format!("ChunkIntegrity build (payload_id={payload_id}, chunk_index={chunk_index})")
+            })?;
+            let heka_frame = hekadrop_proto::hekadrop_ext::HekaDropFrame {
+                version: crate::capabilities::ENVELOPE_VERSION,
+                payload: Some(hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload::ChunkTag(ci)),
+            };
+            let pb = heka_frame.encode_to_vec();
+            let wrapped_bytes = frame::wrap_hekadrop_frame(&pb);
+            let enc_tag = ctx.encrypt(&wrapped_bytes)?;
+            frame::write_frame(socket, &enc_tag).await?;
+            // Index taşma koruması — i64 pratik olarak taşmaz ama defensive.
+            chunk_index = chunk_index
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("chunk_index taştı (payload_id={payload_id})"))?;
+        }
         // SAFETY-CAST: `n` AsyncReadExt::read'den geliyor, max CHUNK_SIZE
         // (4 KiB) ile sınırlı; usize → i64 wrap pratik olarak imkânsız.
         // Defensive: try_from + unwrap_or yerine allow + comment yeterli.

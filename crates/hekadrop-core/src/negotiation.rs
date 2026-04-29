@@ -158,6 +158,7 @@ mod tests {
             send_hmac_key: hmac_b,
             auth_key: [0u8; 32],
             pin_code: "0000".to_string(),
+            next_secret: [0u8; 32],
         };
         let client_keys = DerivedKeys {
             decrypt_key: key_b,
@@ -166,6 +167,7 @@ mod tests {
             send_hmac_key: hmac_a,
             auth_key: [0u8; 32],
             pin_code: "0000".to_string(),
+            next_secret: [0u8; 32],
         };
 
         (

@@ -301,6 +301,11 @@ pub async fn handle(
                     &mut active_capabilities,
                     &mut peer_capabilities_received,
                     &mut our_capabilities_sent,
+                    &mut assembler,
+                    &keys,
+                    state.as_ref(),
+                    &remote_name_shared,
+                    ui.as_ref(),
                 )
                 .await
                 {
@@ -423,70 +428,15 @@ pub async fn handle(
                             sha256,
                         } => {
                             pending_names.remove(&id);
-                            let sha_hex = hex::encode(sha256);
-                            info!(
-                                "[{}] ✓ {} alındı — SHA-256: {}",
-                                peer,
-                                crate::log_redact::path_basename(&path),
-                                crate::log_redact::sha_short(&sha_hex)
+                            finalize_received_file(
+                                &peer,
+                                &path,
+                                total_size,
+                                sha256,
+                                &remote_name_shared,
+                                state.as_ref(),
+                                ui.as_ref(),
                             );
-                            {
-                                // PERF/SAFETY: RwLock write guard altında senkron disk I/O
-                                // yapılmamalı — yavaş diskte tüm okuyucular (UI event loop)
-                                // bloklanır. Snapshot clone + drop guard + lock-dışı save.
-                                //
-                                // H#4 privacy: `keep_stats=false` iken RAM'deki Stats yine
-                                // güncellenir (UI Tanı sekmesi session boyunca doğru kalsın)
-                                // ama disk yazma atlanır. Mevcut stats.json silinmez —
-                                // kullanıcı sonradan tekrar açabilir, eski metrik kaybolmaz.
-                                let keep = state.settings.read().keep_stats;
-                                let snap_opt = {
-                                    let mut s = state.stats.write();
-                                    // payload.rs ingest_file aşamasında `total_size < 0` reddediliyor — burada >= 0 garanti.
-                                    #[allow(clippy::cast_sign_loss)]
-                                    let total_size_u = total_size as u64;
-                                    s.record_received(&remote_name_shared, total_size_u);
-                                    if keep {
-                                        Some(s.clone())
-                                    } else {
-                                        None
-                                    }
-                                };
-                                if let Some(snap) = snap_opt {
-                                    // PR #93 + #109: spawn_blocking + persistence_blocked guard
-                                    // (bozuk stats.json startup'ta backup başarısızsa save'i
-                                    // skip eder — kullanıcı verisini override etmez).
-                                    state.try_save_stats(snap);
-                                }
-                            }
-                            let file_name = path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("dosya")
-                                .to_string();
-                            state.set_progress(ProgressState::Completed {
-                                file: file_name.clone(),
-                            });
-                            state.push_history(HistoryItem {
-                                file_name: file_name.clone(),
-                                path: path.clone(),
-                                size: total_size,
-                                device: remote_name_shared.clone(),
-                                when: std::time::SystemTime::now(),
-                                sha256_short: sha_hex.chars().take(16).collect(),
-                            });
-                            info!(
-                                "[{}] ✓ kaydedildi: {} ({} bayt)",
-                                peer,
-                                crate::log_redact::path_basename(&path),
-                                total_size
-                            );
-                            ui.notify(UiNotification::FileReceived {
-                                title_key: "notify.app_name",
-                                body_key: "notify.received",
-                                body_args: vec![file_name.clone(), human_size(total_size)],
-                                path: path.clone(),
-                            });
                         }
                     }
                 }
@@ -526,6 +476,86 @@ pub async fn handle(
     );
 
     Ok(())
+}
+
+/// `CompletedPayload::File` finalize ortak işleri (stats record, history push,
+/// progress update, UI notify). PR refactor: legacy assembler completion
+/// path'i ile RFC-0003 chunk-HMAC verify path'i (yine `verify_chunk_tag` ile
+/// finalize üretir) aynı helper'ı çağırsın diye çıkarıldı; logic duplikasyonu
+/// olmasın.
+fn finalize_received_file(
+    peer: &SocketAddr,
+    path: &std::path::Path,
+    total_size: i64,
+    sha256: [u8; 32],
+    remote_name: &str,
+    state: &AppState,
+    ui: &dyn UiPort,
+) {
+    let sha_hex = hex::encode(sha256);
+    info!(
+        "[{}] ✓ {} alındı — SHA-256: {}",
+        peer,
+        crate::log_redact::path_basename(path),
+        crate::log_redact::sha_short(&sha_hex)
+    );
+    {
+        // PERF/SAFETY: RwLock write guard altında senkron disk I/O
+        // yapılmamalı — yavaş diskte tüm okuyucular (UI event loop)
+        // bloklanır. Snapshot clone + drop guard + lock-dışı save.
+        //
+        // H#4 privacy: `keep_stats=false` iken RAM'deki Stats yine
+        // güncellenir (UI Tanı sekmesi session boyunca doğru kalsın)
+        // ama disk yazma atlanır. Mevcut stats.json silinmez —
+        // kullanıcı sonradan tekrar açabilir, eski metrik kaybolmaz.
+        let keep = state.settings.read().keep_stats;
+        let snap_opt = {
+            let mut s = state.stats.write();
+            // payload.rs ingest_file aşamasında `total_size < 0` reddediliyor — burada >= 0 garanti.
+            #[allow(clippy::cast_sign_loss)]
+            let total_size_u = total_size as u64;
+            s.record_received(remote_name, total_size_u);
+            if keep {
+                Some(s.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(snap) = snap_opt {
+            // PR #93 + #109: spawn_blocking + persistence_blocked guard
+            // (bozuk stats.json startup'ta backup başarısızsa save'i
+            // skip eder — kullanıcı verisini override etmez).
+            state.try_save_stats(snap);
+        }
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("dosya")
+        .to_string();
+    state.set_progress(ProgressState::Completed {
+        file: file_name.clone(),
+    });
+    state.push_history(HistoryItem {
+        file_name: file_name.clone(),
+        path: path.to_path_buf(),
+        size: total_size,
+        device: remote_name.to_string(),
+        when: std::time::SystemTime::now(),
+        sha256_short: sha_hex.chars().take(16).collect(),
+    });
+    info!(
+        "[{}] ✓ kaydedildi: {} ({} bayt)",
+        peer,
+        crate::log_redact::path_basename(path),
+        total_size
+    );
+    ui.notify(UiNotification::FileReceived {
+        title_key: "notify.app_name",
+        body_key: "notify.received",
+        body_args: vec![file_name, human_size(total_size)],
+        path: path.to_path_buf(),
+    });
 }
 
 /// Yarım kalan alıcı state'ini temizler.
@@ -1066,6 +1096,7 @@ fn human_size(bytes: i64) -> String {
 /// - Bilinmeyen `Payload` varyantı → log + skip (forward-compat).
 ///
 /// Hata döner: socket write, ctx.encrypt, prost decode failure'ları.
+#[allow(clippy::too_many_arguments)]
 async fn handle_hekadrop_frame(
     bytes: &[u8],
     peer: &SocketAddr,
@@ -1074,6 +1105,11 @@ async fn handle_hekadrop_frame(
     active_capabilities: &mut crate::capabilities::ActiveCapabilities,
     peer_capabilities_received: &mut bool,
     our_capabilities_sent: &mut bool,
+    assembler: &mut PayloadAssembler,
+    keys: &ukey2::DerivedKeys,
+    state: &AppState,
+    remote_name: &str,
+    ui: &dyn UiPort,
 ) -> Result<()> {
     use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, HekaDropFrame};
     use tracing::debug;
@@ -1114,6 +1150,19 @@ async fn handle_hekadrop_frame(
                 active_capabilities.has(crate::capabilities::features::FOLDER_STREAM_V1),
             );
 
+            // RFC-0003 §4.1: capability aktif ise chunk-HMAC anahtarını
+            // assembler'a kur. PayloadAssembler artık her FILE chunk'ını
+            // pending buffer'a alır, ChunkIntegrity verify olduktan sonra
+            // diske yazar (storage corruption early-abort).
+            if active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1) {
+                let key = crate::chunk_hmac::derive_chunk_hmac_key(&keys.next_secret);
+                assembler.set_chunk_hmac_key(key);
+                info!(
+                    "[{}] chunk-HMAC anahtarı türetildi + assembler'a kuruldu (RFC-0003 §4.1)",
+                    peer
+                );
+            }
+
             if !*our_capabilities_sent {
                 let our = crate::capabilities::build_capabilities_frame(
                     crate::capabilities::build_self_capabilities(),
@@ -1132,15 +1181,59 @@ async fn handle_hekadrop_frame(
             Ok(())
         }
         Payload::ChunkTag(ci) => {
-            // RFC-0003 §3.6: chunk tag verify. Şu an stub — full pipeline
-            // PayloadAssembler entegrasyonuyla v0.8 sonraki PR'ı (critical
-            // fix scope dışı). En azından frame'i drop ETMİYORUZ ki bağlantı
-            // hatasız ilerlesin.
+            // RFC-0003 §5: ChunkIntegrity verify pipeline. Capability gate
+            // kapalıysa peer protocol violation yapıyor (spec §9 son satır:
+            // "Sender sends tag but receiver lacks capability") — abort +
+            // disconnect (caller `?` ile yukarı propagate edip session sonu
+            // tetikler).
+            if !active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1) {
+                return Err(HekaError::ProtocolState(format!(
+                    "[{peer}] ChunkIntegrity geldi ama CHUNK_HMAC_V1 capability negotiate edilmemiş (spec §9)"
+                )).into());
+            }
             debug!(
-                "[{}] ChunkTag (integrity) received: payload_id={}, chunk_index={} (verify TODO)",
-                peer, ci.payload_id, ci.chunk_index
+                "[{}] ChunkTag verify: payload_id={}, chunk_index={}, offset={}, body_len={}",
+                peer, ci.payload_id, ci.chunk_index, ci.offset, ci.body_len
             );
-            Ok(())
+            // PRIVACY (spec §10): ChunkIntegrity.tag içeriği log'a düşmez —
+            // sadece kategori metadata. Hata durumunda da mesajda tag yok.
+            match assembler.verify_chunk_tag(&ci).await {
+                Ok(None) => Ok(()),
+                Ok(Some(crate::payload::CompletedPayload::File {
+                    id,
+                    path,
+                    total_size,
+                    sha256,
+                })) => {
+                    debug!("[{}] chunk-HMAC verify path: dosya finalize id={id}", peer);
+                    finalize_received_file(peer, &path, total_size, sha256, remote_name, state, ui);
+                    Ok(())
+                }
+                Ok(Some(other)) => {
+                    // Bytes payload'lar verify pipeline'ından geçmez (sender
+                    // chunk-HMAC sadece FILE chunk'ları için emit eder).
+                    // Defensive: forward-compat için error.
+                    Err(anyhow!(
+                        "[{peer}] verify_chunk_tag beklenmedik CompletedPayload varyantı: {other:?}"
+                    ))
+                }
+                Err(e) => {
+                    // Spec §9: cleanup_transfer_state + Disconnection.
+                    // Caller (steady loop) `?` ile yakalar, log + cleanup
+                    // ardından send_disconnection. .part dosyası kapalı
+                    // FileSink artakaldıysa sonraki cleanup_transfer_state
+                    // çağrısı yarım dosyayı kanca'dan düşürür.
+                    warn!(
+                        "[{}] chunk-HMAC verify FAIL — protokol ihlali / corruption (payload_id={}, chunk_index={}): {}",
+                        peer, ci.payload_id, ci.chunk_index, e
+                    );
+                    // Failure path'inde pending_chunk hâlâ FileSink içinde
+                    // olabilir (verify_chunk_tag erken return etti). Sink'i
+                    // cancel et ki .part diskten silinsin (RFC-0003 §9 row 3).
+                    assembler.cancel(ci.payload_id);
+                    Err(e)
+                }
+            }
         }
         // Forward-compat: ResumeHint/ResumeReject (RFC-0004) +
         // FolderMft (RFC-0005) henüz implement edilmedi; placeholder
