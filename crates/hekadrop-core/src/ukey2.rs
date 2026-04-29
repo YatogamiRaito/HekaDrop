@@ -35,6 +35,12 @@ pub struct DerivedKeys {
     #[allow(dead_code)]
     pub auth_key: [u8; 32],
     pub pin_code: String,
+    /// UKEY2 derive `next_secret` — `SecureMessage` D2D anahtarlarının türetildiği
+    /// IKM. RFC-0003 §4.1: `chunk-HMAC` anahtarı bu değerden HKDF-SHA256 ile
+    /// türetilir (info = `"hekadrop chunk-hmac v1"`). Hem `client_handshake`
+    /// hem `process_client_finish` doldurur (her iki uçta aynı değer üretilir,
+    /// UKEY2 simetrik).
+    pub next_secret: [u8; 32],
 }
 
 /// Gönderici (client) rolünde tam UKEY2 handshake.
@@ -179,6 +185,7 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
         recv_hmac_key: into_32(server_hmac),
         auth_key: into_32(auth_key),
         pin_code,
+        next_secret: into_32(next_secret),
     })
 }
 
@@ -464,6 +471,7 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
         send_hmac_key: into_32(server_hmac),
         auth_key: into_32(auth_key),
         pin_code,
+        next_secret: into_32(next_secret),
     })
 }
 

@@ -12,8 +12,10 @@
 //! süreden uzun sessiz kalmış girişleri düşürür; [`PayloadAssembler::ingest`]
 //! her çağrıda otomatik olarak bu GC'yi çalıştırır ([`ASSEMBLER_GC_TIMEOUT`]).
 
+use crate::chunk_hmac;
 use crate::error::HekaError;
 use anyhow::{anyhow, Context, Result};
+use hekadrop_proto::hekadrop_ext::ChunkIntegrity;
 use hekadrop_proto::location::nearby::connections::{
     payload_transfer_frame::payload_header::PayloadType, PayloadTransferFrame,
 };
@@ -101,6 +103,29 @@ struct FileSink {
     written: i64,
     hasher: Sha256,
     last_chunk_at: Instant,
+    /// RFC-0003 §5: chunk-HMAC capability aktif iken her data chunk'ı geçici
+    /// olarak burada tutulur, sonraki frame'de `ChunkIntegrity` gelir, verify
+    /// ok ise diske flush olur. None → henüz beklenen chunk yok (ya capability
+    /// kapalı ya da önceki chunk verify olup yazıldı).
+    pending_chunk: Option<PendingChunk>,
+    /// Bir sonraki beklenen chunk indeksi (0-tabanlı, monoton). Receiver
+    /// `ChunkIntegrity.chunk_index`'i bununla karşılaştırır → out-of-order
+    /// veya skipped chunk anında protokol ihlali.
+    next_chunk_index: i64,
+}
+
+/// Verify-bekleyen chunk için geçici buffer. Body sahipli (`Vec<u8>`)
+/// tutulur — `ChunkIntegrity` doğrulamadan diske yazılmaz (RFC-0003 §1.2:
+/// storage corruption early-abort). Pratikte her chunk en fazla
+/// `payload.rs` `BufWriter` capacity (128 KiB) × 4 = 512 KiB civarı RAM
+/// tutar (Quick Share chunk pratiği), kabul edilebilir overhead.
+struct PendingChunk {
+    body: Vec<u8>,
+    /// Chunk başlangıç offset'i — `compute_tag`/`verify_tag` input'unda
+    /// redundant binding alanı.
+    offset: i64,
+    /// Bu chunk son frame mi (flag bit 1)? Verify sonrası finalize için.
+    last_chunk: bool,
 }
 
 /// Introduction'da onaylanmış ama hiç chunk gelmemiş dosyanın hedef yolu.
@@ -114,11 +139,36 @@ pub struct PayloadAssembler {
     bytes_buffers: HashMap<i64, BytesBuf>,
     file_sinks: HashMap<i64, FileSink>,
     pending_destinations: HashMap<i64, PendingDest>,
+    /// RFC-0003 §4.1: chunk-HMAC anahtarı. `None` → capability kapalı,
+    /// chunk body'leri eskisi gibi chunk geldiği anda diske yazılır
+    /// (legacy Quick Share davranışı). `Some(key)` → her FILE chunk'ı
+    /// geçici buffer'a alınır, takip eden `ChunkIntegrity` verify olduktan
+    /// sonra diske flush olur.
+    ///
+    /// Capability negotiation tamamlandığında [`Self::set_chunk_hmac_key`]
+    /// ile set edilir; transfer süresince değişmez (mid-flight downgrade
+    /// engelleme — capabilities.md §6).
+    chunk_hmac_key: Option<[u8; 32]>,
 }
 
 impl PayloadAssembler {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// RFC-0003 §4.1: chunk-HMAC anahtarı kur. Capability negotiation
+    /// `CHUNK_HMAC_V1` aktif çıktıysa caller bu fonksiyonu `PayloadAssembler`
+    /// chunk işlemeye başlamadan ÖNCE çağırmalıdır. Sonradan değiştirme
+    /// sessiz downgrade riski yaratır → idempotent değil, ikinci çağrı
+    /// `None`'a (kapatma) izin vermez (caller-side defense).
+    pub fn set_chunk_hmac_key(&mut self, key: [u8; 32]) {
+        self.chunk_hmac_key = Some(key);
+    }
+
+    /// Chunk-HMAC capability aktif mi (test/diagnostics).
+    #[must_use]
+    pub fn chunk_hmac_enabled(&self) -> bool {
+        self.chunk_hmac_key.is_some()
     }
 
     /// Introduction sırasında onaylanan dosya için diskteki hedef yolu kaydeder.
@@ -311,6 +361,23 @@ impl PayloadAssembler {
     ) -> Result<Option<CompletedPayload>> {
         use std::collections::hash_map::Entry;
 
+        // RFC-0003 §2 ordering invariant: chunk-HMAC capability aktif iken
+        // her FILE data chunk'ı bir ChunkIntegrity envelope'u beklemeli.
+        // Yeni bir data chunk geldiğinde önceki chunk için pending_chunk
+        // hâlâ doluysa peer "body N, body N+1, tag N" pattern'iyle out-of-order
+        // gönderdi → protokol ihlali (spec §2 "Receivers that observe an
+        // out-of-order pair MUST treat this as a protocol violation").
+        if self.chunk_hmac_key.is_some() {
+            if let Some(sink) = self.file_sinks.get(&id) {
+                if sink.pending_chunk.is_some() {
+                    return Err(HekaError::ProtocolState(format!(
+                        "chunk-HMAC ordering violation: payload_id={id} bir önceki chunk için ChunkIntegrity gelmeden yeni chunk arrived"
+                    ))
+                    .into());
+                }
+            }
+        }
+
         // İlk chunk: dosyayı aç.
         // NOT: `connection::unique_downloads_path` dosyayı `create_new(true)`
         // ile **placeholder** olarak zaten oluşturmuş oldu (TOCTOU fix).
@@ -376,6 +443,8 @@ impl PayloadAssembler {
                 written: 0,
                 hasher: Sha256::new(),
                 last_chunk_at: Instant::now(),
+                pending_chunk: None,
+                next_chunk_index: 0,
             });
         }
 
@@ -393,14 +462,43 @@ impl PayloadAssembler {
             let body_len = i64::try_from(body.len()).map_err(|e| {
                 HekaError::PayloadIo(format!("chunk body i64'a sığmıyor (id={id}): {e}"))
             })?;
-            let new_written = sink
+            // Overrun guard cumulative tracking ile; chunk-HMAC path'inde de
+            // tetiklenir çünkü `written` pending_chunk flush'unda artar değil
+            // — burada **provisional** kontrol: pending body henüz yazılmamış
+            // olsa bile total > deklare edilen size'a ulaşmamalı.
+            let provisional_written = sink
                 .written
                 .checked_add(body_len)
                 .ok_or_else(|| HekaError::PayloadIo(format!("yazım toplamı taştı (id={id})")))?;
-            if new_written > sink.total_size {
+            if self.chunk_hmac_key.is_some() {
+                // Chunk-HMAC path: body'yi disk'e yazma; pending_chunk'a buffer'la.
+                // Verify ChunkIntegrity geldiğinde flush + written increment olur.
+                // Offset = `sink.written` (henüz yazılmamış olanlar dahil değil
+                // — `written` sadece flush'lanmış total).
+                let chunk_offset = sink.written;
+                if provisional_written > sink.total_size {
+                    return Err(HekaError::PayloadOverrun {
+                        id,
+                        written: provisional_written,
+                        total: sink.total_size,
+                    }
+                    .into());
+                }
+                sink.pending_chunk = Some(PendingChunk {
+                    body: body.to_vec(),
+                    offset: chunk_offset,
+                    last_chunk,
+                });
+                sink.last_chunk_at = Instant::now();
+                // Caller verify_chunk_tag çağıracak; tamamlanma `last_chunk`
+                // verify path'inden gelir, burada erken `Ok(None)` döneriz.
+                return Ok(None);
+            }
+            // Legacy path: chunk-HMAC kapalı, eskisi gibi anında diske yaz.
+            if provisional_written > sink.total_size {
                 return Err(HekaError::PayloadOverrun {
                     id,
-                    written: new_written,
+                    written: provisional_written,
                     total: sink.total_size,
                 }
                 .into());
@@ -412,11 +510,23 @@ impl PayloadAssembler {
             // çağrı — block_in_place current_thread'de panik eder.
             block_in_place_if_multi(|| sink.writer.write_all(body)).context("disk yazma")?;
             sink.hasher.update(body);
-            sink.written = new_written;
+            sink.written = provisional_written;
             sink.last_chunk_at = Instant::now();
         }
 
         if last_chunk {
+            // Chunk-HMAC: pending_chunk doluysa finalize verify_chunk_tag'a
+            // havale (peer'ın tag'ini bekliyoruz). Yalnız body=[] terminator
+            // chunk'ı geldiğinde direkt finalize'a düşer (boş body için tag
+            // yok — sender de emit etmez, RFC-0003 §3.5 caller pratik).
+            if self.chunk_hmac_key.is_some() {
+                if let Some(sink) = self.file_sinks.get(&id) {
+                    if sink.pending_chunk.is_some() {
+                        // Tag bekliyoruz; verify path bayrağa düşürecek.
+                        return Ok(None);
+                    }
+                }
+            }
             let mut sink = self
                 .file_sinks
                 .remove(&id)
@@ -450,6 +560,154 @@ impl PayloadAssembler {
             flush_sync_res.with_context(|| {
                 format!(
                     "dosya finalize edilemedi (flush/fsync): id={} path={}",
+                    id,
+                    sink.path.display()
+                )
+            })?;
+            let digest = sink.hasher.finalize();
+            let mut sha256 = [0u8; 32];
+            sha256.copy_from_slice(&digest);
+            return Ok(Some(CompletedPayload::File {
+                id,
+                path: sink.path,
+                total_size: sink.total_size,
+                sha256,
+            }));
+        }
+        Ok(None)
+    }
+
+    /// RFC-0003 §5: peer'ın yolladığı `ChunkIntegrity` envelope'unu doğrula
+    /// ve doğrulanan body'yi diske flush et.
+    ///
+    /// Çağrı sırası (sender pipeline'ı): bir önceki [`Self::ingest`]
+    /// çağrısında bir FILE chunk body'si pending'e alınmış olmalı. Bu fn
+    /// pending chunk'ı tag input'uyla karşılaştırır:
+    ///   1. `chunk_hmac_key` set değilse → `Err` (capability mismatch /
+    ///      protocol violation; spec §9 son satır).
+    ///   2. Sink yoksa veya `pending_chunk` yoksa → `Err` (peer "tag without
+    ///      preceding body" attı; out-of-order).
+    ///   3. `chunk_index`, `offset`, `body_len` field'ları beklenen değerlerle
+    ///      eşleşmeli — değilse protokol ihlali.
+    ///   4. `chunk_hmac::verify_tag(key, ci, body)` — HMAC mismatch → `Err`.
+    ///   5. Verify ok → body'yi diske yaz, `written` artır, `next_chunk_index`
+    ///      artır, `last_chunk` ise finalize edip [`CompletedPayload::File`]
+    ///      döndür. `last_chunk` değilse `Ok(None)`.
+    ///
+    /// Hata durumunda caller spec §9 davranışını uygulamalı: `.part`/`.meta`
+    /// silimi (`cancel(payload_id)`) + `Disconnection` frame.
+    pub async fn verify_chunk_tag(
+        &mut self,
+        ci: &ChunkIntegrity,
+    ) -> Result<Option<CompletedPayload>> {
+        let key = self.chunk_hmac_key.ok_or_else(|| {
+            HekaError::ProtocolState(format!(
+                "ChunkIntegrity geldi ama chunk-HMAC capability aktif değil (payload_id={})",
+                ci.payload_id
+            ))
+        })?;
+        let id = ci.payload_id;
+
+        // Sink ve pending_chunk varlığını sınırlı borrow ile kontrol et —
+        // body verify için reference olarak alınır, sonra mutable borrow
+        // flush için tekrar lock'lanır.
+        {
+            let sink = self.file_sinks.get(&id).ok_or_else(|| {
+                HekaError::ProtocolState(format!(
+                    "ChunkIntegrity payload_id={id} için açık FileSink yok"
+                ))
+            })?;
+            let pending = sink.pending_chunk.as_ref().ok_or_else(|| {
+                HekaError::ProtocolState(format!(
+                    "ChunkIntegrity payload_id={id} için bekleyen chunk yok (out-of-order)"
+                ))
+            })?;
+            // Spec §3.2 redundant binding kontrolleri (HMAC verify body içerse
+            // de erken yakalama daha açık hata mesajı verir).
+            if ci.chunk_index != sink.next_chunk_index {
+                return Err(HekaError::ProtocolState(format!(
+                    "ChunkIntegrity.chunk_index {} ≠ beklenen {} (payload_id={})",
+                    ci.chunk_index, sink.next_chunk_index, id
+                ))
+                .into());
+            }
+            if ci.offset != pending.offset {
+                return Err(HekaError::ProtocolState(format!(
+                    "ChunkIntegrity.offset {} ≠ beklenen {} (payload_id={})",
+                    ci.offset, pending.offset, id
+                ))
+                .into());
+            }
+            // body_len ve tag uzunluğu + HMAC compute — `chunk_hmac::verify_tag`
+            // içinde yapılır, kategorik hata kategorisi döner.
+            chunk_hmac::verify_tag(&key, ci, &pending.body).map_err(|e| {
+                HekaError::ProtocolState(format!(
+                    "chunk-HMAC verify fail (payload_id={id}, chunk_index={}): {e}",
+                    ci.chunk_index
+                ))
+            })?;
+        }
+
+        // Verify ok — pending'i çek, diske flush et.
+        let sink = self
+            .file_sinks
+            .get_mut(&id)
+            .ok_or_else(|| anyhow!("verify sonrası sink kayıp: id={id}"))?;
+        // Çek (ownership al) — verify zaten ok, pending tüketildi.
+        let pending = sink
+            .pending_chunk
+            .take()
+            .ok_or_else(|| anyhow!("verify sonrası pending kayıp: id={id}"))?;
+        let body_len = i64::try_from(pending.body.len())
+            .with_context(|| format!("flush body i64'a sığmıyor (id={id})"))?;
+        let new_written = sink.written.checked_add(body_len).ok_or_else(|| {
+            HekaError::PayloadIo(format!("verify flush yazım toplamı taştı (id={id})"))
+        })?;
+        // Re-check overrun — provisional check ingest'te yapıldı, defensive
+        // olarak burada da koruyoruz.
+        if new_written > sink.total_size {
+            return Err(HekaError::PayloadOverrun {
+                id,
+                written: new_written,
+                total: sink.total_size,
+            }
+            .into());
+        }
+        block_in_place_if_multi(|| sink.writer.write_all(&pending.body))
+            .context("verify sonrası disk yazma")?;
+        sink.hasher.update(&pending.body);
+        sink.written = new_written;
+        sink.next_chunk_index = sink
+            .next_chunk_index
+            .checked_add(1)
+            .ok_or_else(|| HekaError::PayloadIo(format!("chunk_index taştı (id={id})")))?;
+        sink.last_chunk_at = Instant::now();
+
+        // Bu chunk last_chunk mı? Eğer öyle ise hemen finalize et — caller
+        // ayrıca empty terminator beklemez (chunk-HMAC modunda tag-verified
+        // last_chunk completion sinyali olarak yeterli; empty terminator
+        // sender tarafından opsiyonel).
+        if pending.last_chunk {
+            let mut sink = self
+                .file_sinks
+                .remove(&id)
+                .ok_or_else(|| anyhow!("verify finalize sonrası sink kayıp: id={id}"))?;
+            if sink.written != sink.total_size {
+                return Err(HekaError::PayloadTruncated {
+                    id,
+                    written: sink.written,
+                    total: sink.total_size,
+                }
+                .into());
+            }
+            let flush_sync_res: std::io::Result<()> = block_in_place_if_multi(|| {
+                sink.writer.flush()?;
+                sink.writer.get_ref().sync_all()?;
+                Ok(())
+            });
+            flush_sync_res.with_context(|| {
+                format!(
+                    "dosya finalize edilemedi (verify path) id={} path={}",
                     id,
                     sink.path.display()
                 )
@@ -875,5 +1133,194 @@ mod tests {
         let f = make_frame_total(9, PbPayloadType::File, b"a", false, -1);
         let err = a.ingest(&f).await.expect_err("negatif total red");
         assert!(err.to_string().contains("negatif"));
+    }
+
+    // ---- RFC-0003 chunk-HMAC pipeline integration tests ----
+
+    use crate::chunk_hmac::{build_chunk_integrity, compute_tag, derive_chunk_hmac_key};
+
+    /// Helper: `PayloadTransferFrame` with explicit chunk offset (chunk-HMAC
+    /// path requires offset matching across body + tag frames).
+    fn make_frame_offset(
+        id: i64,
+        ptype: PbPayloadType,
+        body: &[u8],
+        last: bool,
+        total_size: i64,
+        offset: i64,
+    ) -> PayloadTransferFrame {
+        PayloadTransferFrame {
+            packet_type: None,
+            payload_header: Some(PayloadHeader {
+                id: Some(id),
+                r#type: Some(ptype as i32),
+                total_size: Some(total_size),
+                is_sensitive: None,
+                file_name: None,
+                parent_folder: None,
+                last_modified_timestamp_millis: None,
+            }),
+            payload_chunk: Some(PayloadChunk {
+                flags: Some(if last { 1 } else { 0 }),
+                offset: Some(offset),
+                body: Some(body.to_vec().into()),
+                index: None,
+            }),
+            control_message: None,
+        }
+    }
+
+    /// Happy-path: chunk-HMAC aktif, sender simule body + `ChunkIntegrity`
+    /// gönderir, receiver verify + flush sonunda dosyayı tamamlar.
+    #[tokio::test]
+    async fn chunk_hmac_happy_path_two_chunks_then_terminator() {
+        let tmp = std::env::temp_dir().join(format!("hd-chmac-ok-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let mut a = PayloadAssembler::new();
+        let key = derive_chunk_hmac_key(&[0x42u8; 32]);
+        a.set_chunk_hmac_key(key);
+        assert!(a.chunk_hmac_enabled());
+        a.register_file_destination(7, tmp.clone()).unwrap();
+
+        let total = 6i64;
+        // chunk 0: "foo" @ offset 0
+        let body0 = b"foo".to_vec();
+        let f0 = make_frame_offset(7, PbPayloadType::File, &body0, false, total, 0);
+        // body ingest pending'e düşer, henüz disk'te bir şey yok.
+        assert!(a.ingest(&f0).await.unwrap().is_none());
+        // verify_chunk_tag çağrılmadan dosya boyutu hâlâ 0 olmalı (placeholder).
+        let on_disk_after_body0 = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+        assert_eq!(
+            on_disk_after_body0, 0,
+            "verify öncesi disk'e yazma olmamalı"
+        );
+
+        let tag0 = compute_tag(&key, 7, 0, 0, &body0).unwrap();
+        let ci0 = build_chunk_integrity(7, 0, 0, body0.len(), tag0).unwrap();
+        assert!(a.verify_chunk_tag(&ci0).await.unwrap().is_none());
+
+        // chunk 1: "bar" @ offset 3, last_chunk=true
+        let body1 = b"bar".to_vec();
+        let f1 = make_frame_offset(7, PbPayloadType::File, &body1, true, total, 3);
+        // last_chunk olsa bile pending varsa Ok(None) döner — verify path'i
+        // beklenir.
+        assert!(a.ingest(&f1).await.unwrap().is_none());
+        let tag1 = compute_tag(&key, 7, 1, 3, &body1).unwrap();
+        let ci1 = build_chunk_integrity(7, 1, 3, body1.len(), tag1).unwrap();
+        let done = a
+            .verify_chunk_tag(&ci1)
+            .await
+            .unwrap()
+            .expect("verify last_chunk → Completed");
+        match done {
+            CompletedPayload::File {
+                path,
+                total_size,
+                sha256,
+                ..
+            } => {
+                assert_eq!(path, tmp);
+                assert_eq!(total_size, total);
+                let expected = {
+                    let mut h = Sha256::new();
+                    h.update(b"foobar");
+                    let d = h.finalize();
+                    let mut a = [0u8; 32];
+                    a.copy_from_slice(&d);
+                    a
+                };
+                assert_eq!(sha256, expected);
+            }
+            other => panic!("beklenen File, {other:?} geldi"),
+        }
+        let content = std::fs::read(&tmp).unwrap();
+        assert_eq!(content, b"foobar");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// Tampered body → `verify_chunk_tag` mismatch hatası, `.part` diskten silinir.
+    #[tokio::test]
+    async fn chunk_hmac_body_tampering_detected_and_part_removed() {
+        let tmp = std::env::temp_dir().join(format!("hd-chmac-tamper-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let mut a = PayloadAssembler::new();
+        let key = derive_chunk_hmac_key(&[0x99u8; 32]);
+        a.set_chunk_hmac_key(key);
+        a.register_file_destination(11, tmp.clone()).unwrap();
+
+        // Sender'ın yolladığı orijinal body
+        let original = b"clean-data".to_vec();
+        // "Storage corruption" simulation: receiver pending buffer'ına farklı
+        // bytes gelmiş gibi (in-memory tampering arası decrypt + buffer'ı
+        // kapsayan attack vector). Wire'da tag orijinal body için hesaplanmış.
+        let tampered = b"DIRTY-data".to_vec();
+        let total = original.len() as i64;
+        let f = make_frame_offset(11, PbPayloadType::File, &tampered, true, total, 0);
+        assert!(a.ingest(&f).await.unwrap().is_none());
+
+        // Tag orijinal body için hesaplanmış (sender bilseydi).
+        let tag = compute_tag(&key, 11, 0, 0, &original).unwrap();
+        let ci = build_chunk_integrity(11, 0, 0, original.len(), tag).unwrap();
+        let err = a
+            .verify_chunk_tag(&ci)
+            .await
+            .expect_err("tampered body → mismatch");
+        let s = err.to_string();
+        assert!(
+            s.contains("verify fail") || s.contains("mismatch") || s.contains("HMAC"),
+            "hata HMAC mismatch belirtmeli, aldı: {s}"
+        );
+        // Spec §9: caller cancel(payload_id) çağırmalı; bunu sim et + .part
+        // diskten silinmeli.
+        a.cancel(11);
+        assert!(
+            !tmp.exists(),
+            "verify fail sonrası caller cancel çağırınca .part silinmeli"
+        );
+    }
+
+    /// `ChunkIntegrity` capability-aktif değilken gelirse → `ProtocolState` hata.
+    #[tokio::test]
+    async fn chunk_hmac_tag_without_capability_protocol_violation() {
+        let mut a = PayloadAssembler::new();
+        // chunk_hmac_key set ETMİYORUZ → capability inactive.
+        let ci = ChunkIntegrity {
+            payload_id: 1,
+            chunk_index: 0,
+            offset: 0,
+            body_len: 0,
+            tag: vec![0u8; 32].into(),
+        };
+        let err = a
+            .verify_chunk_tag(&ci)
+            .await
+            .expect_err("capability inactive iken tag → red");
+        assert!(err.to_string().contains("capability aktif değil"));
+    }
+
+    /// Out-of-order: body N → body N+1 (tag N gelmeden) → ingest fail
+    /// (RFC-0003 §2 ordering invariant).
+    #[tokio::test]
+    async fn chunk_hmac_out_of_order_body_without_tag_rejected() {
+        let tmp = std::env::temp_dir().join(format!("hd-chmac-ooo-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let mut a = PayloadAssembler::new();
+        let key = derive_chunk_hmac_key(&[0xCCu8; 32]);
+        a.set_chunk_hmac_key(key);
+        a.register_file_destination(22, tmp.clone()).unwrap();
+
+        let body0 = b"first".to_vec();
+        let f0 = make_frame_offset(22, PbPayloadType::File, &body0, false, 10, 0);
+        assert!(a.ingest(&f0).await.unwrap().is_none());
+
+        // Tag göndermeden ikinci body — protocol violation.
+        let body1 = b"second".to_vec();
+        let f1 = make_frame_offset(22, PbPayloadType::File, &body1, false, 10, 5);
+        let err = a
+            .ingest(&f1)
+            .await
+            .expect_err("body N+1, tag N gelmeden → red");
+        assert!(err.to_string().contains("ordering violation"));
+        a.cancel(22);
     }
 }
