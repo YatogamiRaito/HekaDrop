@@ -63,10 +63,6 @@ fn endpoint_info(device_name: &str, random: &[u8; 16]) -> Vec<u8> {
     // src/config.rs MAX_DEVICE_NAME_BYTES değeriyle birebir tutmalı.
     const MAX_DEVICE_NAME_BYTES: usize = 171;
 
-    let mut out = Vec::with_capacity(18 + device_name.len());
-    out.push(DEVICE_TYPE_COMPUTER << 1);
-    out.extend_from_slice(random);
-
     let bytes = device_name.as_bytes();
     let name_bytes = if bytes.len() <= MAX_DEVICE_NAME_BYTES {
         bytes
@@ -77,6 +73,11 @@ fn endpoint_info(device_name: &str, random: &[u8; 16]) -> Vec<u8> {
         }
         &bytes[..end]
     };
+    // Capacity hint kırpma sonrası gerçek boyutla — `device_name.len()`
+    // kullanmak 171 byte üstü inputlarda gereksiz büyük allocation yapardı.
+    let mut out = Vec::with_capacity(18 + name_bytes.len());
+    out.push(DEVICE_TYPE_COMPUTER << 1);
+    out.extend_from_slice(random);
     out.push(name_bytes.len() as u8);
     out.extend_from_slice(name_bytes);
     out
