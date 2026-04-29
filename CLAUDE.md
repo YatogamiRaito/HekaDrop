@@ -6,17 +6,24 @@ Bu dosya Claude'un her oturumda otomatik okuduğu **kuruluş prensipleri + pre-c
 
 ## Workspace mimarisi
 
-3 crate (RFC-0001 Foundation refactor, v0.7 — sürmekte):
+5 crate (RFC-0001 Foundation refactor v0.7 — TAMAMLANDI; Adım 1-8 merge oldu):
 
 ```
 hekadrop-proto    leaf — yalnız prost-üretilmiş wire format tipleri
    ↑
 hekadrop-core    protocol engine — kripto, frame, UKEY2, secure, payload,
-                   identity, stats, settings + (Adım 5c'de) state, connection,
-                   sender, server. UI/global-state YOK.
+                   identity, stats, settings, state, connection, sender,
+                   server, ui_port (trait + UiNotification enum). UI/i18n/
+                   global-state YOK.
+   ↑
+hekadrop-net     mDNS discovery + advertising. Core'a bağımlı değil; app
+                   tarafından orchestrate edilir.
+   ↑
+hekadrop-cli     headless CLI binary stub.
    ↑
 hekadrop-app     binary + UI (tao/wry/tray-icon) + platform shims +
-                   discovery/mdns + state singleton plumbing + i18n.
+                   state singleton plumbing + i18n + UiPort/PlatformOps
+                   trait impl'leri (UiAdapter).
 ```
 
 App `pub use hekadrop_core::*` shim ile core sembollerini re-export eder; in-tree call site'lar (`crate::crypto::*`, `crate::error::*`) dokunulmadan derlenir.
@@ -182,20 +189,24 @@ Bu yorumları her zaman triaj et:
 - **Commit konvansiyonu:** Türkçe imperative başlık + `Why:` satırı (bkz. CONTRIBUTING.md)
 - **Footer:** AI commit'lerine `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`
 
-## RFC-0001 Foundation (sürmekte)
+## RFC-0001 Foundation (TAMAMLANDI)
 
-| Adım | Durum |
-|---|---|
-| 1 — workspace iskele | ✓ |
-| 2 — hekadrop-proto | ✓ |
-| 3 — hekadrop-core (8 leaf) | ✓ |
-| 4 — identity/stats/settings/payload → core (R2 inject pattern) | ✓ |
-| **5a — AppState plain struct + impl** | **✓** |
-| 5b — connection.rs UiPort trait (Adım 5b RFC §9 R1) | sırada |
-| 5c — state/connection/sender/server → core | sırada |
-| 6 — hekadrop-net (discovery + mdns) | sırada |
-| 7 — hekadrop-cli stub | sırada |
-| 8 — kapanış (lib.rs sil + surface lock) | sırada |
+| Adım | Durum | Tamamlandığı PR |
+|---|---|---|
+| 1 — workspace iskele | ✓ | #85 |
+| 2 — hekadrop-proto | ✓ | #86 |
+| 3 — hekadrop-core (8 leaf) | ✓ | — |
+| 4 — identity/stats/settings/payload → core (R2 inject pattern) | ✓ | — |
+| 5a — AppState plain struct + impl | ✓ | — |
+| 5b — connection.rs UiPort trait (RFC §9 R1) | ✓ | #92 |
+| 5c — state/connection/sender/server → core | ✓ | #93 |
+| 6 — hekadrop-net (discovery + mdns) | ✓ | #100 |
+| 7 — hekadrop-cli stub | ✓ | #100 |
+| 8 — kapanış (lib.rs sil + surface lock) | ✓ | #100 |
+
+Mevcut crate yapısı (`crates/hekadrop-{proto,core,net,cli,app}`) Foundation
+hedefini karşılıyor. Aktif iş **RFC-0003** (chunk-HMAC + capabilities exchange)
+üzerinde — sender/receiver pipeline entegrasyonu sıradaki adım.
 
 ## Deferred strictness sweep'leri (PR #87 body'sinde liste)
 
