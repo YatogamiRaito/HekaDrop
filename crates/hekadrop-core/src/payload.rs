@@ -712,7 +712,7 @@ impl PayloadAssembler {
                     let want = remaining.min(buf.len() as u64) as usize;
                     let n = file.read(&mut buf[..want]).with_context(|| {
                         format!(
-                            "resume hasher pre-feed read hata: {} (remaining={})",
+                            "resume hasher pre-feed read hata: id={id} {} (remaining={})",
                             dest.path.display(),
                             remaining
                         )
@@ -730,7 +730,7 @@ impl PayloadAssembler {
                 }
                 file.seek(SeekFrom::Start(received_u64)).with_context(|| {
                     format!(
-                        "resume seek-to-offset hata: {} (offset={})",
+                        "resume seek-to-offset hata: id={id} {} (offset={})",
                         dest.path.display(),
                         received_u64
                     )
