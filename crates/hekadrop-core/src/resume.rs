@@ -484,7 +484,17 @@ pub fn cleanup_sweep(
     // (budget hesabını bozmasın). I/O error → skip + warn.
     let mut candidates: Vec<Candidate> = Vec::new();
 
-    for entry in entries.flatten() {
+    // PR #135 Gemini medium: `flatten()` I/O hatalarını sessizce yutar; hatalı
+    // entry'yi `tracing::warn` ile loglayıp skip et — silent data corruption riskini
+    // ortadan kaldırır.
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(err) => {
+                tracing::warn!("[resume cleanup] dizin okuma hatası: {err}");
+                continue;
+            }
+        };
         let meta_path = entry.path();
         // Yalnızca `.meta` ile bitenleri işle; `.tmp`/`.part` skip.
         if meta_path.extension().is_none_or(|ext| ext != "meta") {

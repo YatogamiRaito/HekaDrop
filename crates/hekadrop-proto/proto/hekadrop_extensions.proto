@@ -74,7 +74,11 @@ message ChunkIntegrity {
 // kendi session'ı ile karşılaştırır, eşleşmezse `ResumeReject{
 // SESSION_MISMATCH }` döner.
 message ResumeHint {
-  int64  session_id           = 1;  // UKEY2 auth_key SHA-256[0..8] BE
+  // PR #131 Gemini medium: `sfixed64` (8 byte sabit, varint compression yok)
+  // — session_id rastgele 64-bit hash bit'lerinden türetildiği için varint
+  // ortalama ~9 byte yer kaplardı. Wire kilidi henüz üretim peer'ı yok
+  // (RESUME_V1 PR-G'de aktive edildi).
+  sfixed64 session_id         = 1;  // UKEY2 auth_key SHA-256[0..8] BE
   int64  payload_id           = 2;
   int64  offset               = 3;
   bytes  partial_hash         = 4;  // SHA-256(bytes[0..offset])
