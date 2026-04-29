@@ -130,6 +130,20 @@ pub fn build_capabilities_frame(caps: Capabilities) -> HekaDropFrame {
     }
 }
 
+/// `HekaDropFrame { resume_hint = ... }` envelope'unu inşa et.
+///
+/// RFC-0004 §3.2 + capabilities.md §3.1 slot 12. Receiver `.meta` lookup
+/// sonrası eşleşen partial bulduğunda emit eder; sender consume ederek
+/// `[0..offset]`'i atlar (PR-D).
+#[must_use]
+pub fn build_resume_hint_frame(hint: hekadrop_proto::hekadrop_ext::ResumeHint) -> HekaDropFrame {
+    use hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload;
+    HekaDropFrame {
+        version: ENVELOPE_VERSION,
+        payload: Some(Payload::ResumeHint(hint)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

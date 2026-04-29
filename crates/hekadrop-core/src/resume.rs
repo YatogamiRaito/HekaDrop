@@ -45,6 +45,12 @@ const HASH_BUF_SIZE: usize = 1024 * 1024;
 /// readers reject `version > MAX_META_VERSION` and silently restart.
 pub const MAX_META_VERSION: u32 = 1;
 
+/// RFC-0004 §5: bir `.meta`'nın `updated_at`'inden itibaren geçerli kabul
+/// edildiği gün sayısı. Bu süreden eski meta'lar resume yolu açıldığında
+/// sessizce silinir + fresh transfer başlar (cleanup PR-E'de periyodik
+/// olarak da uygulanır). v0.8.0 hardcoded; v0.8.1'de settings'e taşınır.
+pub const RESUME_TTL_DAYS: i64 = 7;
+
 /// Compute the 64-bit session identifier from the UKEY2 `auth_key`.
 ///
 /// `i64::from_be_bytes(SHA-256(auth_key)[0..8])` — RFC-0004 §3.4 birebir.
