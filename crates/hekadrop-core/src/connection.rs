@@ -47,6 +47,12 @@ use tracing::{info, warn};
 /// (`open_url` / `copy_to_clipboard`) referansı sızmasın diye trait üzerinden
 /// dispatch ediyoruz. App-side `PlatformShim` minimal `Send + Sync` impl'i
 /// `crate::platform::*` çağrılarına forward eder.
+/// RFC-0005 §4 — folder bundle MIME marker. Sender Introduction'da
+/// `FileMetadata.mime_type` alanına bunu yazar; receiver bu değer +
+/// `FOLDER_STREAM_V1` capability aktif iken bundle extract pipeline'a
+/// route eder. Spec: `docs/protocol/folder-payload.md` §4.
+pub const FOLDER_BUNDLE_MIME: &str = "application/x-hekadrop-folder";
+
 pub trait PlatformOps: Send + Sync {
     /// Tarayıcıda URL aç (yalnız http/https — caller şema doğrulamasını
     /// üst seviyede yapmıştır; trait kontratı "verileni aç" değildir).
@@ -430,12 +436,14 @@ pub async fn handle(
                             sha256,
                         } => {
                             pending_names.remove(&id);
-                            finalize_received_file(
+                            finalize_received_payload(
                                 &peer,
+                                id,
                                 &path,
                                 total_size,
                                 sha256,
                                 &remote_name_shared,
+                                &mut assembler,
                                 state.as_ref(),
                                 ui.as_ref(),
                             );
@@ -478,6 +486,106 @@ pub async fn handle(
     );
 
     Ok(())
+}
+
+/// RFC-0005 §6 — receiver finalize dispatcher. `take_bundle_marker` ile
+/// bundle marker varsa extract pipeline çalıştırır (atomic-reject), aksi
+/// halde `finalize_received_file`'a delegate eder (mevcut individual file
+/// akışı).
+///
+/// Extract hatası → bundle + staging temizlenmiş olur (`extract_bundle`
+/// içinde Drop guard); UI'a `ToastRaw` ile reject mesajı düşer ve hiçbir
+/// `History` kaydı eklenmez. Başarı → `History` extract edilen klasör
+/// path'i ile push edilir.
+#[allow(clippy::too_many_arguments)] // INVARIANT: 9 arg — UI/state/assembler dispatch tek nokta
+fn finalize_received_payload(
+    peer: &SocketAddr,
+    id: i64,
+    path: &std::path::Path,
+    total_size: i64,
+    sha256: [u8; 32],
+    remote_name: &str,
+    assembler: &mut PayloadAssembler,
+    state: &AppState,
+    ui: &dyn UiPort,
+) {
+    if let Some(marker) = assembler.take_bundle_marker(id) {
+        // RFC-0005 §6: extract pipeline. Atomic-reject — tüm hata
+        // durumlarında staging dir + .bundle Drop'ta silinir.
+        match crate::folder::extract::extract_bundle(
+            path,
+            marker.expected_manifest_sha256_prefix,
+            &marker.extract_root_dir,
+            &marker.session_id_hex_lower,
+        ) {
+            Ok(extracted) => {
+                info!(
+                    "[{}] ✓ folder extract OK: {} ({} entry, {} dosya)",
+                    peer,
+                    extracted.final_path.display(),
+                    extracted.total_entries,
+                    extracted.file_count
+                );
+                // Stats: bundle byte sayısı receiver'a indi (extract sonrası
+                // disk üzerindeki dağılım eşit ama metric "alındı" anlamı).
+                let keep = state.settings.read().keep_stats;
+                let snap_opt = {
+                    let mut s = state.stats.write();
+                    // INVARIANT (CLAUDE.md I-5): payload finalize'da
+                    // total_size ≥ 0 garanti (payload.rs ingest_file negatif
+                    // reject); cast güvenli.
+                    #[allow(clippy::cast_sign_loss)] // INVARIANT: total_size >= 0 garanti
+                    let total_u = total_size as u64;
+                    s.record_received(remote_name, total_u);
+                    if keep {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
+                };
+                if let Some(snap) = snap_opt {
+                    state.try_save_stats(snap);
+                }
+                let folder_label = extracted
+                    .final_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("klasor")
+                    .to_string();
+                state.set_progress(ProgressState::Completed {
+                    file: folder_label.clone(),
+                });
+                state.push_history(HistoryItem {
+                    file_name: folder_label.clone(),
+                    path: extracted.final_path.clone(),
+                    size: total_size,
+                    device: remote_name.to_string(),
+                    when: std::time::SystemTime::now(),
+                    sha256_short: hex::encode(sha256).chars().take(16).collect(),
+                });
+                ui.notify(UiNotification::FileReceived {
+                    title_key: "notify.app_name",
+                    body_key: "notify.received",
+                    body_args: vec![folder_label, format!("{}", extracted.file_count)],
+                    path: extracted.final_path,
+                });
+            }
+            Err(e) => {
+                warn!(
+                    "[{}] folder bundle extract FAIL (atomic-reject): payload_id={} {}",
+                    peer, id, e
+                );
+                state.set_progress(ProgressState::Idle);
+                ui.notify(UiNotification::ToastRaw {
+                    title: "HekaDrop".to_string(),
+                    body: format!("Klasör reddedildi: {e}"),
+                });
+            }
+        }
+        return;
+    }
+    // Mevcut individual file akışı — bundle marker yok.
+    finalize_received_file(peer, path, total_size, sha256, remote_name, state, ui);
 }
 
 /// `CompletedPayload::File` finalize ortak işleri (stats record, history push,
@@ -725,6 +833,15 @@ async fn handle_sharing_frame(
             // invariant'ı için. Sender Introduction'da büyüklüğü bildirir;
             // mismatch → stale meta sil + fresh transfer.
             let mut planned_files: Vec<(i64, std::path::PathBuf, String, i64)> = Vec::new();
+            // RFC-0005 §6: bundle marker'ları paralel olarak biriktir; consent
+            // accept sonrası `register_bundle_marker` ile assembler'a tanıtılır.
+            // Tuple: (payload_id, expected_attachment_hash_prefix, downloads_dir_clone).
+            let mut planned_bundles: Vec<(i64, i64, std::path::PathBuf)> = Vec::new();
+            // RFC-0005 §6: folder capability aktif mi — Introduction'daki
+            // bundle MIME marker'ını ya extract pipeline'a yönlendirir ya da
+            // raw `.hekabundle` save fallback'i (capability inactive).
+            let folder_active =
+                active_capabilities.has(crate::capabilities::features::FOLDER_STREAM_V1);
             for f in &intro.file_metadata {
                 let name = f.name.clone().unwrap_or_else(|| "dosya".into());
                 let raw_size = f.size.unwrap_or(0);
@@ -766,14 +883,75 @@ async fn handle_sharing_frame(
                     size,
                 });
                 if let Some(pid) = f.payload_id {
-                    // `unique_downloads_path` `std::fs::create_dir_all` +
-                    // `OpenOptions::create_new` (atomic placeholder reserve) gibi
-                    // sync I/O yapar; worker thread bloklamamak için
-                    // `block_in_place` (multi-thread runtime'da scheduler'ı
-                    // bilgilendirir, result inline alınır). PR #93 Gemini review.
-                    let target =
-                        tokio::task::block_in_place(|| unique_downloads_path(&name, state))?;
-                    planned_files.push((pid, target, name, size));
+                    // RFC-0005 §6 — bundle MIME tespiti. Capability aktif ise
+                    // `.bundle` temp path'e route et + bundle marker biriktir.
+                    // Capability inactive ise spec §7 receiver-side defensive:
+                    // raw `.hekabundle` olarak Downloads'a düşür (mevcut akış,
+                    // unique_downloads_path) + warn log.
+                    let mime = f.mime_type.as_deref().unwrap_or("");
+                    if mime == FOLDER_BUNDLE_MIME && folder_active {
+                        // Bundle path: ~/Downloads/.hekadrop-temp-<sid>.bundle.
+                        // Session id auth_key'den; aynı session içinde paralel
+                        // bundle pratikte yok (sender tek bundle/payload).
+                        let downloads_dir = state
+                            .settings
+                            .read()
+                            .resolved_download_dir(|| state.default_download_dir.clone());
+                        // INVARIANT (CLAUDE.md I-2): bit-cast — i64 → u64
+                        // hex render, no value change.
+                        #[allow(clippy::cast_sign_loss)] // INVARIANT: bit-cast for hex rendering
+                        let session_hex =
+                            format!("{:016x}", crate::resume::session_id_i64(auth_key) as u64);
+                        let bundle_path =
+                            downloads_dir.join(format!(".hekadrop-temp-{session_hex}.bundle"));
+                        // create_dir_all + atomic placeholder reserve (TOCTOU).
+                        // Bundle marker'ı `planned_bundles` içine biriktirilir;
+                        // `register_bundle_marker` consent accept sonrası
+                        // çağrılır ki cancel/reject yolunda gereksiz state
+                        // kalmasın.
+                        tokio::task::block_in_place(|| -> Result<()> {
+                            std::fs::create_dir_all(&downloads_dir).ok();
+                            // Placeholder reserve — eski .bundle kalıntısı
+                            // varsa temizle (önceki crash artığı).
+                            let _ = std::fs::remove_file(&bundle_path);
+                            std::fs::OpenOptions::new()
+                                .write(true)
+                                .create_new(true)
+                                .open(&bundle_path)
+                                .with_context(|| {
+                                    format!(
+                                        "bundle placeholder rezerve edilemedi: {}",
+                                        bundle_path.display()
+                                    )
+                                })?;
+                            Ok(())
+                        })?;
+                        let attachment_hash = f.attachment_hash.unwrap_or(0);
+                        info!(
+                            "[{}] folder bundle Introduction: payload_id={}, mime={}, attachment_hash={:#018x}",
+                            peer, pid, FOLDER_BUNDLE_MIME, attachment_hash
+                        );
+                        planned_files.push((pid, bundle_path, name, size));
+                        planned_bundles.push((pid, attachment_hash, downloads_dir));
+                    } else {
+                        if mime == FOLDER_BUNDLE_MIME && !folder_active {
+                            // Spec §7 defensive — capability advertise edilmedi
+                            // ama sender bundle gönderdi. Raw `.hekabundle`
+                            // olarak save (no extraction).
+                            warn!(
+                                "[{}] folder bundle MIME geldi ama FOLDER_STREAM_V1 negotiate edilmemiş — raw .hekabundle save (spec §7)",
+                                peer
+                            );
+                        }
+                        // `unique_downloads_path` `std::fs::create_dir_all` +
+                        // `OpenOptions::create_new` (atomic placeholder reserve) gibi
+                        // sync I/O yapar; worker thread bloklamamak için
+                        // `block_in_place` (multi-thread runtime'da scheduler'ı
+                        // bilgilendirir, result inline alınır). PR #93 Gemini review.
+                        let target =
+                            tokio::task::block_in_place(|| unique_downloads_path(&name, state))?;
+                        planned_files.push((pid, target, name, size));
+                    }
                 }
             }
 
@@ -1004,6 +1182,29 @@ async fn handle_sharing_frame(
                         .register_file_destination(pid, actual_path)
                         .context("dosya hedefi kaydı")?;
                     pending_names.insert(pid, display_name.clone());
+
+                    // RFC-0005 §6: bundle marker register (varsa). Bu pid
+                    // `planned_bundles`'da ise extract pipeline'ın ihtiyacı
+                    // olan attachment_hash + extract dir + session hex'i
+                    // assembler'a tanıt. CompletedPayload::File döndüğünde
+                    // caller `take_bundle_marker(pid)` ile çekecek.
+                    if let Some((_, attach_hash, dl_dir)) =
+                        planned_bundles.iter().find(|(b_pid, _, _)| *b_pid == pid)
+                    {
+                        // INVARIANT (CLAUDE.md I-2): bit-cast — i64 → u64 hex
+                        // render, no value change.
+                        #[allow(clippy::cast_sign_loss)] // INVARIANT: bit-cast for hex rendering
+                        let session_hex =
+                            format!("{:016x}", crate::resume::session_id_i64(auth_key) as u64);
+                        assembler.register_bundle_marker(
+                            pid,
+                            crate::payload::BundleMarker {
+                                expected_manifest_sha256_prefix: *attach_hash,
+                                extract_root_dir: dl_dir.clone(),
+                                session_id_hex_lower: session_hex,
+                            },
+                        );
+                    }
 
                     // RFC-0004 §3.3 — Introduction sonrası `.meta` lookup
                     // + (matching ise) `ResumeHint` emit. Hata yutulur:
@@ -1548,7 +1749,17 @@ async fn handle_hekadrop_frame(
                     sha256,
                 })) => {
                     debug!("[{}] chunk-HMAC verify path: dosya finalize id={id}", peer);
-                    finalize_received_file(peer, &path, total_size, sha256, remote_name, state, ui);
+                    finalize_received_payload(
+                        peer,
+                        id,
+                        &path,
+                        total_size,
+                        sha256,
+                        remote_name,
+                        assembler,
+                        state,
+                        ui,
+                    );
                     Ok(())
                 }
                 Ok(Some(other)) => {

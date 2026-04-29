@@ -16,6 +16,7 @@
 
 pub mod bundle;
 pub mod enumerate;
+pub mod extract;
 pub mod manifest;
 pub mod sanitize;
 
@@ -27,5 +28,6 @@ pub use enumerate::{
     build_manifest, bundle_total_size, enumerate_folder, BuildError, EntryKind, EnumerateError,
     EnumeratedEntry, MAX_FOLDER_DEPTH, MAX_FOLDER_ENTRIES,
 };
+pub use extract::{extract_bundle, ExtractError, ExtractedFolder};
 pub use manifest::{BundleManifest, ManifestEntry, ManifestError, MANIFEST_VERSION, MAX_ENTRIES};
 pub use sanitize::{sanitize_received_relative_path, sanitize_root_name, PathError, MAX_DEPTH};
