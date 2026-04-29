@@ -73,7 +73,12 @@ fn build_hmac_input(
 ) -> Result<Vec<u8>, ChunkBuildError> {
     let body_len_u32 = checked_body_len_u32(body.len())?;
 
-    let mut input = Vec::with_capacity(HMAC_INPUT_PREFIX_LEN + body.len());
+    // CLAUDE.md I-5: 32-bit hedeflerde `body.len() + HMAC_INPUT_PREFIX_LEN`
+    // usize taşmasına yol açabilir (u32::MAX + 28 → debug panic). Capacity
+    // hint için saturating_add yeter — gerçek allocation `extend_from_slice`
+    // tarafından yönetilir; capacity overshoot olsa bile sadece reallocate
+    // gerekir, doğruluğu etkilemez. (PR #116 Gemini medium yorumu.)
+    let mut input = Vec::with_capacity(body.len().saturating_add(HMAC_INPUT_PREFIX_LEN));
     input.extend_from_slice(&payload_id.to_be_bytes());
     input.extend_from_slice(&chunk_index.to_be_bytes());
     input.extend_from_slice(&offset.to_be_bytes());
