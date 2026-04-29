@@ -27,7 +27,7 @@ opsiyonel özellikler. Eski Quick Share peer'ları (Google/Samsung Android, Near
 | 001 | [capabilities.md](capabilities.md) | 📝 Draft (RFC-0003 §3.2 byte-exact) | v0.8.0 |
 | 002 | [chunk-hmac.md](chunk-hmac.md) | 📝 Draft (RFC-0003 byte-exact) | v0.8.0 |
 | 003 | [resume.md](resume.md) | 📝 Draft (RFC-0004 byte-exact) | v0.8.0 |
-| 004 | folder-payload.md | 📝 TBD (RFC-0005 implementation'da yazılacak) | v0.8.0 |
+| 004 | [folder-payload.md](folder-payload.md) | 📝 Draft (RFC-0005 byte-exact, `HEKABUND` v1) | v0.8.0 |
 
 Her spec:
 - Byte-level wire layout (alan uzunlukları, encoding)
