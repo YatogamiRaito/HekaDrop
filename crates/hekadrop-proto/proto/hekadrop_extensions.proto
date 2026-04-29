@@ -34,7 +34,7 @@ message HekaDropFrame {
     ChunkIntegrity  chunk_tag     = 11;  // RFC 0003 §3.2 (ChunkIntegrity)
     ResumeHint      resume_hint   = 12;  // RFC 0004 (placeholder, v0.8.1)
     ResumeReject    resume_reject = 13;  // RFC 0004 (placeholder, v0.8.1)
-    FolderManifest  folder_mft    = 14;  // RFC 0005 §3.2 (slot ABI seal; mesaj boş — manifest in-bundle)
+    FolderManifest  folder_mft    = 14;  // RFC 0005 §3.2 (slot ABI seal; mesaj alan içermez — manifest in-bundle taşınır, bu slot yalnız oneof tag ABI rezervi)
   }
 }
 

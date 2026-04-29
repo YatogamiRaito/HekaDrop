@@ -53,6 +53,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 /// Streaming read tamponu — per-file body okuma için. 64 KiB ile syscall
 /// sayısı düşük, RAM maliyeti ihmal edilebilir.
 const EXTRACT_READ_BUF: usize = 64 * 1024;
@@ -119,10 +122,6 @@ pub enum ExtractError {
         claimed: u64,
         remainder: u64,
     },
-
-    /// Manifest entry boyutu i64'a sığmıyor (peer-controlled u64).
-    #[error("file size i64'a sığmıyor: {0}")]
-    FileSizeTooLarge(u64),
 
     /// I/O hatası (mkdir, open, read, write, rename).
     #[error("I/O error: {0}")]
@@ -276,10 +275,17 @@ fn extract_bundle_inner(
         }
 
         match entry {
-            ManifestEntry::Directory { .. } => {
+            ManifestEntry::Directory { mode, .. } => {
                 fs::create_dir_all(&joined)?;
+                // RFC-0005 §3.2 — `mode` opsiyonel, best-effort uygula.
+                // Unix-only; Windows'ta mode anlamsız → silently skip.
+                // Hata yutulur (best-effort) — chmod fail'i dosyanın varlığını
+                // bozmaz, sadece izin metadata tam değil.
+                apply_mode_best_effort(&joined, *mode);
             }
-            ManifestEntry::File { size, sha256, .. } => {
+            ManifestEntry::File {
+                size, sha256, mode, ..
+            } => {
                 file_count = file_count.saturating_add(1);
 
                 // Parent dizinini oluştur (mkdir -p).
@@ -321,6 +327,11 @@ fn extract_bundle_inner(
                 // Best-effort fsync — durability güvencesi (kullanıcı tarafından
                 // beklenen "alındı" anlamı diskte var).
                 let _ = out.sync_all();
+
+                // RFC-0005 §3.2 — `mode` opsiyonel, best-effort uygula.
+                // sync_all sonrası — yazma kompleti garanti, sonra metadata.
+                drop(out);
+                apply_mode_best_effort(&joined, *mode);
             }
         }
     }
@@ -388,6 +399,26 @@ fn stream_copy_with_sha256(
     }
     let digest: [u8; 32] = hasher.finalize().into();
     Ok(hex_lower(&digest))
+}
+
+/// RFC-0005 §3.2 — best-effort POSIX mode apply. Unix-only; Windows'ta
+/// no-op (mode anlamsız NTFS ACL modeli ile). Hata yutulur — chmod fail'i
+/// içeriği bozmaz, sadece izin metadata tam değil. `mtime` benzer bir
+/// best-effort apply ileri PR'a (yeni `filetime` dep ekleme overhead'ini
+/// taşımak istemiyoruz; v0.8.1 follow-up).
+#[cfg(unix)]
+fn apply_mode_best_effort(path: &Path, mode: Option<u32>) {
+    if let Some(m) = mode {
+        // Tehlikeli bit'leri (setuid/setgid/sticky) maskele — peer-controlled
+        // mode'a güvenmiyoruz; sadece rwx bit'lerini al (lower 9 bit).
+        let safe = m & 0o777;
+        let _ = fs::set_permissions(path, std::fs::Permissions::from_mode(safe));
+    }
+}
+
+#[cfg(not(unix))]
+fn apply_mode_best_effort(_path: &Path, _mode: Option<u32>) {
+    // No-op: NTFS ACL modeli POSIX mode bit'lerini temsil etmez.
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
@@ -882,6 +913,69 @@ mod tests {
         // Cleanup
         assert!(!bundle.exists());
         assert!(!downloads.path().join("rt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extract_applies_posix_mode_best_effort() {
+        use std::os::unix::fs::PermissionsExt;
+        let downloads = tempdir().unwrap();
+        let bundle = downloads.path().join("test.bundle");
+        let mut m = BundleManifest {
+            version: MANIFEST_VERSION,
+            root_name: "perm".to_owned(),
+            total_entries: 0,
+            entries: vec![ManifestEntry::File {
+                path: "exec.sh".to_owned(),
+                size: 4,
+                sha256: sha_hex(b"abcd"),
+                mode: Some(0o755),
+                mtime: None,
+            }],
+            created_utc: Utc::now(),
+        };
+        m.total_entries = u32::try_from(m.entries.len()).unwrap();
+        let json = serde_json::to_vec(&m).unwrap();
+        write_bundle(&bundle, &json, &[b"abcd"]);
+        let prefix = m.attachment_hash_i64().unwrap();
+
+        let result = extract_bundle(&bundle, prefix, downloads.path(), "modebit").unwrap();
+        let target = result.final_path.join("exec.sh");
+        let perms = fs::metadata(&target).unwrap().permissions();
+        assert_eq!(perms.mode() & 0o777, 0o755);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extract_masks_setuid_setgid_sticky_bits() {
+        use std::os::unix::fs::PermissionsExt;
+        // Hostile peer setuid bit ile mode gönderirse mask edilir — sadece
+        // alt 9 bit (rwx) uygulanır.
+        let downloads = tempdir().unwrap();
+        let bundle = downloads.path().join("test.bundle");
+        let mut m = BundleManifest {
+            version: MANIFEST_VERSION,
+            root_name: "perm".to_owned(),
+            total_entries: 0,
+            entries: vec![ManifestEntry::File {
+                path: "danger.sh".to_owned(),
+                size: 4,
+                sha256: sha_hex(b"abcd"),
+                mode: Some(0o4755), // setuid + 0o755
+                mtime: None,
+            }],
+            created_utc: Utc::now(),
+        };
+        m.total_entries = u32::try_from(m.entries.len()).unwrap();
+        let json = serde_json::to_vec(&m).unwrap();
+        write_bundle(&bundle, &json, &[b"abcd"]);
+        let prefix = m.attachment_hash_i64().unwrap();
+
+        let result = extract_bundle(&bundle, prefix, downloads.path(), "setuidtest").unwrap();
+        let target = result.final_path.join("danger.sh");
+        let perms = fs::metadata(&target).unwrap().permissions();
+        // setuid bit (0o4000) MASKELENMIŞ olmalı.
+        assert_eq!(perms.mode() & 0o7777, 0o755);
     }
 
     #[test]

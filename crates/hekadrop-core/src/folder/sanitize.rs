@@ -19,7 +19,10 @@
 /// - `\0` (NUL byte) → reject
 /// - `..` segment → reject (path traversal)
 /// - `.` segment → skip
-/// - boş segment (consecutive `/`, leading `/`) → skip
+/// - boş segment (consecutive `/`, leading `/`, trailing `/`) → skip
+///   (örn. `a//b` → `["a", "b"]`, `a/b/` → `["a", "b"]`); `.` segment ile
+///   aynı politikayla normalize, reject değil — POSIX path normalize
+///   davranışı.
 /// - depth (sanitize sonrası segment sayısı) > 32 → reject
 /// - sanitize sonrası boş → reject
 ///
@@ -184,6 +187,27 @@ mod tests {
     #[test]
     fn sanitize_consecutive_slashes_collapsed() {
         let segs = sanitize_received_relative_path("a//b").unwrap();
+        assert_eq!(segs, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn sanitize_multiple_consecutive_slashes_collapsed() {
+        // `a///b` ve `a////b/c` — boş segment skip politikası tüm consecutive
+        // separator senaryolarında deterministik (Gemini PR #143 yorumu — empty
+        // segment policy dokümante).
+        assert_eq!(
+            sanitize_received_relative_path("a///b").unwrap(),
+            vec!["a", "b"]
+        );
+        assert_eq!(
+            sanitize_received_relative_path("a////b/c").unwrap(),
+            vec!["a", "b", "c"]
+        );
+    }
+
+    #[test]
+    fn sanitize_trailing_slash_skipped() {
+        let segs = sanitize_received_relative_path("a/b/").unwrap();
         assert_eq!(segs, vec!["a", "b"]);
     }
 

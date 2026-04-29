@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ResumeHint`/`ResumeReject` proto frame'leri + sender offset seek; cleanup
   sweep TTL/budget LRU.
 - **feat(rfc-0003): chunk-HMAC** — `CHUNK_HMAC_V1` capability (`0x0000_0001`)
-  per-data-chunk HMAC-SHA256 integrity tag.
+  per-data-chunk HMAC-SHA256 integrity tag (PR #146); legacy peer'lar capability
+  inactive olduğunda hash-only modda calışmaya devam eder.
 
 ### Added — Workspace Refactor (RFC-0001 §5, Adım 1-8 tamamlandı)
 - **5 üyeli Cargo workspace**: `hekadrop-proto` (leaf, prost wire types) →

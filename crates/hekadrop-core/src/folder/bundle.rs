@@ -293,7 +293,10 @@ impl BundleReader {
         let mut remaining = trailer_start;
         let mut buf = vec![0u8; 64 * 1024];
         while remaining > 0 {
-            let want = u64::min(remaining, buf.len() as u64);
+            // remaining: u64, buf.len(): usize. usize → u64 lossless (CI matrix
+            // 64-bit). `.min()` method form `u64::min(...)` standalone yerine
+            // idiomatik (Gemini PR #143 yorumu).
+            let want = remaining.min(buf.len() as u64);
             // INVARIANT: want ≤ buf.len() ≤ usize::MAX; downcast güvenli.
             let want_us = usize::try_from(want).unwrap_or(buf.len());
             let n = file.read(&mut buf[..want_us])?;
