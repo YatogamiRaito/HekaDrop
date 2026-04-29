@@ -34,7 +34,7 @@ message HekaDropFrame {
     ChunkIntegrity  chunk_tag     = 11;  // RFC 0003 §3.2 (ChunkIntegrity)
     ResumeHint      resume_hint   = 12;  // RFC 0004 (placeholder, v0.8.1)
     ResumeReject    resume_reject = 13;  // RFC 0004 (placeholder, v0.8.1)
-    FolderManifest  folder_mft    = 14;  // RFC 0005 (placeholder, v0.8.x)
+    FolderManifest  folder_mft    = 14;  // RFC 0005 §3.2 (slot ABI seal; mesaj boş — manifest in-bundle)
   }
 }
 
@@ -103,10 +103,29 @@ message ResumeReject {
   Reason reason     = 2;
 }
 
-// Folder bundle manifest (RFC 0005 placeholder).
+// Folder bundle envelope marker (RFC 0005 §3.2 / §3.7).
 //
-// **v0.8.0'da boş placeholder.** Tam tanım folder-payload.md
-// implementation'ında.
+// **Bu mesaj `v1` için tasarımca BOŞ.** RFC-0005 folder transfer'i,
+// klasör manifest'ini wire'da bir proto mesajı olarak GÖNDERMEZ;
+// manifest UTF-8 JSON olarak `HEKABUND` container'ının içine gömülür
+// (`docs/protocol/folder-payload.md` §2-§3 wire-byte spec).
+//
+// Wire-byte-exact spec: `docs/protocol/folder-payload.md`.
+// Normative RFC:        `docs/rfcs/0005-folder-payload.md` §3.1-§3.2.
+//
+// **Slot kilidi:** `HekaDropFrame.payload` oneof slot 14 bu mesaja
+// bağlanır. Slot bağlanması ABI rezervasyonudur; ileride proto v2'ye
+// bump etmeden başka bir mesaj bu slot'a konulamaz. Boş `FolderManifest`
+// seçimi kasıtlı: in-bundle JSON manifest'i ek olarak proto wire'da
+// göndermek gereksiz redundancy üretir (RFC-0005 §3.2 manifest'i
+// container içine yerleştirir; §3.7 capability gate ve folder_mft slot
+// referansını sağlar — bu mesajın varlığı slot'u bağlamak için yeterli).
+//
+// Gelecek genişleme: v0.9+ summary metadata (örn. toplam dosya sayısı,
+// bundle-level estimated time) eklenmek istenirse field eklenebilir,
+// **ancak** bu durumda yeni bir capability biti (FOLDER_STREAM_V2) ile
+// gate edilmelidir; v1 alıcılar boş mesajı görmeye devam eder.
 message FolderManifest {
-  // Sealed during v0.8.x implementation; bu boş slot ABI'yi rezerv eder.
+  // Reserved for v0.9+ summary metadata if needed.
+  // Şu an: empty by design (RFC-0005 §3.2).
 }

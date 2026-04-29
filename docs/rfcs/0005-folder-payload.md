@@ -6,6 +6,9 @@
 - **Hedef sürüm:** v0.8.0
 - **İlgili issue:** —
 - **İlgili RFC'ler:** 0003 (chunk-HMAC, capabilities frame), 0004 (transfer resume)
+- **Wire-byte spec:** [`docs/protocol/folder-payload.md`](../protocol/folder-payload.md)
+  — `HEKABUND` v1 container layout, manifest JSON şeması, MIME marker kontratı,
+  atomic-reject state machine.
 
 ---
 
