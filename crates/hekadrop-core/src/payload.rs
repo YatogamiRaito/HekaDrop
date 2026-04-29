@@ -194,6 +194,22 @@ struct PendingResume {
     session_id: i64,
     peer_endpoint_id: String,
     file_name: String,
+    /// PR-G: receiver bu transfer için resume offset; `0` → fresh start
+    /// (mevcut davranış), `>0` → `ingest_file` bu offset'ten başlayarak
+    /// append modunda dosyayı açar (truncate yok, seek + hasher feed önceki
+    /// bytes). Caller değer geçmediyse default `0` (fresh).
+    received_bytes: i64,
+    /// PR-G: resume sonrası ilk gelen chunk için beklenen `chunk_index`.
+    /// Sender `received_bytes / sender_chunk_size` üzerinden bu değeri seçer;
+    /// receiver `verify_chunk_tag`'da `ci.chunk_index == sink.next_chunk_index`
+    /// kontrolü yapacağı için aynı değeri burada init etmek zorunlu.
+    /// Production: caller `meta.received_bytes / meta.chunk_size`
+    /// (= `CHUNK_SIZE`) hesaplar.
+    next_chunk_index: i64,
+    /// PR-G: resume durumunda receiver bu tag ile checkpoint'ten devam
+    /// etsin (chunk-HMAC fast-path semantiği). `.meta`'dan yüklenen son tag
+    /// — boşsa fast-path yok / fresh.
+    last_chunk_tag_b64: String,
 }
 
 #[derive(Default)]
@@ -259,8 +275,58 @@ impl PayloadAssembler {
         peer_endpoint_id: String,
         file_name: String,
     ) -> Result<()> {
+        // Fresh enable — offset 0, chunk_index 0, last_chunk_tag boş. PR-G
+        // öncesi tek API imzası buydu; mevcut çağrı yerleri dokunulmadan
+        // derlensin.
+        self.enable_resume_with_offset(
+            payload_id,
+            session_id,
+            peer_endpoint_id,
+            file_name,
+            0,
+            0,
+            String::new(),
+        )
+    }
+
+    /// PR-G: `enable_resume` + receiver-side offset/tag injection.
+    ///
+    /// Pozitif `received_bytes` durumunda `ingest_file` mevcut `.part`
+    /// dosyasını `truncate(false)` + `seek(received_bytes)` ile açar;
+    /// `FileSink.written` + hasher state buna göre kurulur (önceki byte'lar
+    /// hasher'a feed edilir). `next_chunk_index` resume sonrası ilk beklenen
+    /// chunk index'idir (sender `received_bytes / its_chunk_size`'den
+    /// türetir). `last_chunk_tag_b64` chunk-HMAC fast-path içindir (boşsa
+    /// slow-path).
+    ///
+    /// Caller (`connection.rs::handle_resume_for_file`) `.meta` valid + `.part`
+    /// hazır olduğunda bu varyantı çağırır; aksi halde [`Self::enable_resume`].
+    // INVARIANT: 8 argüman — production caller tek nokta (handle_resume_for_file).
+    // Builder pattern overkill; receiver-side resume injection field'ları (4 yeni)
+    // organik olarak biriktirildi, struct-arg refactor scope dışı.
+    #[allow(clippy::too_many_arguments)] // INVARIANT: tek production caller, struct-arg refactor scope dışı
+    pub fn enable_resume_with_offset(
+        &mut self,
+        payload_id: i64,
+        session_id: i64,
+        peer_endpoint_id: String,
+        file_name: String,
+        received_bytes: i64,
+        next_chunk_index: i64,
+        last_chunk_tag_b64: String,
+    ) -> Result<()> {
         let partial_dir = resume::partial_dir()
             .with_context(|| "resume: partial_dir() resolve hatası — fresh transfer")?;
+        if received_bytes < 0 {
+            return Err(anyhow!(
+                "enable_resume_with_offset: negatif received_bytes={received_bytes}"
+            ));
+        }
+        if next_chunk_index < 0 {
+            return Err(anyhow!(
+                "enable_resume_with_offset: negatif next_chunk_index={next_chunk_index}"
+            ));
+        }
         self.pending_resume.insert(
             payload_id,
             PendingResume {
@@ -268,6 +334,9 @@ impl PayloadAssembler {
                 session_id,
                 peer_endpoint_id,
                 file_name,
+                received_bytes,
+                next_chunk_index,
+                last_chunk_tag_b64,
             },
         );
         Ok(())
@@ -555,21 +624,137 @@ impl PayloadAssembler {
                     });
                 }
             }
-            let file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&dest.path)
-                .with_context(|| format!("dosya açılamadı: {}", dest.path.display()))?;
+            // PR-G: pending_resume varsa **önce** çek (payload_id başına tek
+            // varlık) — `received_bytes > 0` ise resume açılış path'i, `== 0`
+            // ise fresh path. Hata durumunda da remove'lanır ki Tükenmiş state
+            // bir sonraki retry'ı bulandırmasın.
+            let pending_resume = self.pending_resume.remove(&id);
+            let is_resume = pending_resume
+                .as_ref()
+                .is_some_and(|pr| pr.received_bytes > 0);
+
+            // SECURITY: resume aktifken `received_bytes`'ın disk üstündeki
+            // dosya boyutunu aşmaması ve `total_size`'a sığması gerekir.
+            // Aksi halde (a) `seek` past-end → sparse hole + future chunk'lar
+            // yanlış offset'e yazılır, (b) hasher feed `.part`'ın olmayan
+            // byte'larını okur → mismatch + truncated final.
+            if let Some(pr) = pending_resume.as_ref() {
+                if pr.received_bytes > total_size {
+                    return Err(anyhow!(
+                        "resume received_bytes ({}) > total_size ({}); fresh düşülmeli",
+                        pr.received_bytes,
+                        total_size
+                    ));
+                }
+            }
+
+            let file = if is_resume {
+                // PR-G resume path: `.part` dest.path'te mevcut olmalı (önceki
+                // session yazdı). `read(true)` zorunlu — hasher pre-feed önceki
+                // bytes'ları okumalı. `truncate(false)` + `create(false)` —
+                // varolan inode'a aç; yoksa fresh düşmek için Err döner ve
+                // caller `.meta` cleanup'a gider.
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(false)
+                    .truncate(false)
+                    .open(&dest.path)
+                    .with_context(|| {
+                        format!(
+                            "resume için .part açılamadı: {} (received_bytes={})",
+                            dest.path.display(),
+                            pending_resume.as_ref().map_or(0, |pr| pr.received_bytes)
+                        )
+                    })?
+            } else {
+                // Fresh path (mevcut davranış — placeholder var, sıfırdan yaz).
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&dest.path)
+                    .with_context(|| format!("dosya açılamadı: {}", dest.path.display()))?
+            };
+
+            // PR-G: resume açılış post-processing — seek + hasher feed.
+            // BufWriter wrap'inden ÖNCE yapılır (BufWriter'ın iç pozisyonu
+            // 0 olarak başlar; underlying File'ın gerçek pozisyonu seek
+            // ettiğimiz yerdir). seek_write semantiği: sonraki write_all
+            // mutlak offset'ten yazar.
+            let mut hasher = Sha256::new();
+            let initial_written = if let Some(pr) = pending_resume.as_ref() {
+                pr.received_bytes
+            } else {
+                0
+            };
+            let mut file = file;
+            if is_resume {
+                use std::io::{Read as _, Seek as _, SeekFrom};
+                // Hasher state recompute: `.part`'ın ilk `received_bytes`
+                // byte'ını feed et. ~10-50 ms / 100 MB; final SHA-256 chain
+                // tutarlı kalır (aksi halde chunk-HMAC verify başarılı olsa
+                // bile receiver'ın final hash'i sender'ınki ile uyuşmaz).
+                let received_u64 = u64::try_from(initial_written)
+                    .with_context(|| format!("received_bytes negatif: {initial_written}"))?;
+                file.seek(SeekFrom::Start(0)).with_context(|| {
+                    format!(
+                        "resume hasher pre-feed seek(0) hata: {}",
+                        dest.path.display()
+                    )
+                })?;
+                let mut buf = vec![0u8; 64 * 1024];
+                let mut remaining = received_u64;
+                while remaining > 0 {
+                    // INVARIANT: buf.len() = 64 KiB; remaining caller-bounded
+                    // (received_bytes <= total_size <= MAX_FILE_BYTES = 1 TiB).
+                    #[allow(clippy::cast_possible_truncation)]
+                    let want = remaining.min(buf.len() as u64) as usize;
+                    let n = file.read(&mut buf[..want]).with_context(|| {
+                        format!(
+                            "resume hasher pre-feed read hata: {} (remaining={})",
+                            dest.path.display(),
+                            remaining
+                        )
+                    })?;
+                    if n == 0 {
+                        return Err(anyhow!(
+                            "resume .part beklenen byte sayısından kısa (path={}, beklenen={}, kalan={})",
+                            dest.path.display(),
+                            received_u64,
+                            remaining
+                        ));
+                    }
+                    hasher.update(&buf[..n]);
+                    remaining = remaining.saturating_sub(n as u64);
+                }
+                file.seek(SeekFrom::Start(received_u64)).with_context(|| {
+                    format!(
+                        "resume seek-to-offset hata: {} (offset={})",
+                        dest.path.display(),
+                        received_u64
+                    )
+                })?;
+            }
             let writer = BufWriter::with_capacity(FILE_WRITE_BUF_CAPACITY, file);
+
+            // PR-G: resume sonrası `next_chunk_index` caller-supplied. Sender
+            // `received_bytes / its_chunk_size`'den türetir; receiver
+            // verify_chunk_tag'da `ci.chunk_index == sink.next_chunk_index`
+            // kontrolü yapacağı için aynı değer kullanılır. Production yolunda
+            // bu `meta.received_bytes / meta.chunk_size` ile eşittir.
+            // `pending_resume` map() ile move edileceği için chunk_index'i
+            // ÖNCE kopyala (i64 trivially copy).
+            let initial_chunk_index: i64 =
+                pending_resume.as_ref().map_or(0, |pr| pr.next_chunk_index);
             // RFC-0004 §3.3: pending_resume varsa state'i FileSink'e taşı.
             // Aksi halde resume_state = None — `.meta` yazılmaz.
-            let resume_state = self.pending_resume.remove(&id).map(|pr| ResumeState {
+            let resume_state = pending_resume.map(|pr| ResumeState {
                 partial_dir: pr.partial_dir,
                 session_id: pr.session_id,
                 file_name: pr.file_name,
                 peer_endpoint_id: pr.peer_endpoint_id,
-                last_chunk_tag_b64: String::new(),
+                last_chunk_tag_b64: pr.last_chunk_tag_b64,
                 chunks_since_checkpoint: 0,
                 created_at: None,
             });
@@ -577,11 +762,11 @@ impl PayloadAssembler {
                 writer,
                 path: dest.path,
                 total_size,
-                written: 0,
-                hasher: Sha256::new(),
+                written: initial_written,
+                hasher,
                 last_chunk_at: Instant::now(),
                 pending_chunk: None,
-                next_chunk_index: 0,
+                next_chunk_index: initial_chunk_index,
                 resume_state,
             });
         }
@@ -939,6 +1124,11 @@ fn write_resume_checkpoint(payload_id: i64, sink: &mut FileSink, is_final: bool)
         peer_endpoint_id: rs.peer_endpoint_id.clone(),
         created_at,
         updated_at: now,
+        // PR-G: dest_path persist edilir → re-handshake'te receiver bu path'i
+        // bulur ve `unique_downloads_path` placeholder yerine mevcut `.part`'ı
+        // yeniden açar. `to_string_lossy()` non-UTF8 path'lerde lossy ama
+        // resume best-effort (lossy → mismatch → fresh transfer; veri kaybı yok).
+        dest_path: sink.path.to_string_lossy().into_owned(),
     };
     if let Err(e) = meta.store_atomic(&rs.partial_dir) {
         debug!(

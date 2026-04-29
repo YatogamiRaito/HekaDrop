@@ -847,6 +847,282 @@ async fn e2e_resume_chunk_hmac_fastpath_tag_persisted_in_meta() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PR-G — Receiver `.part` append/seek davranış testleri
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Test PR-G #1 — Resume `.part`'ı silmemeli, append moduna geçmeli.
+///
+/// 1. Fresh transfer 2 chunk yaz (cancel etmeden sink drop ile `BufWriter` flush).
+/// 2. İkinci `PayloadAssembler` instance — `enable_resume_with_offset` ile
+///    `received_bytes = 2 * chunk_len` set, ek 2 chunk gönder.
+/// 3. Final dosya tam 4 chunk değerinde olmalı; ilk 2 chunk korunmalı,
+///    son 2 chunk eklenmiş olmalı (içerik bit-bit eşit).
+///
+/// Spec gerekçesi: PR #136 / PR #137'de yakalanan bug — `truncate(true)` ile
+/// resume açılışı `.part`'ın ilk N byte'ını sıfırlıyordu. PR-G
+/// `truncate(false)` + `seek` ile düzeltir.
+#[tokio::test]
+async fn e2e_pr_g_receiver_append_preserves_existing_part() {
+    let _home = TempHome::new();
+
+    let auth_key = [0xA1u8; 32];
+    let session_id = session_id_i64(&auth_key);
+    let payload_id: i64 = 0xABCD_0010;
+    let peer_endpoint = "PEER-G1".to_string();
+    let file_name = "g1.bin".to_string();
+
+    // Fresh chunk (0xCC) ve resume chunk (0xDD) — birbirinden ayırt edilebilir.
+    let fresh_chunk = vec![0xCCu8; 64];
+    let resume_chunk = vec![0xDDu8; 64];
+    let total_chunks: i64 = 4;
+    let chunk_len = fresh_chunk.len() as i64;
+    let total_size = chunk_len * total_chunks;
+
+    let dest = std::env::temp_dir().join(unique_label("g1-dest"));
+    let _ = std::fs::remove_file(&dest);
+    // Placeholder yarat — `unique_downloads_path` davranışını taklit
+    // (PR-G `truncate(false)` resume açılışı `.part` mevcut bekler).
+    std::fs::write(&dest, b"").unwrap();
+
+    let key = derive_chunk_hmac_key(&[0x01u8; 32]);
+
+    // Session 1 — 2 chunk fresh yaz.
+    {
+        let mut asm = PayloadAssembler::new();
+        asm.set_chunk_hmac_key(key);
+        asm.register_file_destination(payload_id, dest.clone())
+            .unwrap();
+        asm.enable_resume(
+            payload_id,
+            session_id,
+            peer_endpoint.clone(),
+            file_name.clone(),
+        )
+        .unwrap();
+        let mut offset: i64 = 0;
+        for i in 0..2_i64 {
+            let f = make_chunk_frame(payload_id, &fresh_chunk, false, total_size, offset);
+            asm.ingest(&f).await.unwrap();
+            let tag = compute_tag(&key, payload_id, i, offset, &fresh_chunk).unwrap();
+            let ci = build_chunk_integrity(payload_id, i, offset, fresh_chunk.len(), tag).unwrap();
+            asm.verify_chunk_tag(&ci).await.unwrap();
+            offset += chunk_len;
+        }
+        drop(asm); // BufWriter::drop → flush
+    }
+
+    // Session 1 sonrası dosya boyutu tam 2 chunk; içerik 0xCC.
+    let mid_bytes = std::fs::read(&dest).unwrap();
+    assert_eq!(
+        mid_bytes.len() as i64,
+        2 * chunk_len,
+        "session 1 sonrası 2 chunk yazılmış olmalı"
+    );
+    assert!(
+        mid_bytes.iter().all(|&b| b == 0xCC),
+        "fresh chunk içerikleri 0xCC olmalı"
+    );
+
+    // Session 2 — RESUME path. enable_resume_with_offset(received_bytes=2*chunk).
+    {
+        let mut asm = PayloadAssembler::new();
+        asm.set_chunk_hmac_key(key);
+        asm.register_file_destination(payload_id, dest.clone())
+            .unwrap();
+        asm.enable_resume_with_offset(
+            payload_id,
+            session_id,
+            peer_endpoint.clone(),
+            file_name.clone(),
+            2 * chunk_len,
+            2, // next_chunk_index — 2 chunk verified, sender chunk_index=2'den devam
+            String::new(),
+        )
+        .unwrap();
+        // Sender resume sonrası chunk_index = 2'den devam eder; ilk gelen
+        // chunk offset = 2 * chunk_len.
+        let mut offset: i64 = 2 * chunk_len;
+        for i in 2_i64..4_i64 {
+            let last = i == 3;
+            let f = make_chunk_frame(payload_id, &resume_chunk, last, total_size, offset);
+            asm.ingest(&f).await.unwrap();
+            let tag = compute_tag(&key, payload_id, i, offset, &resume_chunk).unwrap();
+            let ci = build_chunk_integrity(payload_id, i, offset, resume_chunk.len(), tag).unwrap();
+            asm.verify_chunk_tag(&ci).await.unwrap();
+            offset += chunk_len;
+        }
+    }
+
+    // Final dosya 4 chunk; ilk 2 chunk = 0xCC (korunmuş), son 2 chunk = 0xDD.
+    let final_bytes = std::fs::read(&dest).unwrap();
+    assert_eq!(
+        final_bytes.len() as i64,
+        total_size,
+        "PR-G: resume sonrası dosya total_size'a ulaşmalı"
+    );
+    let half = (2 * chunk_len) as usize;
+    assert!(
+        final_bytes[..half].iter().all(|&b| b == 0xCC),
+        "ilk yarı korunmalı (0xCC) — truncate(false) çalıştı"
+    );
+    assert!(
+        final_bytes[half..].iter().all(|&b| b == 0xDD),
+        "ikinci yarı yeni eklenen 0xDD olmalı"
+    );
+
+    let _ = std::fs::remove_file(&dest);
+}
+
+/// Test PR-G #2 — `seek_to_received_bytes` doğru offset'e yazıyor.
+///
+/// `pending_resume.received_bytes = chunk_len` ile resume aktif edilir; ilk
+/// chunk gelir; `.part`'ın `chunk_len..2*chunk_len` aralığında yazılmış
+/// olmalı (üzerine değil — `[0..chunk_len]` korunur).
+#[tokio::test]
+async fn e2e_pr_g_receiver_seek_to_received_bytes() {
+    let _home = TempHome::new();
+
+    let auth_key = [0xA2u8; 32];
+    let session_id = session_id_i64(&auth_key);
+    let payload_id: i64 = 0xABCD_0011;
+
+    let prefix = vec![0x11u8; 64]; // diskte mevcut, korunmalı
+    let new_chunk = vec![0x22u8; 64]; // resume sonrası eklenecek
+    let chunk_len = prefix.len() as i64;
+    let total_size = chunk_len * 2;
+
+    let dest = std::env::temp_dir().join(unique_label("g2-dest"));
+    let _ = std::fs::remove_file(&dest);
+    // Önceki session'ın yarım dosyasını manuel yarat: prefix bytes diskte.
+    std::fs::write(&dest, &prefix).unwrap();
+
+    let key = derive_chunk_hmac_key(&[0x02u8; 32]);
+    {
+        let mut asm = PayloadAssembler::new();
+        asm.set_chunk_hmac_key(key);
+        asm.register_file_destination(payload_id, dest.clone())
+            .unwrap();
+        asm.enable_resume_with_offset(
+            payload_id,
+            session_id,
+            "PEER-G2".to_string(),
+            "g2.bin".to_string(),
+            chunk_len, // received_bytes = 1 chunk
+            1,         // next_chunk_index = 1
+            String::new(),
+        )
+        .unwrap();
+        // Sender chunk_index = 1, offset = chunk_len.
+        let f = make_chunk_frame(payload_id, &new_chunk, true, total_size, chunk_len);
+        asm.ingest(&f).await.unwrap();
+        let tag = compute_tag(&key, payload_id, 1, chunk_len, &new_chunk).unwrap();
+        let ci = build_chunk_integrity(payload_id, 1, chunk_len, new_chunk.len(), tag).unwrap();
+        let completed = asm.verify_chunk_tag(&ci).await.unwrap();
+        assert!(completed.is_some(), "last_chunk verify finalize etmeli");
+    }
+
+    let final_bytes = std::fs::read(&dest).unwrap();
+    assert_eq!(
+        final_bytes.len() as i64,
+        total_size,
+        "dosya tam total_size olmalı"
+    );
+    assert_eq!(
+        &final_bytes[..(chunk_len as usize)],
+        &prefix[..],
+        "prefix korunmalı (seek doğru offset'e gitti, baştan yazmadı)"
+    );
+    assert_eq!(
+        &final_bytes[(chunk_len as usize)..],
+        &new_chunk[..],
+        "yeni chunk doğru offset'e yazıldı"
+    );
+
+    let _ = std::fs::remove_file(&dest);
+}
+
+/// Test PR-G #3 — Resume sonrası final SHA-256 orijinal full-content hash
+/// ile bit-bit eşleşmeli (hasher chain pre-feed doğrulaması).
+///
+/// Receiver `truncate(false) + seek` öncesi `.part`'ın ilk `received_bytes`
+/// byte'ını hasher'a feed eder; bu yapılmazsa final SHA-256 yalnız resume
+/// sonrası gelen byte'ları hash'lerdi → orijinalle uyuşmazdı (sender-side
+/// `CompletedPayload::File.sha256` mismatch alarmı).
+#[tokio::test]
+async fn e2e_pr_g_resume_full_sha256_matches_original() {
+    let _home = TempHome::new();
+
+    let auth_key = [0xA3u8; 32];
+    let session_id = session_id_i64(&auth_key);
+    let payload_id: i64 = 0xABCD_0012;
+
+    // Birbirinden farklı pattern'ler: orijinal "ilk-yarı" + "ikinci-yarı".
+    let first_half = vec![0x55u8; 64];
+    let second_half = vec![0xAAu8; 64];
+    let chunk_len = first_half.len() as i64;
+    let total_size = chunk_len * 2;
+
+    // Beklenen orijinal full content + hash.
+    let mut full = Vec::with_capacity(total_size as usize);
+    full.extend_from_slice(&first_half);
+    full.extend_from_slice(&second_half);
+    let expected_sha = sha256_hex(&full);
+
+    let dest = std::env::temp_dir().join(unique_label("g3-dest"));
+    let _ = std::fs::remove_file(&dest);
+    // Önceki session'ın yazmış olacağı içeriği taklit — first_half diskte.
+    std::fs::write(&dest, &first_half).unwrap();
+
+    let key = derive_chunk_hmac_key(&[0x03u8; 32]);
+    let completed_sha;
+    {
+        let mut asm = PayloadAssembler::new();
+        asm.set_chunk_hmac_key(key);
+        asm.register_file_destination(payload_id, dest.clone())
+            .unwrap();
+        asm.enable_resume_with_offset(
+            payload_id,
+            session_id,
+            "PEER-G3".to_string(),
+            "g3.bin".to_string(),
+            chunk_len,
+            1, // next_chunk_index = 1
+            String::new(),
+        )
+        .unwrap();
+
+        let f = make_chunk_frame(payload_id, &second_half, true, total_size, chunk_len);
+        asm.ingest(&f).await.unwrap();
+        let tag = compute_tag(&key, payload_id, 1, chunk_len, &second_half).unwrap();
+        let ci = build_chunk_integrity(payload_id, 1, chunk_len, second_half.len(), tag).unwrap();
+        let completed = asm
+            .verify_chunk_tag(&ci)
+            .await
+            .unwrap()
+            .expect("last chunk verify finalize");
+        match completed {
+            hekadrop::payload::CompletedPayload::File { sha256, .. } => {
+                completed_sha = hex::encode(sha256);
+            }
+            _ => panic!("File completion bekleniyor"),
+        }
+    }
+
+    // 1. Disk içeriği doğru: first_half + second_half.
+    let final_bytes = std::fs::read(&dest).unwrap();
+    assert_eq!(final_bytes, full, "final dosya orijinal content ile aynı");
+
+    // 2. PayloadAssembler'ın hesapladığı sha256 = orijinal full hash.
+    //    Hasher pre-feed olmazsa bu yalnız second_half'in hash'i olurdu.
+    assert_eq!(
+        completed_sha, expected_sha,
+        "PR-G hasher pre-feed: streaming SHA-256 orijinal full-content hash ile eşleşmeli"
+    );
+
+    let _ = std::fs::remove_file(&dest);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Yardımcı: log_redact import'u kullanılmadığı uyarısını engelle (yer tutucu).
 // ─────────────────────────────────────────────────────────────────────────────
 

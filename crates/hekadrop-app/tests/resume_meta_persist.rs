@@ -419,6 +419,7 @@ async fn validate_resumability_invariants_total_size_and_ttl() {
         peer_endpoint_id: "peerY".to_string(),
         created_at: stale,
         updated_at: stale,
+        dest_path: String::new(),
     };
     meta.store_atomic(&dir).expect("store ok");
 
