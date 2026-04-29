@@ -105,6 +105,8 @@ windows = { version = "0.61", features = [
 [dev-dependencies]
 # payload.rs unit tests use `#[tokio::test]`.
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+# RFC-0004 PR-D sender ResumeHint consume tests — temp file fixture.
+tempfile = "3"
 
 [lints]
 workspace = true

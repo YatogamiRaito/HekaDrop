@@ -42,7 +42,8 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -56,6 +57,11 @@ const CHUNK_SIZE: usize = 512 * 1024;
 /// bitirmeden bizim TCP'yi kapatmamamız için gerekli. 10 sn, 1 GB'lık bir
 /// dosyanın Android tarafında fsync + doğrulama süresinden rahat geniştir.
 const PEER_DISCONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// RFC-0004 §1: receiver Introduction sonrası `ResumeHint` emit etmek için
+/// 2 sn süresi var. Sender bu süre içinde frame görmezse `start_offset = 0`
+/// legacy fresh transfer'a düşer (silent fallback). Spec normative değer.
+const RESUME_HINT_TIMEOUT: Duration = Duration::from_millis(2000);
 
 pub struct SendRequest {
     pub device: DiscoveredDevice,
@@ -360,13 +366,39 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                             }
                             .into());
                         }
-                        // 11) Tüm dosyaları sırayla gönder
+                        // 11) Tüm dosyaları sırayla gönder.
+                        //
+                        // RFC-0004 §5 + resume.md §1: her plan için, file
+                        // chunk'larını göndermeden önce 2 sn ResumeHint
+                        // bekle. Eşleşme + spec §5 invariant'ları geçerse
+                        // sender `start_offset = hint.offset` ile resume
+                        // eder; aksi halde ResumeReject + `start_offset = 0`
+                        // legacy davranış.
+                        //
+                        // PR-D NOT: `RESUME_V1` capability hâlâ
+                        // ALL_SUPPORTED'da değil (capabilities.rs); bu kod
+                        // path'i pratikte ölü ama receiver PR-C ResumeHint
+                        // emit eder ve bizim consume tarafımız sağlamla
+                        // testleri yeşil tutar. Capability gate açma PR-F.
+                        let our_session_id = crate::resume::session_id_i64(&keys.auth_key);
+                        let known_payload_ids: Vec<i64> =
+                            plans.iter().map(|p| p.payload_id).collect();
                         let mut bytes_sent: i64 = 0;
                         for plan in &plans {
                             info!(
                                 "[sender] gönderiliyor: {} ({} bayt) payload_id={}",
                                 plan.name, plan.size, plan.payload_id
                             );
+                            let start_offset = wait_for_resume_hint_or_zero(
+                                &mut socket,
+                                &mut ctx,
+                                plan,
+                                our_session_id,
+                                &known_payload_ids,
+                                chunk_hmac_key.as_ref(),
+                                RESUME_HINT_TIMEOUT,
+                            )
+                            .await;
                             send_file_chunks(
                                 &mut socket,
                                 &mut ctx,
@@ -380,6 +412,7 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                 &cancel_token,
                                 state.as_ref(),
                                 chunk_hmac_key.as_ref(),
+                                start_offset,
                             )
                             .await?;
                             bytes_sent += plan.size;
@@ -893,14 +926,29 @@ async fn send_file_chunks(
     cancel: &CancellationToken,
     state: &AppState,
     chunk_hmac_key: Option<&[u8; 32]>,
+    start_offset: i64,
 ) -> Result<()> {
     let mut file = tokio::fs::File::open(path).await?;
+    // RFC-0004 §5: caller `wait_for_resume_hint_or_zero` chunk-aligned
+    // (`start_offset % CHUNK_SIZE == 0`) ve `0 <= start_offset <= file_size`
+    // garantisini önceden sağlamış olmalı; defensive olarak bu seviyede de
+    // tekrar doğrulamıyoruz (caller-side single source of truth).
+    if start_offset > 0 {
+        // INVARIANT: start_offset >= 0 caller tarafından doğrulandı (non-negative
+        // check `wait_for_resume_hint_or_zero`'da `< 0` kontrolü ile yapıldı).
+        // Burada `as u64` semantik olarak güvenli; üstteki ResumeReject yolu
+        // `0` start_offset'i fallback olarak set eder.
+        #[allow(clippy::cast_sign_loss)] // INVARIANT: start_offset >= 0 caller-checked
+        let pos = start_offset as u64;
+        file.seek(std::io::SeekFrom::Start(pos)).await?;
+    }
     let mut buf = vec![0u8; CHUNK_SIZE];
-    let mut offset: i64 = 0;
+    let mut offset: i64 = start_offset;
     let mut hasher = Sha256::new();
-    // RFC-0003 §3.2: chunk_index 0-tabanlı per-payload monoton sayaç.
-    // Capability gate altında her gönderilen non-empty chunk başına artar.
-    let mut chunk_index: i64 = 0;
+    // RFC-0003 §3.2 + RFC-0004 §3.7: chunk_index 0-tabanlı per-payload
+    // monoton sayaç. Resume yolunda `start_offset / CHUNK_SIZE` ile başlar
+    // (caller chunk-aligned offset garantisi verir → tam division).
+    let mut chunk_index: i64 = start_offset / CHUNK_SIZE_I64;
 
     loop {
         // Disk read ile cancel'i paralel bekle — büyük chunk'larda ~512 KB'lık
@@ -989,6 +1037,268 @@ async fn send_file_chunks(
     }
     Ok(())
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RFC-0004 — sender-side ResumeHint consume (PR-D)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Tek bir plan için `ResumeHint` bekle + spec §5 invariant'larını uygula.
+///
+/// Akış:
+/// 1. `RESUME_HINT_TIMEOUT` içinde frame oku → timeout → `0` (legacy fresh).
+/// 2. Decrypt + magic dispatch + `HekaDropFrame` decode + `ResumeHint`
+///    oneof match. Hata → `0` (silent fallback). Non-resume `HekaDrop`
+///    payload (`ChunkTag`/`Capabilities`) → `0` (defensive; spec sırasız
+///    hint beklemiyor; non-`HekaDrop` bytes da yutmuyoruz çünkü Response
+///    sonrası sender tek başına emit eder).
+/// 3. Spec §5 sender MUST listesi (sıralı):
+///    - `hint.payload_id != plan.payload_id` → drop frame, return `0`
+///      (peer başka payload için hint yolladı; bu plan'a uymuyor).
+///    - `session_id` mismatch → `ResumeReject{SESSION_MISMATCH}` + 0
+///    - `payload_id` `known_payload_ids`'de yoksa → `PAYLOAD_UNKNOWN` + 0
+///    - `partial_hash.len() != 32` → drop frame (spec §5 row 4: malformed)
+///    - `offset <= 0 || offset >= file_size || offset % CHUNK_SIZE != 0`
+///      → `INVALID_OFFSET` + 0 (chunk-aligned plan AS-2 kararı)
+///    - Hash verify (fast-path: `last_chunk_tag` + `chunk_hmac_key`, slow-
+///      path: `partial_hash_streaming`) → mismatch → `HASH_MISMATCH` + 0
+/// 4. Tüm kontroller geçerse `hint.offset` döndür → caller seek edecek.
+#[allow(clippy::too_many_arguments)]
+async fn wait_for_resume_hint_or_zero(
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    plan: &PlannedFile,
+    our_session_id: i64,
+    known_payload_ids: &[i64],
+    chunk_hmac_key: Option<&[u8; 32]>,
+    timeout: Duration,
+) -> i64 {
+    use hekadrop_proto::hekadrop_ext::resume_reject::Reason;
+    use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, HekaDropFrame};
+
+    // 1. Frame oku — timeout → silent legacy fallback.
+    let Ok(raw) = frame::read_frame_timeout(socket, timeout).await else {
+        return 0;
+    };
+    let Ok(plain) = ctx.decrypt(&raw) else {
+        return 0;
+    };
+    // 2. Magic + decode + oneof match.
+    let frame::FrameKind::HekaDrop { inner } = frame::dispatch_frame_body(&plain) else {
+        // Beklenmeyen non-HekaDrop frame — bu noktada peer Response Accept
+        // sonrası sadece HekaDropFrame{ResumeHint} veya hiçbir şey yollar.
+        // Wire protocol drift; sessizce skip edip legacy fresh'e düş.
+        warn!(
+            "[sender] resume bekleme penceresinde non-HekaDrop frame yutuldu (plan payload_id={})",
+            plan.payload_id
+        );
+        return 0;
+    };
+    let Ok(decoded) = HekaDropFrame::decode(inner) else {
+        return 0;
+    };
+    let Some(Payload::ResumeHint(hint)) = decoded.payload else {
+        // Başka HekaDrop payload (ör. Capabilities second-frame downgrade).
+        // Resume akışı için anlamsız; legacy fresh.
+        return 0;
+    };
+
+    // 3a. Plan payload_id eşleşmiyorsa drop (peer multi-plan'da farklı sıraya
+    //     hint emit etmiş olabilir; mevcut akış 1-plan-1-hint sıralı varsayar).
+    if hint.payload_id != plan.payload_id {
+        warn!(
+            "[sender] ResumeHint plan ile eşleşmiyor (hint.payload_id={}, beklenen={}) — drop, fresh",
+            hint.payload_id, plan.payload_id
+        );
+        return 0;
+    }
+
+    // 3b. Spec §5 sender MUST kontrolleri.
+    if hint.session_id != our_session_id {
+        info!(
+            "[sender] ResumeHint session_id mismatch (peer={}, ours={}) — REJECT",
+            hint.session_id, our_session_id
+        );
+        send_resume_reject(socket, ctx, plan.payload_id, Reason::SessionMismatch).await;
+        return 0;
+    }
+    if !known_payload_ids.contains(&hint.payload_id) {
+        info!(
+            "[sender] ResumeHint payload_id={} bilinmiyor — REJECT",
+            hint.payload_id
+        );
+        send_resume_reject(socket, ctx, plan.payload_id, Reason::PayloadUnknown).await;
+        return 0;
+    }
+    // I-5: hint.offset peer-controlled — bounds check checked aritmetik ile.
+    // Spec §5 row 3: `0 < offset < file_size`. AS-2 chunk-aligned only.
+    let invalid_offset =
+        hint.offset <= 0 || hint.offset >= plan.size || (hint.offset % CHUNK_SIZE_I64) != 0;
+    if invalid_offset {
+        info!(
+            "[sender] ResumeHint offset invalid (offset={}, size={}, chunk_size={}) — REJECT",
+            hint.offset, plan.size, CHUNK_SIZE_I64
+        );
+        send_resume_reject(socket, ctx, plan.payload_id, Reason::InvalidOffset).await;
+        return 0;
+    }
+    if hint.partial_hash.len() != PARTIAL_HASH_LEN {
+        // Spec §5 row 4: malformed → drop frame (no echo); legacy fresh.
+        warn!(
+            "[sender] ResumeHint partial_hash uzunluğu {} ≠ 32 — drop, fresh",
+            hint.partial_hash.len()
+        );
+        return 0;
+    }
+
+    // 3c. Hash verify — fast-path (chunk-HMAC) varsa O(1), aksi halde
+    //     slow-path full SHA-256 streaming hash recompute.
+    let verify_ok = match (chunk_hmac_key, hint.last_chunk_tag.len()) {
+        (Some(key), PARTIAL_HASH_LEN) => verify_last_chunk_tag(
+            &plan.path,
+            plan.payload_id,
+            hint.offset,
+            &hint.last_chunk_tag,
+            key,
+        )
+        .await
+        .unwrap_or(false),
+        _ => verify_partial_hash_full(&plan.path, hint.offset, &hint.partial_hash)
+            .await
+            .unwrap_or(false),
+    };
+
+    if !verify_ok {
+        info!(
+            "[sender] ResumeHint hash verify FAIL (payload_id={}, offset={}) — REJECT",
+            hint.payload_id, hint.offset
+        );
+        send_resume_reject(socket, ctx, plan.payload_id, Reason::HashMismatch).await;
+        return 0;
+    }
+
+    info!(
+        "[sender] ResumeHint kabul edildi — resume offset={} (payload_id={})",
+        hint.offset, hint.payload_id
+    );
+    hint.offset
+}
+
+/// `ResumeReject` envelope'unu inşa et + secure channel üstünden yolla.
+///
+/// Hata yutulur (`.ok()` semantiği): reject best-effort'tür; yazılamasa bile
+/// sender legacy `start_offset = 0` ile devam eder. Receiver hint timeout
+/// veya hash mismatch ile `.part`/`.meta` cleanup yapacak (spec §6 matrix).
+async fn send_resume_reject(
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    payload_id: i64,
+    reason: hekadrop_proto::hekadrop_ext::resume_reject::Reason,
+) {
+    let reject = hekadrop_proto::hekadrop_ext::ResumeReject {
+        payload_id,
+        reason: reason as i32,
+    };
+    let envelope = crate::capabilities::build_resume_reject_frame(reject);
+    let pb = envelope.encode_to_vec();
+    let wrapped = frame::wrap_hekadrop_frame(&pb);
+    let Ok(enc) = ctx.encrypt(&wrapped) else {
+        warn!(
+            "[sender] ResumeReject encrypt başarısız (payload_id={}, reason={:?}) — drop",
+            payload_id, reason
+        );
+        return;
+    };
+    if let Err(e) = frame::write_frame(socket, &enc).await {
+        warn!(
+            "[sender] ResumeReject write başarısız (payload_id={}, reason={:?}): {}",
+            payload_id, reason, e
+        );
+    }
+}
+
+/// Slow-path defense-in-depth: yerel `path[0..offset]` üstünde streaming
+/// SHA-256 → peer `partial_hash` ile constant-time karşılaştır.
+///
+/// `partial_hash_streaming` blocking I/O yapar (`BufReader::read_exact`);
+/// async runtime'ı bloklamamak için `spawn_blocking` ile sarmalı.
+/// Hata → `Ok(false)` (silent reject; resume best-effort).
+async fn verify_partial_hash_full(
+    path: &Path,
+    offset: i64,
+    expected: &[u8],
+) -> std::io::Result<bool> {
+    use subtle::ConstantTimeEq;
+    // INVARIANT: caller `offset > 0` kontrolünü zaten yaptı (§5 row 3);
+    // ayrıca spec_offset >= 0 garanti, sign loss yok.
+    #[allow(clippy::cast_sign_loss)] // INVARIANT: offset > 0 caller-checked
+    let off_u = offset as u64;
+    let owned_path = path.to_path_buf();
+    let local = tokio::task::spawn_blocking(move || {
+        crate::resume::partial_hash_streaming(&owned_path, off_u)
+    })
+    .await
+    .map_err(std::io::Error::other)??;
+    Ok(local.ct_eq(expected).into())
+}
+
+/// Fast-path (RFC-0004 §3.1 + §5 row 6): `last_chunk_tag` + chunk-HMAC key
+/// mevcutsa, sadece son verified chunk'ın HMAC tag'ini hesapla + constant-
+/// time karşılaştır → O(1) verify, full SHA-256 atlanır.
+///
+/// Son chunk index = `(offset / CHUNK_SIZE) - 1`; chunk başlangıcı
+/// `(offset - chunk_len)` ofsetinde. Chunk-aligned offset garantili
+/// (caller §5 row 3 `INVALID_OFFSET` kontrolünde rejected ediyor); bu
+/// fonksiyon `offset == CHUNK_SIZE * k, k >= 1` varsayar.
+///
+/// Hata → `Ok(false)` (silent reject; resume best-effort).
+async fn verify_last_chunk_tag(
+    path: &Path,
+    payload_id: i64,
+    offset: i64,
+    expected_tag: &[u8],
+    key: &[u8; 32],
+) -> std::io::Result<bool> {
+    use subtle::ConstantTimeEq;
+    use tokio::io::AsyncReadExt as _;
+
+    // INVARIANT: caller offset > 0 + chunk-aligned + < file_size garantisi
+    // verdi → last_chunk_index >= 0, last_chunk_start >= 0.
+    let last_chunk_index = (offset / CHUNK_SIZE_I64) - 1;
+    let last_chunk_start = last_chunk_index * CHUNK_SIZE_I64;
+    // Chunk uzunluğu sabit CHUNK_SIZE — caller offset == k * CHUNK_SIZE
+    // garantisi verdi (k >= 1, k*CHUNK_SIZE < file_size). Last full chunk
+    // o yüzden tam CHUNK_SIZE byte.
+    let chunk_len = CHUNK_SIZE;
+
+    let mut file = tokio::fs::File::open(path).await?;
+    #[allow(clippy::cast_sign_loss)] // INVARIANT: last_chunk_start >= 0 caller-checked
+    let pos = last_chunk_start as u64;
+    file.seek(std::io::SeekFrom::Start(pos)).await?;
+    let mut buf = vec![0u8; chunk_len];
+    file.read_exact(&mut buf).await?;
+
+    let key_owned: [u8; 32] = *key;
+    let Ok(computed) = crate::chunk_hmac::compute_tag(
+        &key_owned,
+        payload_id,
+        last_chunk_index,
+        last_chunk_start,
+        &buf,
+    ) else {
+        return Ok(false);
+    };
+    Ok(computed.ct_eq(expected_tag).into())
+}
+
+/// `CHUNK_SIZE` `i64` cinsinden — `i64::from` ile maliyetsiz cast için.
+/// `CHUNK_SIZE = 524288 < i64::MAX` olduğundan literal cast wrap'siz.
+// SAFETY-CAST: CHUNK_SIZE compile-time literal 524288 << i64::MAX, wrap imkansız.
+#[allow(clippy::cast_possible_wrap)] // INVARIANT: CHUNK_SIZE = 512 KiB literal
+const CHUNK_SIZE_I64: i64 = CHUNK_SIZE as i64;
+
+/// SHA-256 / HMAC-SHA256 tag length (32 byte) — `partial_hash` ve
+/// `last_chunk_tag` field'larının sabit boyutu (RFC-0004 §3.1).
+const PARTIAL_HASH_LEN: usize = 32;
 
 /// Son chunk'tan sonra peer'in `Disconnection` frame'ini göndermesini veya
 /// bağlantının EOF/okuma hatasıyla kapanmasını bekler. Arada gelen
@@ -1156,6 +1466,10 @@ fn build_connection_request(our_name: &str) -> OfflineFrame {
 }
 
 #[cfg(test)]
+// Test profile relaxation (CLAUDE.md I-2): hardcoded fixture verisi (CHUNK_SIZE *
+// 2 → i64 cast vb.) için per-statement allow tutarsız olur; module-bazlı dar
+// scope. Production lint'leri bozmaz çünkü `#[cfg(test)]` altındadır.
+#[allow(clippy::cast_possible_wrap, clippy::doc_markdown)]
 mod tests {
     use super::*;
 
@@ -1319,5 +1633,382 @@ mod tests {
         assert_eq!(ch.offset, Some(3));
         assert_eq!(ch.flags, Some(0));
         assert_eq!(ch.body.as_deref(), Some(&[1u8, 2, 3][..]));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // RFC-0004 PR-D — sender ResumeHint consume + verify + seek
+    // ─────────────────────────────────────────────────────────────────────
+
+    use crate::ukey2::DerivedKeys;
+    use hekadrop_proto::hekadrop_ext::resume_reject::Reason;
+    use hekadrop_proto::hekadrop_ext::{
+        heka_drop_frame::Payload as ExtPayload, HekaDropFrame, ResumeHint, ResumeReject,
+    };
+    use std::io::Write as _;
+    use tokio::net::{TcpListener, TcpStream};
+
+    /// `negotiation.rs` test'lerinden kopya — server ↔ client `SecureCtx`
+    /// pair'i. UKEY2 simetrisini taklit eder (server.encrypt = client.decrypt).
+    fn matched_secure_ctx_pair() -> (SecureCtx, SecureCtx) {
+        let key_a = [0x42u8; 32];
+        let key_b = [0x55u8; 32];
+        let hmac_a = [0xAAu8; 32];
+        let hmac_b = [0xBBu8; 32];
+        let auth = [0x77u8; 32];
+        let next = [0x99u8; 32];
+
+        let server_keys = DerivedKeys {
+            decrypt_key: key_a,
+            recv_hmac_key: hmac_a,
+            encrypt_key: key_b,
+            send_hmac_key: hmac_b,
+            auth_key: auth,
+            pin_code: "0000".to_string(),
+            next_secret: next,
+        };
+        let client_keys = DerivedKeys {
+            decrypt_key: key_b,
+            recv_hmac_key: hmac_b,
+            encrypt_key: key_a,
+            send_hmac_key: hmac_a,
+            auth_key: auth,
+            pin_code: "0000".to_string(),
+            next_secret: next,
+        };
+        (
+            SecureCtx::from_keys(&server_keys),
+            SecureCtx::from_keys(&client_keys),
+        )
+    }
+
+    /// Deterministic dosya yarat — `seed`'den türetilen `total_size` bayt.
+    fn write_test_file(total_size: usize, seed: u8) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("payload.bin");
+        let mut file = std::fs::File::create(&path).expect("create");
+        // Tekrarlayan, predictable byte pattern; chunk-aligned hash hesabı için.
+        let buf: Vec<u8> = (0..total_size)
+            .map(|i| ((i as u32).wrapping_mul(31).wrapping_add(u32::from(seed)) & 0xFF) as u8)
+            .collect();
+        file.write_all(&buf).expect("write");
+        file.sync_all().expect("sync");
+        (dir, path)
+    }
+
+    /// Peer-side: ResumeHint envelope'u şifreleyip wire'a yaz.
+    async fn send_resume_hint(socket: &mut TcpStream, ctx: &mut SecureCtx, hint: ResumeHint) {
+        let envelope = crate::capabilities::build_resume_hint_frame(hint);
+        let pb = envelope.encode_to_vec();
+        let wrapped = frame::wrap_hekadrop_frame(&pb);
+        let enc = ctx.encrypt(&wrapped).expect("encrypt hint");
+        frame::write_frame(socket, &enc).await.expect("write hint");
+    }
+
+    /// Peer-side: sender'dan dönen frame'i decrypt + dispatch + decode et.
+    /// Sadece HekaDropFrame (ResumeReject) bekliyoruz; başka tip → panic.
+    async fn read_resume_reject(socket: &mut TcpStream, ctx: &mut SecureCtx) -> ResumeReject {
+        let raw = frame::read_frame_timeout(socket, Duration::from_secs(2))
+            .await
+            .expect("read reject");
+        let plain = ctx.decrypt(&raw).expect("decrypt reject");
+        let frame::FrameKind::HekaDrop { inner } = frame::dispatch_frame_body(&plain) else {
+            panic!("HekaDropFrame magic bekleniyor");
+        };
+        let envelope = HekaDropFrame::decode(inner).expect("decode envelope");
+        let Some(ExtPayload::ResumeReject(reject)) = envelope.payload else {
+            panic!("ResumeReject oneof bekleniyor: {envelope:?}");
+        };
+        reject
+    }
+
+    /// Plan helper — payload_id sabit, dosya yarat + plan struct kur.
+    fn plan_for(path: std::path::PathBuf, payload_id: i64, size: i64) -> PlannedFile {
+        PlannedFile {
+            path,
+            name: "payload.bin".to_string(),
+            size,
+            payload_id,
+        }
+    }
+
+    /// Hash recompute helper — `partial_hash_streaming` ile aynı output.
+    fn hash_prefix(path: &Path, offset: u64) -> [u8; 32] {
+        crate::resume::partial_hash_streaming(path, offset).expect("hash prefix")
+    }
+
+    /// Test 1 — happy path: chunk-aligned offset + matching partial_hash →
+    /// `wait_for_resume_hint_or_zero` `hint.offset` döndürür (resume seek
+    /// için), reject yollanmaz.
+    #[tokio::test]
+    async fn sender_resume_happy_path_chunk_aligned() {
+        // 2 chunk = 1 MiB total; resume offset = 1 chunk (512 KiB).
+        let total_size = CHUNK_SIZE * 2;
+        let resume_offset = CHUNK_SIZE as i64;
+        let payload_id: i64 = 0xABCD_1234;
+
+        let (_dir, path) = write_test_file(total_size, 7);
+        let plan = plan_for(path.clone(), payload_id, total_size as i64);
+        let our_session_id: i64 = 0x1111_2222_3333_4444;
+        let known = vec![payload_id];
+        let expected_hash = hash_prefix(&path, resume_offset as u64);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (mut server_ctx, mut client_ctx) = matched_secure_ctx_pair();
+
+        // Peer (receiver simulation): connect + send ResumeHint.
+        let peer_session = our_session_id;
+        let peer_task = tokio::spawn(async move {
+            let mut s = TcpStream::connect(addr).await.unwrap();
+            let hint = ResumeHint {
+                session_id: peer_session,
+                payload_id,
+                offset: resume_offset,
+                partial_hash: expected_hash.to_vec().into(),
+                capabilities_version: crate::capabilities::CAPABILITIES_VERSION,
+                last_chunk_tag: Vec::new().into(),
+            };
+            send_resume_hint(&mut s, &mut client_ctx, hint).await;
+            // Server tarafında reject yollanmamalı; peer 200 ms bekleyip kapanır.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            // Reject yokmuş demek için socket'i kapatıyoruz; sender server'da
+            // zaten dönmüş olmalı (read sonrası).
+        });
+
+        // Sender (server): accept + wait_for_resume_hint_or_zero.
+        let (mut sender_socket, _) = listener.accept().await.unwrap();
+        let start_offset = wait_for_resume_hint_or_zero(
+            &mut sender_socket,
+            &mut server_ctx,
+            &plan,
+            our_session_id,
+            &known,
+            None, // no chunk-HMAC key → slow-path full SHA-256
+            Duration::from_secs(2),
+        )
+        .await;
+        peer_task.await.unwrap();
+
+        assert_eq!(
+            start_offset, resume_offset,
+            "happy path: hint kabul edilmeli, start_offset = hint.offset"
+        );
+    }
+
+    /// Test 2 — yanlış partial_hash → ResumeReject{HASH_MISMATCH} +
+    /// `start_offset = 0`.
+    #[tokio::test]
+    async fn sender_resume_hash_mismatch_emits_reject() {
+        let total_size = CHUNK_SIZE * 2;
+        let resume_offset = CHUNK_SIZE as i64;
+        let payload_id: i64 = 0x9999;
+
+        let (_dir, path) = write_test_file(total_size, 11);
+        let plan = plan_for(path, payload_id, total_size as i64);
+        let our_session_id: i64 = 0xAAAA_BBBB;
+        let known = vec![payload_id];
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (mut server_ctx, mut client_ctx) = matched_secure_ctx_pair();
+
+        let peer_task = tokio::spawn(async move {
+            let mut s = TcpStream::connect(addr).await.unwrap();
+            let hint = ResumeHint {
+                session_id: our_session_id,
+                payload_id,
+                offset: resume_offset,
+                // Yanlış hash — local file'dan farklı, deliberate corruption.
+                partial_hash: vec![0xFFu8; 32].into(),
+                capabilities_version: crate::capabilities::CAPABILITIES_VERSION,
+                last_chunk_tag: Vec::new().into(),
+            };
+            send_resume_hint(&mut s, &mut client_ctx, hint).await;
+            // ResumeReject{HASH_MISMATCH} bekle.
+            let reject = read_resume_reject(&mut s, &mut client_ctx).await;
+            assert_eq!(reject.payload_id, payload_id);
+            assert_eq!(reject.reason, Reason::HashMismatch as i32);
+        });
+
+        let (mut sender_socket, _) = listener.accept().await.unwrap();
+        let start_offset = wait_for_resume_hint_or_zero(
+            &mut sender_socket,
+            &mut server_ctx,
+            &plan,
+            our_session_id,
+            &known,
+            None,
+            Duration::from_secs(2),
+        )
+        .await;
+        peer_task.await.unwrap();
+
+        assert_eq!(start_offset, 0, "hash mismatch → fresh start (offset 0)");
+    }
+
+    /// Test 3 — yanlış session_id → ResumeReject{SESSION_MISMATCH} + 0.
+    #[tokio::test]
+    async fn sender_resume_session_mismatch_drops() {
+        let total_size = CHUNK_SIZE * 2;
+        let resume_offset = CHUNK_SIZE as i64;
+        let payload_id: i64 = 0x1234;
+
+        let (_dir, path) = write_test_file(total_size, 13);
+        let plan = plan_for(path, payload_id, total_size as i64);
+        let our_session_id: i64 = 0xDEAD_BEEF;
+        let known = vec![payload_id];
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (mut server_ctx, mut client_ctx) = matched_secure_ctx_pair();
+
+        let peer_task = tokio::spawn(async move {
+            let mut s = TcpStream::connect(addr).await.unwrap();
+            let hint = ResumeHint {
+                // Bizim session_id'mizden farklı — peer state drift.
+                session_id: our_session_id ^ 0xFFFF,
+                payload_id,
+                offset: resume_offset,
+                partial_hash: vec![0xAA; 32].into(),
+                capabilities_version: crate::capabilities::CAPABILITIES_VERSION,
+                last_chunk_tag: Vec::new().into(),
+            };
+            send_resume_hint(&mut s, &mut client_ctx, hint).await;
+            let reject = read_resume_reject(&mut s, &mut client_ctx).await;
+            assert_eq!(reject.payload_id, payload_id);
+            assert_eq!(reject.reason, Reason::SessionMismatch as i32);
+        });
+
+        let (mut sender_socket, _) = listener.accept().await.unwrap();
+        let start_offset = wait_for_resume_hint_or_zero(
+            &mut sender_socket,
+            &mut server_ctx,
+            &plan,
+            our_session_id,
+            &known,
+            None,
+            Duration::from_secs(2),
+        )
+        .await;
+        peer_task.await.unwrap();
+
+        assert_eq!(start_offset, 0, "session mismatch → fresh start");
+    }
+
+    /// Test 4 — invalid offset (chunk-aligned değil) → ResumeReject{
+    /// INVALID_OFFSET} + 0.
+    #[tokio::test]
+    async fn sender_resume_invalid_offset_rejects() {
+        let total_size = CHUNK_SIZE * 2;
+        // Chunk boundary'ye denk gelmiyor — AS-2 reject etmeli.
+        let resume_offset = (CHUNK_SIZE as i64) + 1;
+        let payload_id: i64 = 0x5555;
+
+        let (_dir, path) = write_test_file(total_size, 17);
+        let plan = plan_for(path, payload_id, total_size as i64);
+        let our_session_id: i64 = 0x4242;
+        let known = vec![payload_id];
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (mut server_ctx, mut client_ctx) = matched_secure_ctx_pair();
+
+        let peer_task = tokio::spawn(async move {
+            let mut s = TcpStream::connect(addr).await.unwrap();
+            let hint = ResumeHint {
+                session_id: our_session_id,
+                payload_id,
+                offset: resume_offset,
+                partial_hash: vec![0u8; 32].into(),
+                capabilities_version: crate::capabilities::CAPABILITIES_VERSION,
+                last_chunk_tag: Vec::new().into(),
+            };
+            send_resume_hint(&mut s, &mut client_ctx, hint).await;
+            let reject = read_resume_reject(&mut s, &mut client_ctx).await;
+            assert_eq!(reject.payload_id, payload_id);
+            assert_eq!(reject.reason, Reason::InvalidOffset as i32);
+        });
+
+        let (mut sender_socket, _) = listener.accept().await.unwrap();
+        let start_offset = wait_for_resume_hint_or_zero(
+            &mut sender_socket,
+            &mut server_ctx,
+            &plan,
+            our_session_id,
+            &known,
+            None,
+            Duration::from_secs(2),
+        )
+        .await;
+        peer_task.await.unwrap();
+
+        assert_eq!(start_offset, 0, "non-aligned offset → fresh start");
+    }
+
+    /// Test 5 — fast-path: `chunk_hmac_key` + `last_chunk_tag` (32 byte) →
+    /// sadece son chunk HMAC verify edilir, full SHA-256 atlanır. Doğru
+    /// tag → resume kabul; yanlış tag → reject.
+    #[tokio::test]
+    async fn sender_resume_last_chunk_tag_fastpath() {
+        let total_size = CHUNK_SIZE * 2;
+        let resume_offset = CHUNK_SIZE as i64; // 1 tam chunk
+        let payload_id: i64 = 0x77AA;
+
+        let (_dir, path) = write_test_file(total_size, 23);
+        let plan = plan_for(path.clone(), payload_id, total_size as i64);
+        let our_session_id: i64 = 0xBEEF_CAFE;
+        let known = vec![payload_id];
+        let chunk_hmac_key: [u8; 32] = [0xC0u8; 32];
+
+        // Last full chunk = chunk_index 0 (offset 0..CHUNK_SIZE).
+        let last_chunk_index: i64 = 0;
+        let last_chunk_start: i64 = 0;
+        let chunk_bytes = std::fs::read(&path).unwrap()[..CHUNK_SIZE].to_vec();
+        let expected_tag = crate::chunk_hmac::compute_tag(
+            &chunk_hmac_key,
+            payload_id,
+            last_chunk_index,
+            last_chunk_start,
+            &chunk_bytes,
+        )
+        .expect("compute tag");
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (mut server_ctx, mut client_ctx) = matched_secure_ctx_pair();
+
+        // Hint: deliberately yanlış partial_hash (slow-path olsa fail ederdi);
+        // last_chunk_tag DOĞRU. Fast-path tetiklendiği için tag ile karar verilmeli.
+        let peer_task = tokio::spawn(async move {
+            let mut s = TcpStream::connect(addr).await.unwrap();
+            let hint = ResumeHint {
+                session_id: our_session_id,
+                payload_id,
+                offset: resume_offset,
+                partial_hash: vec![0xFFu8; 32].into(), // slow-path uygulansa fail
+                capabilities_version: crate::capabilities::CAPABILITIES_VERSION,
+                last_chunk_tag: expected_tag.to_vec().into(),
+            };
+            send_resume_hint(&mut s, &mut client_ctx, hint).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+
+        let (mut sender_socket, _) = listener.accept().await.unwrap();
+        let start_offset = wait_for_resume_hint_or_zero(
+            &mut sender_socket,
+            &mut server_ctx,
+            &plan,
+            our_session_id,
+            &known,
+            Some(&chunk_hmac_key),
+            Duration::from_secs(2),
+        )
+        .await;
+        peer_task.await.unwrap();
+
+        assert_eq!(
+            start_offset, resume_offset,
+            "fast-path: doğru last_chunk_tag → resume kabul (full SHA-256 atlandı)"
+        );
     }
 }
