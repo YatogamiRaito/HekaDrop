@@ -13,6 +13,7 @@
 //! TXT'te) eklendikten sonra ayrı bir PR ile sender + receiver akışlarına
 //! entegre edilir.
 
+use bytes::Bytes;
 use std::time::Duration;
 use tokio::net::TcpStream;
 
@@ -27,6 +28,19 @@ use prost::Message;
 /// Capabilities exchange için varsayılan timeout — `docs/protocol/capabilities.md`
 /// §5.1 spec değeri (2 sn).
 pub const DEFAULT_CAPABILITIES_TIMEOUT: Duration = Duration::from_millis(2000);
+
+/// Capabilities exchange sonucu — caller'ın state machine'i için.
+///
+/// `leftover_plain`: Peer'ın gönderdiği frame `HekaDropFrame` değilse
+/// (örn. legacy `OfflineFrame` veya bozuk bytes), decrypt edilmiş plain
+/// payload burada caller'a geri verilir — protokol akışından kaybolmasın.
+/// Caller bu byte'ları kendi state machine'ine feed edebilir veya skip
+/// edip warn loglayabilir. Decrypt veya read başarısız olursa `None`.
+#[derive(Debug)]
+pub struct NegotiationOutcome {
+    pub active: ActiveCapabilities,
+    pub leftover_plain: Option<Bytes>,
+}
 
 /// `PairedKeyEncryption` sonrası `HekaDrop` extension capabilities exchange'ini
 /// gerçekleştir.
@@ -44,6 +58,13 @@ pub const DEFAULT_CAPABILITIES_TIMEOUT: Duration = Duration::from_millis(2000);
 /// = legacy mode (no extension features). Kullanıcıya hata gösterilmez;
 /// transfer normal Quick Share akışıyla devam edebilir.
 ///
+/// **Frame loss önlemi (PR #110 Gemini high yorumu):** Peer frame'i decrypt
+/// edilebildi ama `HekaDropFrame` değilse (örn. legacy `OfflineFrame`),
+/// plain payload `leftover_plain` field'ında caller'a döndürülür. Aksi
+/// halde frame protokol akışından sessizce yutulurdu. Caller'ın leftover
+/// byte'larıyla ne yapacağına karar vermesi state machine entegrasyonuna
+/// bağlıdır.
+///
 /// Caller bu helper'ı `PairedKeyResult` swap'tan sonra, Introduction gönderme/
 /// alma öncesinde çağırmalıdır (state machine entegrasyonu için bkz. modül
 /// dokümantasyonu).
@@ -51,7 +72,7 @@ pub async fn negotiate_capabilities(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
     timeout: Duration,
-) -> ActiveCapabilities {
+) -> NegotiationOutcome {
     let our_features = features::ALL_SUPPORTED;
 
     // Step 1: Bu build'in capabilities frame'ini gönder.
@@ -59,30 +80,58 @@ pub async fn negotiate_capabilities(
     let pb = our.encode_to_vec();
     let wrapped = wrap_hekadrop_frame(&pb);
     let Ok(enc) = ctx.encrypt(&wrapped) else {
-        return ActiveCapabilities::legacy();
+        return NegotiationOutcome::legacy_no_leftover();
     };
     if frame::write_frame(socket, &enc).await.is_err() {
-        return ActiveCapabilities::legacy();
+        return NegotiationOutcome::legacy_no_leftover();
     }
 
     // Step 2-4: Peer'ın capabilities'ini al + parse + negotiate.
     let Ok(raw) = frame::read_frame_timeout(socket, timeout).await else {
-        return ActiveCapabilities::legacy();
+        return NegotiationOutcome::legacy_no_leftover();
     };
     let Ok(plain) = ctx.decrypt(&raw) else {
-        return ActiveCapabilities::legacy();
+        return NegotiationOutcome::legacy_no_leftover();
     };
-    let inner = match dispatch_frame_body(&plain) {
-        FrameKind::HekaDrop { inner } => inner,
-        FrameKind::Offline { .. } => return ActiveCapabilities::legacy(),
+    // Parse'ı kısa-borrow scope'unda yap; başarısızsa leftover olarak
+    // plain'i caller'a geri ver (frame loss yok).
+    let parsed_caps = parse_capabilities(&plain);
+    match parsed_caps {
+        Some(features) => NegotiationOutcome {
+            active: ActiveCapabilities::negotiate(our_features, features),
+            leftover_plain: None,
+        },
+        None => NegotiationOutcome::legacy_with_leftover(plain),
+    }
+}
+
+/// Plain decrypted frame'den `HekaDropFrame::Capabilities.features` çıkar.
+/// Magic mismatch / decode fail / oneof slot mismatch → `None`.
+fn parse_capabilities(plain: &[u8]) -> Option<u64> {
+    let FrameKind::HekaDrop { inner } = dispatch_frame_body(plain) else {
+        return None;
     };
-    let Ok(frame) = HekaDropFrame::decode(inner) else {
-        return ActiveCapabilities::legacy();
+    let frame = HekaDropFrame::decode(inner).ok()?;
+    let Payload::Capabilities(caps) = frame.payload? else {
+        return None;
     };
-    let Some(Payload::Capabilities(caps)) = frame.payload else {
-        return ActiveCapabilities::legacy();
-    };
-    ActiveCapabilities::negotiate(our_features, caps.features)
+    Some(caps.features)
+}
+
+impl NegotiationOutcome {
+    fn legacy_no_leftover() -> Self {
+        Self {
+            active: ActiveCapabilities::legacy(),
+            leftover_plain: None,
+        }
+    }
+
+    fn legacy_with_leftover(plain: Bytes) -> Self {
+        Self {
+            active: ActiveCapabilities::legacy(),
+            leftover_plain: Some(plain),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -145,13 +194,15 @@ mod tests {
         });
 
         let mut client_socket = TcpStream::connect(addr).await.unwrap();
-        let client_active = negotiate_capabilities(
+        let client_outcome = negotiate_capabilities(
             &mut client_socket,
             &mut client_ctx,
             DEFAULT_CAPABILITIES_TIMEOUT,
         )
         .await;
-        let server_active = server_task.await.unwrap();
+        let server_outcome = server_task.await.unwrap();
+        let client_active = client_outcome.active;
+        let server_active = server_outcome.active;
 
         // Her iki taraf da kendi build'inin desteklediği TÜM feature'ları
         // advertise ediyor → intersection = ALL_SUPPORTED.
@@ -161,6 +212,9 @@ mod tests {
         assert!(client_active.has(features::RESUME_V1));
         assert!(client_active.has(features::FOLDER_STREAM_V1));
         assert!(!client_active.is_legacy());
+        // Genuine HekaDrop path'inde leftover olmamalı.
+        assert!(client_outcome.leftover_plain.is_none());
+        assert!(server_outcome.leftover_plain.is_none());
     }
 
     /// Peer hiç yanıt vermezse (eski Quick Share peer veya crash) helper
@@ -190,7 +244,7 @@ mod tests {
         });
 
         let mut client_socket = TcpStream::connect(addr).await.unwrap();
-        let active = negotiate_capabilities(
+        let outcome = negotiate_capabilities(
             &mut client_socket,
             &mut client_ctx,
             Duration::from_millis(200), // kısa timeout — test hızlandırma
@@ -199,9 +253,10 @@ mod tests {
 
         let _ = server_task.await;
 
-        // Peer yanıt vermedi → legacy fallback.
-        assert!(active.is_legacy());
-        assert_eq!(active.raw(), 0);
+        // Peer yanıt vermedi → legacy fallback, leftover yok.
+        assert!(outcome.active.is_legacy());
+        assert_eq!(outcome.active.raw(), 0);
+        assert!(outcome.leftover_plain.is_none());
     }
 
     /// Peer geçersiz bytes yollarsa (`HekaDrop` magic'siz, decrypt fails veya
@@ -231,7 +286,7 @@ mod tests {
         });
 
         let mut client_socket = TcpStream::connect(addr).await.unwrap();
-        let active = negotiate_capabilities(
+        let outcome = negotiate_capabilities(
             &mut client_socket,
             &mut client_ctx,
             Duration::from_millis(500),
@@ -240,8 +295,56 @@ mod tests {
 
         let _ = server_task.await;
 
-        // Garbage bytes → decrypt veya decode fail → legacy.
-        assert!(active.is_legacy());
+        // Garbage bytes → decrypt fail → legacy, leftover yok (decrypt
+        // başarısız olduğu için plain bytes elde edilemedi).
+        assert!(outcome.active.is_legacy());
+        assert!(outcome.leftover_plain.is_none());
+    }
+
+    /// Peer `extension_supported=true` demiş ama legacy `OfflineFrame`
+    /// yolluyorsa (kötü niyetli/bozuk peer): outcome legacy döner ama
+    /// plain bytes `leftover_plain` ile caller'a geri verilir — frame
+    /// loss yok (PR #110 Gemini high yorumu fix).
+    #[tokio::test]
+    async fn peer_offline_frame_returns_leftover() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let (mut server_ctx, mut client_ctx) = matched_secure_ctx_pair();
+
+        let server_task = tokio::spawn(async move {
+            let (mut server_socket, _) = listener.accept().await.unwrap();
+            // Drain client'ın HekaDrop capabilities frame'ini.
+            let _ = frame::read_frame_timeout(&mut server_socket, Duration::from_millis(500)).await;
+            // HekaDrop magic'i OLMAYAN, decrypt edilebilir bir plain
+            // payload yolla (legacy OfflineFrame'i simüle ediyor — pratikte
+            // protobuf encode'una gerek yok; magic mismatch dispatch'te
+            // FrameKind::Offline döndürecek, plain bytes leftover'a düşecek).
+            let plain_legacy = b"NOT_A_HEKADROP_FRAME_SENTINEL".to_vec();
+            let enc = server_ctx.encrypt(&plain_legacy).unwrap();
+            let _ = frame::write_frame(&mut server_socket, &enc).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            plain_legacy
+        });
+
+        let mut client_socket = TcpStream::connect(addr).await.unwrap();
+        let outcome = negotiate_capabilities(
+            &mut client_socket,
+            &mut client_ctx,
+            Duration::from_millis(500),
+        )
+        .await;
+
+        let expected_plain = server_task.await.unwrap();
+
+        assert!(outcome.active.is_legacy());
+        let leftover = outcome
+            .leftover_plain
+            .expect("legacy OfflineFrame plain bytes leftover'a düşmeli");
+        assert_eq!(
+            leftover, expected_plain,
+            "leftover decrypt edilmiş plain payload aynen döndürülmeli"
+        );
     }
 
     /// Default timeout sabit `2000ms` — `docs/protocol/capabilities.md`
