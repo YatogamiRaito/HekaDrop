@@ -1097,7 +1097,7 @@ fn have(bin: &str) -> bool {
         .arg("-c")
         .arg(format!("command -v {bin} >/dev/null 2>&1"))
         .status()
-        .map_or(false, |s| s.success())
+        .is_ok_and(|s| s.success())
 }
 
 fn human_size(bytes: i64) -> String {

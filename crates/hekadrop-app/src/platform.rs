@@ -49,9 +49,10 @@ pub(crate) fn config_dir() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        win::known_folder(&windows::Win32::UI::Shell::FOLDERID_RoamingAppData)
-            .map(|p| p.join("HekaDrop"))
-            .unwrap_or_else(|| home_dir().join(r"AppData\Roaming\HekaDrop"))
+        win::known_folder(&windows::Win32::UI::Shell::FOLDERID_RoamingAppData).map_or_else(
+            || home_dir().join(r"AppData\Roaming\HekaDrop"),
+            |p| p.join("HekaDrop"),
+        )
     }
 }
 
@@ -74,9 +75,10 @@ pub(crate) fn logs_dir() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        win::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData)
-            .map(|p| p.join(r"HekaDrop\logs"))
-            .unwrap_or_else(|| home_dir().join(r"AppData\Local\HekaDrop\logs"))
+        win::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData).map_or_else(
+            || home_dir().join(r"AppData\Local\HekaDrop\logs"),
+            |p| p.join(r"HekaDrop\logs"),
+        )
     }
 }
 
@@ -528,6 +530,12 @@ pub(crate) mod win {
     /// Process yaşam süresi boyunca init kalır; `CoUninitialize` çağırmayız
     /// (uygulama kapanışında OS temizler).
     fn ensure_com_init() {
+        // SAFETY-CAST: HRESULT bit pattern kasıtlı u32 → i32 reinterpretation
+        // (high-bit error encoding). `cast_signed()` Rust 1.85+ stable
+        // (MSRV 1.90 ≥ kullanılabilir); `as i32` yerine lint-clean alternatif.
+        // (CLAUDE.md I-2 / clippy::items_after_statements — block başına çekildi.)
+        const RPC_E_CHANGED_MODE: windows::core::HRESULT =
+            windows::core::HRESULT(0x80010106u32.cast_signed());
         COM_INITED.with(|flag| {
             if flag.get() {
                 return;
@@ -543,11 +551,6 @@ pub(crate) mod win {
             // windows-rs `HRESULT` → `ok()` S_OK/S_FALSE'ı tamam sayar,
             // gerçek hataları `Err` olarak geri verir. RPC_E_CHANGED_MODE da
             // kabul: COM zaten farklı modda init — bizim için OK.
-            // SAFETY-CAST: HRESULT bit pattern kasıtlı u32 → i32 reinterpretation
-            // (high-bit error encoding). `cast_signed()` Rust 1.85+ stable
-            // (MSRV 1.90 ≥ kullanılabilir); `as i32` yerine lint-clean alternatif.
-            const RPC_E_CHANGED_MODE: windows::core::HRESULT =
-                windows::core::HRESULT(0x80010106u32.cast_signed());
             if hr.is_ok() || hr == RPC_E_CHANGED_MODE {
                 flag.set(true);
             } else {
