@@ -58,10 +58,12 @@ const CHUNK_SIZE: usize = 512 * 1024;
 /// dosyanın Android tarafında fsync + doğrulama süresinden rahat geniştir.
 const PEER_DISCONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// RFC-0004 §1: receiver Introduction sonrası `ResumeHint` emit etmek için
-/// 2 sn süresi var. Sender bu süre içinde frame görmezse `start_offset = 0`
-/// legacy fresh transfer'a düşer (silent fallback). Spec normative değer.
-const RESUME_HINT_TIMEOUT: Duration = Duration::from_millis(2000);
+// RFC-0004 §1: receiver Introduction sonrası `ResumeHint` emit etmek için
+// 2 sn süresi var. Sender bu süre içinde frame görmezse `start_offset = 0`
+// legacy fresh transfer'a düşer (silent fallback). Spec normative değer.
+// PR-E (RFC-0004): tek noktada `crate::resume::RESUME_HINT_TIMEOUT` —
+// sabit centralization, sender duplicate'i kaldırıldı.
+use crate::resume::RESUME_HINT_TIMEOUT;
 
 pub struct SendRequest {
     pub device: DiscoveredDevice,
