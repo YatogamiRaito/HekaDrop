@@ -16,9 +16,13 @@
 //! Wire-byte-exact spec: [`docs/protocol/chunk-hmac.md`].
 //! Capabilities gate: [`crate::capabilities::features::CHUNK_HMAC_V1`].
 
-use crate::crypto::{hkdf_sha256, hmac_sha256};
+use crate::crypto::hkdf_sha256;
 use hekadrop_proto::hekadrop_ext::ChunkIntegrity;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use subtle::ConstantTimeEq;
+
+type HmacSha256 = Hmac<Sha256>;
 
 /// HKDF info label — wire kontrat kilidi. Değiştirmek `chunk_hmac_v2` bumpı
 /// gerektirir (yeni capability bit).
@@ -60,37 +64,43 @@ fn checked_body_len_u32(body_len: usize) -> Result<u32, ChunkBuildError> {
     u32::try_from(body_len).map_err(|_| ChunkBuildError::BodyTooLarge { actual: body_len })
 }
 
-/// HMAC-SHA256 input'unun canonical encoding'ini üret.
+/// HMAC-SHA256 input prefix'inin canonical encoding'ini stack-buffer'a yaz.
 ///
 /// Layout: `payload_id(BE i64) ‖ chunk_index(BE i64) ‖ offset(BE i64) ‖
-///          body_len(BE u32) ‖ body`. Big-endian seçimi cross-platform
+///          body_len(BE u32)` — toplam 28 byte. Big-endian seçimi cross-platform
 /// reproducibility içindir (debug log/fuzz corpus tutarlılığı).
-fn build_hmac_input(
+///
+/// Body bu prefix'in DIŞINDA — `compute_tag` streaming HMAC ile prefix'ten
+/// sonra body'yi ayrıca `update` eder, alloc'suz.
+fn encode_hmac_prefix(
     payload_id: i64,
     chunk_index: i64,
     offset: i64,
-    body: &[u8],
-) -> Result<Vec<u8>, ChunkBuildError> {
-    let body_len_u32 = checked_body_len_u32(body.len())?;
-
-    // CLAUDE.md I-5: 32-bit hedeflerde `body.len() + HMAC_INPUT_PREFIX_LEN`
-    // usize taşmasına yol açabilir (u32::MAX + 28 → debug panic). Capacity
-    // hint için saturating_add yeter — gerçek allocation `extend_from_slice`
-    // tarafından yönetilir; capacity overshoot olsa bile sadece reallocate
-    // gerekir, doğruluğu etkilemez. (PR #116 Gemini medium yorumu.)
-    let mut input = Vec::with_capacity(body.len().saturating_add(HMAC_INPUT_PREFIX_LEN));
-    input.extend_from_slice(&payload_id.to_be_bytes());
-    input.extend_from_slice(&chunk_index.to_be_bytes());
-    input.extend_from_slice(&offset.to_be_bytes());
-    input.extend_from_slice(&body_len_u32.to_be_bytes());
-    input.extend_from_slice(body);
-    Ok(input)
+    body_len: usize,
+) -> Result<[u8; HMAC_INPUT_PREFIX_LEN], ChunkBuildError> {
+    let body_len_u32 = checked_body_len_u32(body_len)?;
+    let mut prefix = [0u8; HMAC_INPUT_PREFIX_LEN];
+    prefix[0..8].copy_from_slice(&payload_id.to_be_bytes());
+    prefix[8..16].copy_from_slice(&chunk_index.to_be_bytes());
+    prefix[16..24].copy_from_slice(&offset.to_be_bytes());
+    prefix[24..28].copy_from_slice(&body_len_u32.to_be_bytes());
+    Ok(prefix)
 }
 
 /// Bir chunk için HMAC-SHA256 tag hesapla.
 ///
 /// Sender bunu `PayloadTransferFrame` gönderdikten hemen sonra
 /// [`build_chunk_integrity`] ile wrap edip envelope'a koyar.
+///
+/// **Hot-path alloc-free:** PR #104 Gemini + Copilot medium review.
+/// Önceki implementasyon her chunk için `body.len() + 28` byte'lık geçici
+/// `Vec` allocate edip prefix + body'yi içine kopyalardı. Şimdi:
+///   1. 28 byte fixed-size stack prefix buffer üret
+///   2. `Hmac::<Sha256>::new_from_slice(key)` instance
+///   3. `mac.update(&prefix); mac.update(body);` streaming
+///   4. `finalize()` → 32-byte tag
+///
+/// Sender/receiver hot path'inde chunk başına 1 alloc + 1 büyük memcpy elimine.
 ///
 /// Hata: `body.len() > u32::MAX` (4 GiB) → [`ChunkBuildError::BodyTooLarge`].
 /// Quick Share chunk pratiği 512 KiB olduğu için normal akışta tetiklenmez.
@@ -101,8 +111,22 @@ pub fn compute_tag(
     offset: i64,
     body: &[u8],
 ) -> Result<[u8; 32], ChunkBuildError> {
-    let input = build_hmac_input(payload_id, chunk_index, offset, body)?;
-    Ok(hmac_sha256(chunk_hmac_key, &input))
+    let prefix = encode_hmac_prefix(payload_id, chunk_index, offset, body.len())?;
+
+    // INVARIANT: `Hmac::<Sha256>::new_from_slice` HMAC-SHA256 spec'i (RFC 2104)
+    // gereği TÜM key uzunluklarını kabul eder (kısa key zero-pad'lenir, uzun
+    // key SHA-256'dan geçer). Burada key sabit 32 byte; `Result` yalnız trait
+    // signature uniformluğu için var. `crypto::hmac_sha256` ile aynı invariant.
+    #[allow(clippy::expect_used)]
+    let mut mac = HmacSha256::new_from_slice(chunk_hmac_key)
+        .expect("HMAC-SHA256 her key uzunluğunu kabul eder");
+    mac.update(&prefix);
+    mac.update(body);
+    let result = mac.finalize().into_bytes();
+
+    let mut tag = [0u8; TAG_LEN];
+    tag.copy_from_slice(&result);
+    Ok(tag)
 }
 
 /// Receiver-side: peer'ın yolladığı [`ChunkIntegrity`] mesajını local
@@ -229,6 +253,24 @@ pub enum ChunkBuildError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::hmac_sha256;
+
+    /// Test-only helper: prefix + body'yi tek bir `Vec`'te birleştirir.
+    /// Production hot-path'i alloc-free streaming HMAC kullanır
+    /// ([`compute_tag`]); bu helper KAT canonical layout testleri ve
+    /// "streaming sonucu = buffered baseline" karşılaştırması için tutulur.
+    fn build_hmac_input_for_test(
+        payload_id: i64,
+        chunk_index: i64,
+        offset: i64,
+        body: &[u8],
+    ) -> Result<Vec<u8>, ChunkBuildError> {
+        let prefix = encode_hmac_prefix(payload_id, chunk_index, offset, body.len())?;
+        let mut input = Vec::with_capacity(body.len().saturating_add(HMAC_INPUT_PREFIX_LEN));
+        input.extend_from_slice(&prefix);
+        input.extend_from_slice(body);
+        Ok(input)
+    }
 
     /// HKDF label kilidini sabitler — değişirse v2 capability bumpı şart.
     #[test]
@@ -439,7 +481,7 @@ mod tests {
         // payload_id = 0x12345678, chunk_index = 0x03, offset = 0x180000,
         // body_len = 32 (chunk-hmac.md §3.1 örnek değerleri).
         let body = vec![0x41u8; 32]; // 'A' × 32
-        let input = build_hmac_input(0x12345678, 3, 0x180000, &body).unwrap();
+        let input = build_hmac_input_for_test(0x12345678, 3, 0x180000, &body).unwrap();
 
         // Layout: 8B payload_id BE | 8B chunk_index BE | 8B offset BE | 4B body_len BE | body
         assert_eq!(input.len(), 28 + 32);
@@ -504,9 +546,45 @@ mod tests {
         );
     }
 
+    /// PR #104 perf follow-up: streaming `compute_tag` (alloc-free) çıktısı,
+    /// eski buffered-input baseline (`build_hmac_input_for_test` + tek-shot
+    /// `hmac_sha256`) ile **bit-bit aynı** tag üretmeli. Bu test wire kontrat
+    /// kilidi: refactor sırasında prefix layout veya HMAC API değişirse anında
+    /// kırılır.
+    #[test]
+    fn compute_tag_streaming_matches_buffered_baseline() {
+        let key = derive_chunk_hmac_key(&[0x42u8; 32]);
+        // Birkaç farklı body uzunluğu / parametre kombinasyonu ile karşılaştır
+        let cases: &[(i64, i64, i64, &[u8])] = &[
+            (0, 0, 0, &[]),                       // empty
+            (1, 0, 0, b"x"),                      // tek byte
+            (1234, 5, 0x100, b"the quick brown"), // tipik
+            (
+                i64::MAX,
+                i64::MAX,
+                i64::MAX,
+                &[0xAB; 512 * 1024], // 512 KiB Quick Share chunk pratiği
+            ),
+            (-1, -1, -1, &[0x55; 1024]), // negatif i64 BE encoding
+        ];
+        for &(payload_id, chunk_index, offset, body) in cases {
+            let streaming = compute_tag(&key, payload_id, chunk_index, offset, body).unwrap();
+
+            let buffered_input =
+                build_hmac_input_for_test(payload_id, chunk_index, offset, body).unwrap();
+            let buffered = hmac_sha256(&key, &buffered_input);
+
+            assert_eq!(
+                streaming, buffered,
+                "streaming HMAC tag = buffered baseline (params: id={payload_id} idx={chunk_index} off={offset} len={})",
+                body.len()
+            );
+        }
+    }
+
     /// `compute_tag` aynı şekilde 4 GiB üstü body için error döndürmeli.
     /// Burada gerçek 4 GiB allocation yapmıyoruz — `checked_body_len_u32`'ı
-    /// indirect olarak `build_hmac_input` üzerinden test ediyoruz.
+    /// doğrudan test ediyoruz.
     #[test]
     fn checked_body_len_helper_explicit() {
         // Pratik allocation yok: helper'ı doğrudan test et.
