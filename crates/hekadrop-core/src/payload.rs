@@ -212,6 +212,31 @@ struct PendingResume {
     last_chunk_tag_b64: String,
 }
 
+/// RFC-0005 §6: receiver-side `HEKABUND` payload marker.
+///
+/// Introduction handler bir `FileMetadata` üzerinde
+/// `mime_type == "application/x-hekadrop-folder"` ve `FOLDER_STREAM_V1`
+/// capability aktifse, normal `register_file_destination` ile bundle
+/// `.bundle` temp path'ine register eder, EK olarak bu `payload_id` için
+/// `register_bundle_marker` çağırır. `CompletedPayload::File` döndüğünde
+/// caller `take_bundle_marker(id)` ile `Some(...)` alırsa extract pipeline
+/// çalıştırılır (`folder::extract::extract_bundle`).
+#[derive(Debug, Clone)]
+pub struct BundleMarker {
+    /// Introduction'da gelen `FileMetadata.attachment_hash`. Extract
+    /// pipeline manifest'in `manifest_sha256[0..8]` BE i64 prefix'iyle
+    /// karşılaştırır; mismatch → atomic-reject.
+    pub expected_manifest_sha256_prefix: i64,
+    /// Final extract hedefinin parent dizini (`~/Downloads`). Staging
+    /// temp dizini de aynı parent altında oluşturulur (cross-device EXDEV
+    /// olasılığını minimize eder).
+    pub extract_root_dir: PathBuf,
+    /// Staging dizin adında collision avoidance için kullanılan session
+    /// hex (16-char lowercase). Caller (`connection.rs`)
+    /// `format!("{:016x}", session_id_i64 as u64)` ile türetir.
+    pub session_id_hex_lower: String,
+}
+
 #[derive(Default)]
 pub struct PayloadAssembler {
     bytes_buffers: HashMap<i64, BytesBuf>,
@@ -230,6 +255,12 @@ pub struct PayloadAssembler {
     /// RFC-0004 §3.3: resume `.meta` enable edilmiş ama henüz ilk chunk'ı
     /// gelmemiş payload'lar. İlk chunk geldiğinde `FileSink`'e taşınır.
     pending_resume: HashMap<i64, PendingResume>,
+    /// RFC-0005 §6: receiver-side bundle marker map. Introduction handler
+    /// `mime_type == application/x-hekadrop-folder` + capability aktif
+    /// olduğunda `register_bundle_marker` ile ekler; `CompletedPayload::File`
+    /// üretildikten sonra caller `take_bundle_marker(id)` ile çeker ve
+    /// extract pipeline'ı tetikler. `None` → normal individual file akışı.
+    bundle_markers: HashMap<i64, BundleMarker>,
 }
 
 impl PayloadAssembler {
@@ -366,6 +397,32 @@ impl PayloadAssembler {
         Ok(())
     }
 
+    /// RFC-0005 §6: bu `payload_id`'nin bir `HEKABUND` bundle olduğunu
+    /// işaretle. Caller normal `register_file_destination` ile bundle
+    /// `.bundle` temp path'i kayıtlı olduktan SONRA çağırır.
+    /// `CompletedPayload::File` döndüğünde caller [`Self::take_bundle_marker`]
+    /// ile `Some(BundleMarker)` alırsa extract pipeline tetiklenir.
+    ///
+    /// Idempotent değil — aynı `payload_id` için ikinci çağrı eski marker'ı
+    /// `replace` eder (defansif değil, caller tek noktadan — Introduction
+    /// handler — çağırır).
+    pub fn register_bundle_marker(&mut self, payload_id: i64, marker: BundleMarker) {
+        self.bundle_markers.insert(payload_id, marker);
+    }
+
+    /// `register_bundle_marker` ile kaydedilmiş marker'ı çek + sil.
+    /// `CompletedPayload::File` finalize sonrası caller bunu çağırıp
+    /// `Some(...)` durumunda `folder::extract::extract_bundle` çalıştırır.
+    pub fn take_bundle_marker(&mut self, payload_id: i64) -> Option<BundleMarker> {
+        self.bundle_markers.remove(&payload_id)
+    }
+
+    /// Test/diagnostics: bir payload'ın bundle marker'ı kayıtlı mı?
+    #[must_use]
+    pub fn has_bundle_marker(&self, payload_id: i64) -> bool {
+        self.bundle_markers.contains_key(&payload_id)
+    }
+
     /// Onaylanmayan (örn. Bytes olup bilinmeyen) bir payload'ı temizler.
     ///
     /// Açıksa dosya kulpunu düşürür ve yarım yazılmış `.part` dosyasını siler.
@@ -390,6 +447,10 @@ impl PayloadAssembler {
         // pending_resume sinki olmadan biriktirildi (Introduction sonrası,
         // ilk chunk öncesi cancel) — sessizce drop, henüz `.meta` yazılmadı.
         self.pending_resume.remove(&payload_id);
+        // RFC-0005 §6: bundle marker da temizlenir — cancel sonrası caller
+        // `take_bundle_marker` çağırırsa None alır + extract pipeline
+        // tetiklenmez.
+        self.bundle_markers.remove(&payload_id);
     }
 
     /// Belirli süreden uzun sessiz kalmış partial'ları düşürür.
