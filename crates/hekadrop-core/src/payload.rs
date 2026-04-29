@@ -302,10 +302,8 @@ impl PayloadAssembler {
             .r#type
             .unwrap_or(PayloadType::UnknownPayloadType as i32);
         let total_size = header.total_size.unwrap_or(0);
-        // PR #123 Gemini perf: `Bytes` (Vec yerine) — sahiplik devri ile
-        // chunk body'leri PendingChunk'a Arc-clone ile taşınır, ekstra alloc
-        // yok. `ingest_bytes` halen `&[u8]` istiyor (deref ucuz, sharing
-        // frame'leri küçük).
+        // `Bytes` Arc-clone — `PendingChunk.body` doc'u rasyonel açıklıyor.
+        // `ingest_bytes` halen `&[u8]` istiyor (sharing frame'leri küçük).
         let body: Bytes = chunk.body.clone().unwrap_or_default();
         let flags = chunk.flags.unwrap_or(0);
         let last_chunk = (flags & 1) == 1;
