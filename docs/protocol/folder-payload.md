@@ -20,9 +20,9 @@ intent and this document is authoritative for bytes on the wire.
 
 ## 1. Why this exists (one paragraph)
 
-Quick Share's wire format addresses a single file per `FileMetadata`. Drag-
-dropping a folder today flattens it: N files arrive in `~/Downloads/` with
-their parent directory structure lost (RFC-0005 §1, §2). NearDrop has had
+Quick Share's wire format addresses a single file per `FileMetadata`. As a
+result, drag-dropping a folder today is flattened on the wire: N files arrive
+in `~/Downloads/` with their parent directory structure lost (RFC-0005 §1, §2). NearDrop has had
 the same gap open for two years (issue #211); LocalSend issues an HTTP
 request per file with no folder grouping primitive. To preserve directory
 structure, atomic delivery, and bundle-level integrity *without* modifying

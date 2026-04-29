@@ -111,12 +111,13 @@ impl BundleManifest {
 
         let actual = self.entries.len();
         // INVARIANT (CLAUDE.md I-5): peer-controlled `total_entries` u32, ama
-        // `entries.len()` usize. u32 → u64 lossless via From; usize → u64
-        // 64-bit hedeflerde lossless (CI matrix tüm hedefler 64-bit), 32-bit
-        // hedefte de usize ≤ u32 ≤ u64 yine lossless.
-        let claimed_u64 = u64::from(self.total_entries);
-        let actual_u64 = u64::try_from(actual).unwrap_or(u64::MAX);
-        if claimed_u64 != actual_u64 {
+        // `entries.len()` usize. usize ↔ u32 karşılaştırma için claimed'i
+        // usize'a `try_from` ile yükselt — 16-bit hedefte (teorik) overflow
+        // halinde mismatch döner (defansif, panic değil). Önceki `u64`
+        // çevrimi + `unwrap_or(u64::MAX)` 64-bit hedefte ölü koldu (Gemini
+        // PR #143 yorumu).
+        let claimed_matches = usize::try_from(self.total_entries).is_ok_and(|c| c == actual);
+        if !claimed_matches {
             return Err(ManifestError::EntryCountMismatch {
                 claimed: self.total_entries,
                 actual,
