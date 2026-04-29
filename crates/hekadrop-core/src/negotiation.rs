@@ -209,8 +209,10 @@ mod tests {
         assert_eq!(client_active.raw(), features::ALL_SUPPORTED);
         assert_eq!(server_active.raw(), features::ALL_SUPPORTED);
         assert!(client_active.has(features::CHUNK_HMAC_V1));
-        assert!(client_active.has(features::RESUME_V1));
-        assert!(client_active.has(features::FOLDER_STREAM_V1));
+        // PR #103 Copilot review: ALL_SUPPORTED yalnızca implementasyonu hazır
+        // feature'ları içerir → şu an sadece CHUNK_HMAC_V1.
+        assert!(!client_active.has(features::RESUME_V1));
+        assert!(!client_active.has(features::FOLDER_STREAM_V1));
         assert!(!client_active.is_legacy());
         // Genuine HekaDrop path'inde leftover olmamalı.
         assert!(client_outcome.leftover_plain.is_none());
