@@ -601,7 +601,7 @@ fn part_path_for_meta(meta_path: &Path) -> PathBuf {
 /// Best-effort dosya boyutu; missing/error → `0` (caller log'lamaz, çünkü
 /// `.part` opsiyonel — yetim `.meta` legitimate bir durum).
 fn file_size_or_zero(path: &Path) -> u64 {
-    fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+    fs::metadata(path).map_or(0, |m| m.len())
 }
 
 /// `.meta` + `.part` çiftini sil. Her birini bağımsız işle; `NotFound` silent.
