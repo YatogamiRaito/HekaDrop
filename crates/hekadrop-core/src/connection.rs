@@ -446,7 +446,8 @@ pub async fn handle(
                                 &mut assembler,
                                 state.as_ref(),
                                 ui.as_ref(),
-                            );
+                            )
+                            .await;
                         }
                     }
                 }
@@ -498,7 +499,7 @@ pub async fn handle(
 /// `History` kaydı eklenmez. Başarı → `History` extract edilen klasör
 /// path'i ile push edilir.
 #[allow(clippy::too_many_arguments)] // INVARIANT: 9 arg — UI/state/assembler dispatch tek nokta
-fn finalize_received_payload(
+async fn finalize_received_payload(
     peer: &SocketAddr,
     id: i64,
     path: &std::path::Path,
@@ -510,14 +511,40 @@ fn finalize_received_payload(
     ui: &dyn UiPort,
 ) {
     if let Some(marker) = assembler.take_bundle_marker(id) {
-        // RFC-0005 §6: extract pipeline. Atomic-reject — tüm hata
-        // durumlarında staging dir + .bundle Drop'ta silinir.
-        match crate::folder::extract::extract_bundle(
-            path,
-            marker.expected_manifest_sha256_prefix,
-            &marker.extract_root_dir,
-            &marker.session_id_hex_lower,
-        ) {
+        // RFC-0005 §6 + audit defer: extract pipeline disk-bound (her file
+        // için stream copy + SHA-256 + write). Multi-file bundle'larda toplam
+        // blocking kuyruk async runtime worker'ı uzun süre tıkayabilir;
+        // `spawn_blocking` ile dedicated blocking pool'a dispatch et. Atomic-
+        // reject — tüm hata durumlarında staging dir + .bundle Drop'ta silinir.
+        let bundle_path = path.to_path_buf();
+        let extract_res = tokio::task::spawn_blocking(move || {
+            crate::folder::extract::extract_bundle(
+                &bundle_path,
+                marker.expected_manifest_sha256_prefix,
+                &marker.extract_root_dir,
+                &marker.session_id_hex_lower,
+            )
+        })
+        .await;
+        // JoinError → task panic; davranış sync mode ile aynı olsun diye
+        // panic'e bırakırız (extract_bundle panic etmez, fakat unbeklenen
+        // panic'i debug'lamak için warn + reject log).
+        let extract_res = match extract_res {
+            Ok(r) => r,
+            Err(join_err) => {
+                warn!(
+                    "[{}] extract_bundle spawn_blocking join: payload_id={} {}",
+                    peer, id, join_err
+                );
+                state.set_progress(ProgressState::Idle);
+                ui.notify(UiNotification::ToastRaw {
+                    title: "HekaDrop".to_string(),
+                    body: "Klasör reddedildi: dahili hata".to_string(),
+                });
+                return;
+            }
+        };
+        match extract_res {
             Ok(extracted) => {
                 info!(
                     "[{}] ✓ folder extract OK: {} ({} entry, {} dosya)",
@@ -958,13 +985,25 @@ async fn handle_sharing_frame(
                         // farklı session). I-5 invariant: peer-controlled
                         // payload_id + announced size validate edilmeden
                         // remove etmiyoruz.
+                        // RFC-0005 audit defer: `resume_eligible` hesabı
+                        // `partial_dir` (mkdir best-effort) + `resolve_resume_path`
+                        // (PartialMeta::load = fs::read + serde_json) blocking I/O
+                        // yapar. Async runtime worker'ı tıkamamak için
+                        // `spawn_blocking` ile sar — task panic ederse JoinError
+                        // zincirlenir, içsel `Ok(bool)` dönüyor (hata yok).
                         let resume_eligible =
                             if active_capabilities.has(crate::capabilities::features::RESUME_V1) {
                                 let sid = crate::resume::session_id_i64(auth_key);
-                                crate::resume::partial_dir().ok().is_some_and(|dir| {
-                                    resolve_resume_path(&dir, sid, pid, &name, size)
-                                        .is_some_and(|rp| rp == bundle_path)
+                                let name_owned = name.clone();
+                                let bundle_path_owned = bundle_path.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    crate::resume::partial_dir().ok().is_some_and(|dir| {
+                                        resolve_resume_path(&dir, sid, pid, &name_owned, size)
+                                            .is_some_and(|rp| rp == bundle_path_owned)
+                                    })
                                 })
+                                .await
+                                .with_context(|| "resume_eligible spawn_blocking join")?
                             } else {
                                 false
                             };
@@ -1567,7 +1606,16 @@ async fn handle_resume_for_file(
     // PR-G: meta validate sonucuna göre `enable_resume_with_offset` ya da
     // `enable_resume` (fresh) çağrılır — resume aktivasyonu meta sonrasına
     // ertelendi ki `received_bytes` doğru injected olsun.
-    let maybe_meta = match crate::resume::PartialMeta::load(dir, session_id, payload_id) {
+    // RFC-0005 audit defer: `PartialMeta::load` = `fs::read_to_string` +
+    // `serde_json::from_str` blocking. Async receive path'inde `spawn_blocking`
+    // ile sar — JoinError outer `with_context`, içsel `io::Result` match.
+    let dir_owned = dir.to_path_buf();
+    let load_res = tokio::task::spawn_blocking(move || {
+        crate::resume::PartialMeta::load(&dir_owned, session_id, payload_id)
+    })
+    .await
+    .with_context(|| "PartialMeta::load spawn_blocking join")?;
+    let maybe_meta = match load_res {
         Ok(opt) => opt,
         Err(e) => {
             tracing::debug!(
@@ -1614,7 +1662,10 @@ async fn handle_resume_for_file(
             file_name
         );
         let path = dir.join(crate::resume::meta_filename(session_id, payload_id));
-        let _ = std::fs::remove_file(&path);
+        // RFC-0005 audit defer: stale `.meta` silme blocking syscall — async
+        // fn içinde `spawn_blocking` ile dispatch et. Silme best-effort (`_ =`),
+        // task panic ederse JoinError best-effort yutulur (resume non-critical).
+        let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(&path)).await;
         // Fresh enable — sonraki kesintide yeni `.meta` yazılır.
         let _ = assembler.enable_resume(
             payload_id,
@@ -1851,7 +1902,8 @@ async fn handle_hekadrop_frame(
                         assembler,
                         state,
                         ui,
-                    );
+                    )
+                    .await;
                     Ok(())
                 }
                 Ok(Some(other)) => {
