@@ -19,9 +19,11 @@
 //!
 //! No behavior change in this PR — receiver/sender wiring lands in PR-C/D.
 
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -47,9 +49,22 @@ pub const MAX_META_VERSION: u32 = 1;
 
 /// RFC-0004 §5: bir `.meta`'nın `updated_at`'inden itibaren geçerli kabul
 /// edildiği gün sayısı. Bu süreden eski meta'lar resume yolu açıldığında
-/// sessizce silinir + fresh transfer başlar (cleanup PR-E'de periyodik
-/// olarak da uygulanır). v0.8.0 hardcoded; v0.8.1'de settings'e taşınır.
+/// sessizce silinir + fresh transfer başlar; PR-E'deki [`cleanup_sweep`]
+/// startup'ta da bu eşiği uygular. v0.8.0 hardcoded; v0.8.1'de settings'e
+/// taşınır.
 pub const RESUME_TTL_DAYS: i64 = 7;
+
+/// RFC-0004 §3.6: `~/.hekadrop/partial/` directory'nin toplam disk
+/// kullanımı için soft budget. [`cleanup_sweep`] bu sınırı aşan setleri
+/// `updated_at` ESKİ-İLK (LRU) sırasıyla siler. v0.8.0 hardcoded 5 GiB;
+/// v0.8.1'de settings'e taşınır.
+pub const RESUME_BUDGET_BYTES_DEFAULT: u64 = 5 * 1024 * 1024 * 1024;
+
+/// RFC-0004 §1: receiver Introduction sonrası `ResumeHint` emit etmek için
+/// 2 sn süresi var. Sender bu süre içinde frame görmezse `start_offset = 0`
+/// legacy fresh transfer'a düşer (silent fallback). Spec normative değer;
+/// PR-E sabitlerin tek noktasına taşıdı (sender duplicate'i kaldırıldı).
+pub const RESUME_HINT_TIMEOUT: Duration = Duration::from_millis(2000);
 
 /// Compute the 64-bit session identifier from the UKEY2 `auth_key`.
 ///
@@ -251,6 +266,31 @@ impl PartialMeta {
         Ok(Some(meta))
     }
 
+    /// Validate-bypass JSON parser — yalnızca cleanup yolunda kullanılır.
+    ///
+    /// `load` schema/path/total guard'larını çalıştırır; corrupted ya da
+    /// future-version `.meta` dosyaları `Err(InvalidData)` döner ve cleanup
+    /// onları silebilmeli (yoksa "kötü meta + iyi meta budget hesabı" tutar).
+    /// Bu varyant sadece `serde_json` parse eder; gözlemleneni döner.
+    ///
+    /// Caller convention: I/O error → caller skip (warn + continue);
+    /// `Ok(None)` → `NotFound`; parse fail → `Err(InvalidData)`.
+    pub fn load_unchecked(path: &Path) -> io::Result<Option<Self>> {
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let reader = BufReader::new(file);
+        let meta: Self = serde_json::from_reader(reader).map_err(|e| {
+            io::Error::new(
+                ErrorKind::InvalidData,
+                format!(".meta JSON parse failed: {e}"),
+            )
+        })?;
+        Ok(Some(meta))
+    }
+
     /// Atomically write `self` to `dir` as `<filename>.tmp` then rename.
     ///
     /// POSIX: `fs::rename` is atomic within a filesystem. Windows: `fs::rename`
@@ -366,6 +406,222 @@ fn contains_path_traversal(name: &str) -> bool {
         return true;
     }
     false
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cleanup sweep — RFC-0004 §3.6
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `cleanup_sweep` iç inventarisi — yalnızca aday toplama + LRU sıralama
+/// için kullanılır; caller görmez.
+struct Candidate {
+    meta_path: PathBuf,
+    part_path: PathBuf,
+    part_size: u64,
+    updated_at: DateTime<Utc>,
+    session_id: i64,
+    payload_id: i64,
+}
+
+/// [`cleanup_sweep`] istatistik raporu — caller log/metrics için kullanır.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CleanupReport {
+    /// TTL aşımı nedeniyle silinen `.meta` (ve eşleşen `.part`) çift sayısı.
+    pub removed_ttl: usize,
+    /// Budget LRU pass'inde silinen çift sayısı.
+    pub removed_budget: usize,
+    /// `in_use` setinin koruduğu çift sayısı (aktif transferler).
+    pub kept_in_use: usize,
+    /// Sweep süresince free edilen toplam `.part` byte sayısı.
+    pub bytes_freed: u64,
+    /// Sweep sonunda directory'de kalan toplam `.part` byte sayısı.
+    pub bytes_remaining: u64,
+}
+
+/// Cleanup sweep — `~/.hekadrop/partial/` directory'yi maintain eder.
+///
+/// İki aşama:
+///   1. TTL aşan `.meta` (ve eşleşen `.part`) dosyalarını sil.
+///   2. Toplam budget'ı aşıyorsa `updated_at` ESKİ-İLK (LRU) sırasıyla sil.
+///
+/// `in_use` setindeki `(session_id, payload_id)` çiftleri DOKUNULMAZ — aktif
+/// transferler korunur. Caller bu set'i `PayloadAssembler`'dan türetir;
+/// startup'ta boş `HashSet` geçer (henüz aktif transfer yok).
+///
+/// I/O hataları sweep'i durdurmaz; her dosya bağımsız işlenir, hata
+/// `tracing::warn` ile loglanır. Toplam istatistik döner.
+///
+/// Corrupted `.meta` dosyaları (parse hatası) da silinir — yoksa süresiz
+/// disk kalır + budget hesabını bozar. Eşleşen `.part` mevcut değilse
+/// `.meta` tek başına silinir (yetim meta).
+pub fn cleanup_sweep(
+    dir: &Path,
+    ttl_days: i64,
+    budget_bytes: u64,
+    in_use: &HashSet<(i64, i64)>,
+) -> CleanupReport {
+    let mut report = CleanupReport::default();
+
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("[resume cleanup] read_dir({}) failed: {e}", dir.display());
+            return report;
+        }
+    };
+
+    // İlk pass: tüm `.meta` dosyalarını topla. Corrupted parse → hemen sil
+    // (budget hesabını bozmasın). I/O error → skip + warn.
+    let mut candidates: Vec<Candidate> = Vec::new();
+
+    for entry in entries.flatten() {
+        let meta_path = entry.path();
+        // Yalnızca `.meta` ile bitenleri işle; `.tmp`/`.part` skip.
+        if meta_path.extension().is_none_or(|ext| ext != "meta") {
+            continue;
+        }
+
+        let loaded = match PartialMeta::load_unchecked(&meta_path) {
+            Ok(Some(m)) => m,
+            Ok(None) => continue, // race: silindi
+            Err(e) if e.kind() == ErrorKind::InvalidData => {
+                // Corrupted `.meta` — sil + eşleşen `.part`'ı (varsa) da sil.
+                // `.part` adını dosya adından türetelim: `<base>.part`.
+                tracing::warn!(
+                    "[resume cleanup] corrupted .meta removed: {} ({e})",
+                    meta_path.display()
+                );
+                let part_path = part_path_for_meta(&meta_path);
+                let freed = file_size_or_zero(&part_path);
+                remove_pair(&meta_path, &part_path);
+                report.removed_ttl = report.removed_ttl.saturating_add(1);
+                report.bytes_freed = report.bytes_freed.saturating_add(freed);
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[resume cleanup] .meta read failed (skip): {} ({e})",
+                    meta_path.display()
+                );
+                continue;
+            }
+        };
+
+        // `.part` aday ismi: `<sid_hex>_<payload>.part`.
+        let Some(session_id) = parse_session_hex(&loaded.session_id_hex) else {
+            // session_id_hex format bozuk → corrupted muamelesi.
+            tracing::warn!(
+                "[resume cleanup] invalid session_id_hex, removing: {}",
+                meta_path.display()
+            );
+            let part_path = part_path_for_meta(&meta_path);
+            let freed = file_size_or_zero(&part_path);
+            remove_pair(&meta_path, &part_path);
+            report.removed_ttl = report.removed_ttl.saturating_add(1);
+            report.bytes_freed = report.bytes_freed.saturating_add(freed);
+            continue;
+        };
+        // INVARIANT: bit-cast for filename rendering — matches meta_filename.
+        #[allow(clippy::cast_sign_loss)] // INVARIANT: bit-cast, not arithmetic
+        let session_u = session_id as u64;
+        let part_path = dir.join(format!("{session_u:016x}_{}.part", loaded.payload_id));
+        let part_size = file_size_or_zero(&part_path);
+
+        candidates.push(Candidate {
+            meta_path,
+            part_path,
+            part_size,
+            updated_at: loaded.updated_at,
+            session_id,
+            payload_id: loaded.payload_id,
+        });
+    }
+
+    // Aşama 1: TTL pass + in_use guard.
+    let now = Utc::now();
+    let ttl = chrono::Duration::days(ttl_days);
+    let mut survivors: Vec<Candidate> = Vec::with_capacity(candidates.len());
+
+    for cand in candidates {
+        if in_use.contains(&(cand.session_id, cand.payload_id)) {
+            // Aktif transfer — dokunma; budget hesabına da girmesin (caller
+            // sweep çıktıktan sonra hâlâ yazmayı sürdürebilir).
+            report.kept_in_use = report.kept_in_use.saturating_add(1);
+            continue;
+        }
+        let age = now.signed_duration_since(cand.updated_at);
+        if age > ttl {
+            let freed = cand.part_size;
+            remove_pair(&cand.meta_path, &cand.part_path);
+            report.removed_ttl = report.removed_ttl.saturating_add(1);
+            report.bytes_freed = report.bytes_freed.saturating_add(freed);
+            continue;
+        }
+        survivors.push(cand);
+    }
+
+    // Aşama 2: Budget LRU pass.
+    let total: u64 = survivors
+        .iter()
+        .map(|c| c.part_size)
+        .fold(0u64, u64::saturating_add);
+
+    if total > budget_bytes {
+        // Eski-ilk sırala (ascending updated_at).
+        survivors.sort_by_key(|c| c.updated_at);
+        let mut current = total;
+        let mut idx = 0;
+        while current > budget_bytes && idx < survivors.len() {
+            let cand = &survivors[idx];
+            let freed = cand.part_size;
+            remove_pair(&cand.meta_path, &cand.part_path);
+            report.removed_budget = report.removed_budget.saturating_add(1);
+            report.bytes_freed = report.bytes_freed.saturating_add(freed);
+            current = current.saturating_sub(freed);
+            idx += 1;
+        }
+        report.bytes_remaining = current;
+    } else {
+        report.bytes_remaining = total;
+    }
+
+    report
+}
+
+/// `.meta` path'inden `.part` path'i türet (`stem + ".part"`). Cleanup'ın
+/// corrupted-meta yolunda `PartialMeta` parse edilemediği için filesystem
+/// adından çıkarmak gerekir.
+fn part_path_for_meta(meta_path: &Path) -> PathBuf {
+    let stem = meta_path.file_stem().unwrap_or_default();
+    let mut part_name = stem.to_os_string();
+    part_name.push(".part");
+    meta_path.with_file_name(part_name)
+}
+
+/// Best-effort dosya boyutu; missing/error → `0` (caller log'lamaz, çünkü
+/// `.part` opsiyonel — yetim `.meta` legitimate bir durum).
+fn file_size_or_zero(path: &Path) -> u64 {
+    fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+/// `.meta` + `.part` çiftini sil. Her birini bağımsız işle; `NotFound` silent.
+fn remove_pair(meta_path: &Path, part_path: &Path) {
+    if let Err(e) = fs::remove_file(meta_path) {
+        if e.kind() != ErrorKind::NotFound {
+            tracing::warn!(
+                "[resume cleanup] failed to remove {}: {e}",
+                meta_path.display()
+            );
+        }
+    }
+    if let Err(e) = fs::remove_file(part_path) {
+        if e.kind() != ErrorKind::NotFound {
+            tracing::warn!(
+                "[resume cleanup] failed to remove {}: {e}",
+                part_path.display()
+            );
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -537,6 +793,161 @@ mod tests {
             m.validate(),
             Err(MetaError::ChunkSizeMismatch { .. })
         ));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // PR-E: cleanup_sweep tests
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// `.meta` + opsiyonel `.part` çifti yarat. `part_size` byte'lık dummy
+    /// `.part` yazar; `None` → `.part` oluşturulmaz (yetim meta testi için).
+    fn write_pair(
+        dir: &Path,
+        session_id: i64,
+        payload_id: i64,
+        updated_at: DateTime<Utc>,
+        part_size: Option<usize>,
+    ) {
+        let meta_name = meta_filename(session_id, payload_id);
+        #[allow(clippy::cast_sign_loss)] // test: bit-cast for hex render
+        let session_u = session_id as u64;
+        let bytes = part_size.unwrap_or(0);
+        // INVARIANT: test uses small sizes (≤ MiB); i64::try_from cannot fail.
+        let bytes_i64 = i64::try_from(bytes).expect("test fixture size fits in i64");
+        let meta = PartialMeta {
+            version: 1,
+            session_id_hex: format!("{session_u:016x}"),
+            payload_id,
+            file_name: format!("test_{payload_id}.bin"),
+            total_size: bytes_i64,
+            received_bytes: bytes_i64,
+            chunk_size: CHUNK_SIZE,
+            chunk_hmac_chain_b64: "AAAA".to_string(),
+            peer_endpoint_id: "PEER".to_string(),
+            created_at: updated_at,
+            updated_at,
+        };
+        // store_atomic validate eder; total/received eşit + valid → OK.
+        meta.store_atomic(dir).unwrap();
+        // store_atomic atomic rename kullanır → final path mevcut.
+        let _ = meta_name;
+
+        if let Some(size) = part_size {
+            let part_name = format!("{session_u:016x}_{payload_id}.part");
+            let part_path = dir.join(&part_name);
+            let mut f = File::create(&part_path).unwrap();
+            f.write_all(&vec![0u8; size]).unwrap();
+            f.sync_all().unwrap();
+        }
+    }
+
+    #[test]
+    fn cleanup_skips_in_use() {
+        let dir = unique_tmp_dir("cleanup-in-use");
+        let now = Utc::now();
+        // 3 çift; ikisi in_use (TTL aşmasa da budget olmasa da in_use guard).
+        write_pair(&dir, 1, 100, now, Some(1024));
+        write_pair(&dir, 2, 200, now, Some(1024));
+        // Üçüncü TTL aşan — silinmeli.
+        write_pair(&dir, 3, 300, now - chrono::Duration::days(30), Some(1024));
+
+        let mut in_use = HashSet::new();
+        in_use.insert((1i64, 100i64));
+        in_use.insert((2i64, 200i64));
+
+        let report = cleanup_sweep(&dir, RESUME_TTL_DAYS, RESUME_BUDGET_BYTES_DEFAULT, &in_use);
+
+        assert_eq!(report.kept_in_use, 2, "in_use çiftleri korunmalı");
+        assert_eq!(report.removed_ttl, 1, "TTL aşan tek çift silinmeli");
+        // in_use çiftleri hâlâ yerinde olmalı (.meta + .part).
+        assert!(dir.join(meta_filename(1, 100)).exists());
+        assert!(dir.join(meta_filename(2, 200)).exists());
+        assert!(!dir.join(meta_filename(3, 300)).exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_ttl_expiry_removes() {
+        let dir = unique_tmp_dir("cleanup-ttl");
+        let now = Utc::now();
+        // Eski (10 gün) → silinmeli; yeni (1 gün) → kalmalı.
+        write_pair(&dir, 1, 10, now - chrono::Duration::days(10), Some(2048));
+        write_pair(&dir, 2, 20, now - chrono::Duration::days(1), Some(2048));
+
+        let report = cleanup_sweep(
+            &dir,
+            RESUME_TTL_DAYS,
+            RESUME_BUDGET_BYTES_DEFAULT,
+            &HashSet::new(),
+        );
+
+        assert_eq!(report.removed_ttl, 1);
+        assert_eq!(report.removed_budget, 0);
+        assert_eq!(report.bytes_freed, 2048);
+        assert!(!dir.join(meta_filename(1, 10)).exists());
+        assert!(dir.join(meta_filename(2, 20)).exists());
+        assert_eq!(report.bytes_remaining, 2048);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_lru_eviction_to_budget() {
+        let dir = unique_tmp_dir("cleanup-lru");
+        let now = Utc::now();
+        // 3 dosya × 2 MiB = 6 MiB total, budget = 5 MiB → en eski silinmeli.
+        // (Test scale küçük: gerçek 5 GiB yerine 5 MiB; aynı LRU mantığı.)
+        let two_mib = 2 * 1024 * 1024;
+        write_pair(&dir, 1, 1, now - chrono::Duration::hours(3), Some(two_mib)); // en eski
+        write_pair(&dir, 2, 2, now - chrono::Duration::hours(2), Some(two_mib));
+        write_pair(&dir, 3, 3, now - chrono::Duration::hours(1), Some(two_mib));
+
+        let budget: u64 = 5 * 1024 * 1024;
+        let report = cleanup_sweep(&dir, RESUME_TTL_DAYS, budget, &HashSet::new());
+
+        assert_eq!(report.removed_ttl, 0);
+        assert_eq!(report.removed_budget, 1, "yalnız en eski silinmeli");
+        assert_eq!(report.bytes_freed as usize, two_mib);
+        // En eski (1, 1) silindi; (2,2) ve (3,3) kaldı.
+        assert!(!dir.join(meta_filename(1, 1)).exists());
+        assert!(dir.join(meta_filename(2, 2)).exists());
+        assert!(dir.join(meta_filename(3, 3)).exists());
+        assert_eq!(report.bytes_remaining as usize, 4 * 1024 * 1024);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_corrupted_meta_removed() {
+        let dir = unique_tmp_dir("cleanup-corrupt");
+        // Bozuk JSON yaz — `load_unchecked` parse fail → cleanup silmeli.
+        let bad_meta = dir.join("0000000000000099_5.meta");
+        let mut f = File::create(&bad_meta).unwrap();
+        f.write_all(b"{ this is not valid json").unwrap();
+        f.sync_all().unwrap();
+        drop(f);
+        // Eşleşen `.part` de yarat (corrupted yolun part'ı da silmesini doğrula).
+        let bad_part = dir.join("0000000000000099_5.part");
+        let mut p = File::create(&bad_part).unwrap();
+        p.write_all(&[0u8; 512]).unwrap();
+        p.sync_all().unwrap();
+        drop(p);
+
+        let report = cleanup_sweep(
+            &dir,
+            RESUME_TTL_DAYS,
+            RESUME_BUDGET_BYTES_DEFAULT,
+            &HashSet::new(),
+        );
+
+        // Corrupted bucket'a removed_ttl olarak sayılır (caller perspektifinden
+        // "expired/invalid" aynı anlam taşır — single counter yeterli).
+        assert!(report.removed_ttl >= 1, "corrupted .meta silinmeli");
+        assert!(!bad_meta.exists());
+        assert!(!bad_part.exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

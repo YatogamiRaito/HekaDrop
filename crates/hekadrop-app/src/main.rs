@@ -110,6 +110,43 @@ async fn async_main() -> Result<()> {
     state::set_listen_port(port);
     info!("TCP dinleniyor: 0.0.0.0:{}", port);
 
+    // RFC-0004 §3.6: startup cleanup sweep — `~/.hekadrop/partial/` directory'yi
+    // bir kez tara, TTL aşan + budget aşımı dosyaları sil. Non-blocking
+    // (tokio::spawn fire-and-forget); başarısızlık fatal değil. v0.8.1'de
+    // OS scheduler'a bırakılacak; v0.8.0 startup-only karar.
+    tokio::spawn(async {
+        let dir = match hekadrop_core::resume::partial_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!("[resume cleanup] partial_dir unavailable: {e}");
+                return;
+            }
+        };
+        // v0.8.0: in_use boş — startup'ta hiçbir transfer aktif değil.
+        // PR-F+ ile aktif PayloadAssembler set'i geçilebilir.
+        let in_use = std::collections::HashSet::new();
+        let result = tokio::task::spawn_blocking(move || {
+            hekadrop_core::resume::cleanup_sweep(
+                &dir,
+                hekadrop_core::resume::RESUME_TTL_DAYS,
+                hekadrop_core::resume::RESUME_BUDGET_BYTES_DEFAULT,
+                &in_use,
+            )
+        })
+        .await;
+        match result {
+            Ok(r) => tracing::info!(
+                "[resume cleanup] removed_ttl={}, removed_budget={}, kept_in_use={}, bytes_freed={}, bytes_remaining={}",
+                r.removed_ttl,
+                r.removed_budget,
+                r.kept_in_use,
+                r.bytes_freed,
+                r.bytes_remaining
+            ),
+            Err(e) => tracing::warn!("[resume cleanup] task panic: {e}"),
+        }
+    });
+
     // H#4 privacy control: advertise=false iken LAN'da görünmez ("receive-only"
     // mod). Kullanıcı hâlâ `sender` flow'u ile dosya gönderebilir ama mDNS
     // yayını yapılmadığından Android tarafı bu cihazı listede göstermez.
