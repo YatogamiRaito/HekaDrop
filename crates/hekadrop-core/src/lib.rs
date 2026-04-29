@@ -54,6 +54,10 @@ pub mod log_redact;
 // peer-detection logic ile birlikte ayrı PR'da gelecek.
 pub mod negotiation;
 pub mod payload;
+// RFC-0004 — Transfer resume primitives (session_id_i64, partial_hash,
+// PartialMeta sidecar). PR-B: stateless helpers; PR-C/D wire receiver
+// + sender consumers.
+pub mod resume;
 pub mod secure;
 pub mod settings;
 pub mod stats;

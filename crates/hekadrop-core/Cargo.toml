@@ -88,6 +88,12 @@ base64 = "0.22"
 # `hex` ukey2.rs handshake debug log (cipher_commitment + digest) için.
 hex = "0.4"
 
+# RFC-0004 — `.meta` sidecar `created_at` / `updated_at` RFC3339 UTC
+# timestamps. `clock` Utc::now(), `serde` DateTime<Utc> serialize/deserialize.
+# `default-features = false` `oldtime` legacy API'sini ve `wasmbind`'i dışarıda
+# bırakır — sadece std + serde + clock surface.
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 # settings.rs `replace_atomic` Win32 path'inde `MoveFileExW` çağrısı için.
 # Feature set yalnız o API yüzeyini kapsar — minimum binary etki.
