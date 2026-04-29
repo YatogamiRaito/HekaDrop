@@ -1235,14 +1235,20 @@ async fn handle_hekadrop_frame(
                 }
             }
         }
-        // Forward-compat: ResumeHint/ResumeReject (RFC-0004) +
-        // FolderMft (RFC-0005) henüz implement edilmedi; placeholder
-        // varyantları log + skip ile drop'sızca geçilir.
-        Payload::ResumeHint(_) | Payload::ResumeReject(_) | Payload::FolderMft(_) => {
-            debug!(
-                "[{}] HekaDropFrame.Payload: v0.8.1+ varyantı — şu an stub, skip",
-                peer
-            );
+        // Forward-compat stub'ları RFC-bazında ayrı arm'lar — her birinin
+        // tam implementasyonu ayrı PR serisinde gelecek (RFC-0004 PR-B+,
+        // RFC-0005). Şimdilik sessizce drop, ama ayrı log satırlarıyla
+        // dispatch path'i debugging'de net görünür.
+        Payload::ResumeHint(_hint) => {
+            debug!("[{}] ResumeHint frame received (RFC-0004 stub)", peer);
+            Ok(())
+        }
+        Payload::ResumeReject(_reject) => {
+            debug!("[{}] ResumeReject frame received (RFC-0004 stub)", peer);
+            Ok(())
+        }
+        Payload::FolderMft(_mft) => {
+            debug!("[{}] FolderMft frame received (RFC-0005 stub)", peer);
             Ok(())
         }
     }

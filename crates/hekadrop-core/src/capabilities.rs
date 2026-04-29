@@ -216,6 +216,120 @@ mod tests {
     }
 
     #[test]
+    fn resume_hint_protobuf_roundtrip() {
+        // RFC-0004 §3.2 + docs/protocol/resume.md §3 — 6 field spec.
+        // Wire'da henüz emit edilmiyor; bu test schema'nın spec'e
+        // hizalı encode/decode ettiğini sabitler (PR-B'de emit/parse
+        // implementasyonu eklenince regression detector görevi).
+        use hekadrop_proto::hekadrop_ext::ResumeHint;
+
+        let original = ResumeHint {
+            session_id: 0x0123_4567_89AB_CDEF_i64,
+            payload_id: 42,
+            offset: 1_048_576,
+            partial_hash: vec![0xAA; 32].into(),
+            capabilities_version: 1,
+            last_chunk_tag: vec![0xBB; 32].into(),
+        };
+        let bytes = original.encode_to_vec();
+        let decoded = ResumeHint::decode(&*bytes).expect("valid wire encoding");
+        assert_eq!(decoded.session_id, original.session_id);
+        assert_eq!(decoded.payload_id, original.payload_id);
+        assert_eq!(decoded.offset, original.offset);
+        assert_eq!(decoded.partial_hash, original.partial_hash);
+        assert_eq!(decoded.capabilities_version, original.capabilities_version);
+        assert_eq!(decoded.last_chunk_tag, original.last_chunk_tag);
+    }
+
+    #[test]
+    fn resume_reject_all_reasons_roundtrip() {
+        // RFC-0004 §3.2 + docs/protocol/resume.md §3 — 7 reason variant.
+        // Tüm enum değerlerinin encode + decode round-trip'i korunduğunu
+        // sabitler (proto3 unknown variant fallback hata kaynağı olabilir).
+        use hekadrop_proto::hekadrop_ext::resume_reject::Reason;
+        use hekadrop_proto::hekadrop_ext::ResumeReject;
+
+        let reasons = [
+            Reason::Unspecified,
+            Reason::HashMismatch,
+            Reason::InvalidOffset,
+            Reason::VersionMismatch,
+            Reason::PayloadUnknown,
+            Reason::SessionMismatch,
+            Reason::InternalError,
+        ];
+        for r in reasons {
+            let original = ResumeReject {
+                payload_id: 7,
+                reason: i32::from(r),
+            };
+            let bytes = original.encode_to_vec();
+            let decoded = ResumeReject::decode(&*bytes).expect("valid wire encoding");
+            assert_eq!(decoded.payload_id, original.payload_id);
+            assert_eq!(decoded.reason, original.reason);
+            assert_eq!(Reason::try_from(decoded.reason).expect("known variant"), r);
+        }
+    }
+
+    #[test]
+    fn resume_hint_envelope_oneof_slot_12() {
+        // HekaDropFrame.payload oneof slot 12 = resume_hint (capabilities.md
+        // §3.1 slot policy). Dispatch'in doğru variant'ı seçtiğini sabitler.
+        use hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload;
+        use hekadrop_proto::hekadrop_ext::ResumeHint;
+
+        let hint = ResumeHint {
+            session_id: 1,
+            payload_id: 2,
+            offset: 3,
+            partial_hash: vec![0; 32].into(),
+            capabilities_version: 1,
+            last_chunk_tag: vec![0; 32].into(),
+        };
+        let frame = HekaDropFrame {
+            version: ENVELOPE_VERSION,
+            payload: Some(Payload::ResumeHint(hint.clone())),
+        };
+        let bytes = frame.encode_to_vec();
+        let decoded = HekaDropFrame::decode(&*bytes).expect("valid wire encoding");
+        match decoded.payload {
+            Some(Payload::ResumeHint(h)) => {
+                assert_eq!(h.session_id, hint.session_id);
+                assert_eq!(h.payload_id, hint.payload_id);
+                assert_eq!(h.offset, hint.offset);
+            }
+            other => panic!("beklenen oneof slot 12 (resume_hint), bulundu: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resume_reject_envelope_oneof_slot_13() {
+        // HekaDropFrame.payload oneof slot 13 = resume_reject (capabilities.md
+        // §3.1 slot policy). Dispatch'in doğru variant'ı seçtiğini sabitler.
+        use hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload;
+        use hekadrop_proto::hekadrop_ext::resume_reject::Reason;
+        use hekadrop_proto::hekadrop_ext::ResumeReject;
+
+        let reject = ResumeReject {
+            payload_id: 99,
+            reason: i32::from(Reason::SessionMismatch),
+        };
+        let frame = HekaDropFrame {
+            version: ENVELOPE_VERSION,
+            payload: Some(Payload::ResumeReject(reject)),
+        };
+        let bytes = frame.encode_to_vec();
+        let decoded = HekaDropFrame::decode(&*bytes).expect("valid wire encoding");
+        match decoded.payload {
+            Some(Payload::ResumeReject(r)) => {
+                assert_eq!(r.payload_id, reject.payload_id);
+                assert_eq!(r.reason, reject.reason);
+            }
+            other => panic!("beklenen oneof slot 13 (resume_reject), bulundu: {other:?}"),
+        }
+    }
+
+    #[test]
     fn all_supported_only_has_implemented_features() {
         // PR #103 review (Copilot): ALL_SUPPORTED yalnızca implementasyonu
         // hazır feature'ları içerir. RFC-0004 (RESUME_V1) ve RFC-0005
