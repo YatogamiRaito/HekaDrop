@@ -13,7 +13,8 @@
 //! 3. **Partial integrity primitif'i:** RFC-0005 (folder bundle) per-file
 //!    resume / mid-bundle abort için chunk tag'lerini reuse eder.
 //!
-//! Wire-byte-exact spec: [`docs/protocol/chunk-hmac.md`].
+//! Wire-byte-exact spec: `docs/protocol/chunk-hmac.md` (filesystem path —
+//! Rustdoc intra-link değil).
 //! Capabilities gate: [`crate::capabilities::features::CHUNK_HMAC_V1`].
 
 use crate::crypto::hkdf_sha256;

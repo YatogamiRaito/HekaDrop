@@ -15,6 +15,7 @@
 use crate::chunk_hmac;
 use crate::error::HekaError;
 use anyhow::{anyhow, Context, Result};
+use bytes::Bytes;
 use hekadrop_proto::hekadrop_ext::ChunkIntegrity;
 use hekadrop_proto::location::nearby::connections::{
     payload_transfer_frame::payload_header::PayloadType, PayloadTransferFrame,
@@ -120,7 +121,10 @@ struct FileSink {
 /// `payload.rs` `BufWriter` capacity (128 KiB) × 4 = 512 KiB civarı RAM
 /// tutar (Quick Share chunk pratiği), kabul edilebilir overhead.
 struct PendingChunk {
-    body: Vec<u8>,
+    /// `Bytes` (Vec yerine) — `PayloadTransferFrame.chunk.body` zaten
+    /// `Bytes` olarak gelir; sahiplik devri ile chunk başına ekstra heap
+    /// alloc + memcpy önlenir (PR #123 Gemini perf yorumu).
+    body: Bytes,
     /// Chunk başlangıç offset'i — `compute_tag`/`verify_tag` input'unda
     /// redundant binding alanı.
     offset: i64,
@@ -298,12 +302,16 @@ impl PayloadAssembler {
             .r#type
             .unwrap_or(PayloadType::UnknownPayloadType as i32);
         let total_size = header.total_size.unwrap_or(0);
-        let body: &[u8] = chunk.body.as_deref().unwrap_or_default();
+        // PR #123 Gemini perf: `Bytes` (Vec yerine) — sahiplik devri ile
+        // chunk body'leri PendingChunk'a Arc-clone ile taşınır, ekstra alloc
+        // yok. `ingest_bytes` halen `&[u8]` istiyor (deref ucuz, sharing
+        // frame'leri küçük).
+        let body: Bytes = chunk.body.clone().unwrap_or_default();
         let flags = chunk.flags.unwrap_or(0);
         let last_chunk = (flags & 1) == 1;
 
         match PayloadType::try_from(ptype).unwrap_or(PayloadType::UnknownPayloadType) {
-            PayloadType::Bytes => self.ingest_bytes(id, body, last_chunk),
+            PayloadType::Bytes => self.ingest_bytes(id, &body, last_chunk),
             PayloadType::File => self.ingest_file(id, total_size, body, last_chunk).await,
             other => Err(HekaError::ProtocolState(format!(
                 "desteklenmeyen payload tipi: {other:?}"
@@ -356,7 +364,7 @@ impl PayloadAssembler {
         &mut self,
         id: i64,
         total_size: i64,
-        body: &[u8],
+        body: Bytes,
         last_chunk: bool,
     ) -> Result<Option<CompletedPayload>> {
         use std::collections::hash_map::Entry;
@@ -485,7 +493,7 @@ impl PayloadAssembler {
                     .into());
                 }
                 sink.pending_chunk = Some(PendingChunk {
-                    body: body.to_vec(),
+                    body,
                     offset: chunk_offset,
                     last_chunk,
                 });
@@ -508,8 +516,8 @@ impl PayloadAssembler {
             // bloklayabilir; bu sırada diğer async task'lar başka worker'a
             // taşınsın. Current-thread runtime'da (unit test) fallback: direkt
             // çağrı — block_in_place current_thread'de panik eder.
-            block_in_place_if_multi(|| sink.writer.write_all(body)).context("disk yazma")?;
-            sink.hasher.update(body);
+            block_in_place_if_multi(|| sink.writer.write_all(&body)).context("disk yazma")?;
+            sink.hasher.update(&body);
             sink.written = provisional_written;
             sink.last_chunk_at = Instant::now();
         }

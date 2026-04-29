@@ -208,7 +208,7 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     // atlanırsa (peer extension_supported=false) kullanılan canonical default;
     // exchange tetiklenirse `outcome.active` ile overwrite olur.
     #[allow(unused_assignments)]
-    let mut active_caps = crate::capabilities::ActiveCapabilities::legacy();
+    let mut active_capabilities = crate::capabilities::ActiveCapabilities::legacy();
     // RFC-0003 §4.1: chunk-HMAC anahtarı capability negotiation sonrası
     // `keys.next_secret`'ten HKDF-SHA256 ile türetilir; capability inactive
     // ise None kalır → sender legacy davranışta.
@@ -294,22 +294,23 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                             )
                             .await;
                             // PR #112 Gemini medium: outcome.active outer-scope
-                            // `active_caps`'e atanır → chunk-HMAC pipeline,
+                            // `active_capabilities`'e atanır → chunk-HMAC pipeline,
                             // resume hint, folder gating buradan okur.
-                            active_caps = outcome.active;
+                            active_capabilities = outcome.active;
                             info!(
                                 "[sender] active capabilities: 0x{:04x} (chunk_hmac={}, resume={}, folder={})",
-                                active_caps.raw(),
-                                active_caps.has(crate::capabilities::features::CHUNK_HMAC_V1),
-                                active_caps.has(crate::capabilities::features::RESUME_V1),
-                                active_caps.has(crate::capabilities::features::FOLDER_STREAM_V1),
+                                active_capabilities.raw(),
+                                active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1),
+                                active_capabilities.has(crate::capabilities::features::RESUME_V1),
+                                active_capabilities.has(crate::capabilities::features::FOLDER_STREAM_V1),
                             );
                             // RFC-0003 §4.1: capability aktif ise chunk-HMAC
                             // anahtarını UKEY2 next_secret'ten türet. Sender
                             // ve receiver aynı IKM + aynı HKDF label
                             // (`"hekadrop chunk-hmac v1"`) kullandığı için
                             // çıktı sembolik olarak eşleşir.
-                            if active_caps.has(crate::capabilities::features::CHUNK_HMAC_V1) {
+                            if active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1)
+                            {
                                 chunk_hmac_key = Some(crate::chunk_hmac::derive_chunk_hmac_key(
                                     &keys.next_secret,
                                 ));
