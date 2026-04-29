@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — v0.8.0 protocol features (RFC-0003 + RFC-0004 + RFC-0005)
+- **feat(rfc-0005): folder bundle support** — `FOLDER_STREAM_V1` capability
+  (`0x0000_0004`) `ALL_SUPPORTED`'a eklendi (PR-F). Sender tarafı `enumerate_folder`
+  + `build_manifest` + `BundleWriter` ile folder'ı `HEKABUND` v1 container'da tek
+  payload olarak gönderir; receiver bundle'ı staging dir'e extract eder + per-file
+  SHA-256 verify + atomic-reject (herhangi bir hata → tüm extract iptal, diskte
+  yarım veri kalmaz). Manifest sanitize: path traversal (`..`), null byte,
+  separator collapse, depth ≤ 32, entry ≤ 10 000. Chunk-HMAC + RESUME_V1 ile
+  birlikte çalışır — yarıda kesilen folder transfer kaldığı yerden devam eder.
+  UI: accept dialog "📁 {root_name} klasörü — {N} dosya, {size}" satırı; tamam
+  notification'ı `Klasörü Aç` aksiyonu ile (Finder/Explorer/xdg-open).
+- **feat(rfc-0004): transfer resume** — `RESUME_V1` capability (`0x0000_0002`)
+  PR-G ile aktive edildi (PR #138). Receiver `.meta` partial state persist +
+  `ResumeHint`/`ResumeReject` proto frame'leri + sender offset seek; cleanup
+  sweep TTL/budget LRU.
+- **feat(rfc-0003): chunk-HMAC** — `CHUNK_HMAC_V1` capability (`0x0000_0001`)
+  per-data-chunk HMAC-SHA256 integrity tag.
+
 ### Added — Workspace Refactor (RFC-0001 §5, Adım 1-8 tamamlandı)
 - **5 üyeli Cargo workspace**: `hekadrop-proto` (leaf, prost wire types) →
   `hekadrop-core` (protocol engine: crypto, frame, UKEY2, secure, payload,

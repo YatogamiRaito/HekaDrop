@@ -36,31 +36,36 @@ pub mod features {
     /// AND sonucundan düşer (forward-compat).
     ///
     /// **Yalnızca implementasyonu hazır feature'lar advertise edilir** (PR #103
-    /// Copilot review): hâlihazırda peer'a bir feature'ı reklam etmek "biz bu
+    /// Copilot review): peer'a bir feature'ı reklam etmek "biz bu
     /// extension frame'lerini doğru handle edebiliriz" sözleşmesidir.
-    /// `FOLDER_STREAM_V1` (RFC-0005) implementasyonu henüz yok → advertise
-    /// EDİLMEZ. Implementasyon merge olunca buraya geri eklenir.
     ///
-    /// `RESUME_V1` (RFC-0004) PR-A→PR-F zinciriyle merge oldu (proto schema +
-    /// `resume.rs` primitives + receiver `.meta` persist + `ResumeHint` emit
-    /// + sender `wait_for_resume_hint_or_zero` verify + cleanup sweep).
+    /// Tarihçe (RFC-0004 `RESUME_V1`):
+    /// - PR-F'de açıldı, **PR #136 Gemini high yorumu sonrası geri kapatıldı**
+    ///   (receiver `truncate(true)` → veri kaybı).
+    /// - **PR-G ile geri açıldı:** `payload.rs::ingest_file` artık resume
+    ///   aktifken `truncate(false)` + `seek(received_bytes)` ile mevcut
+    ///   `.part`'a devam eder; hasher önceki byte'larla feed edilir (final
+    ///   SHA-256 chain tutarlı kalır); `connection.rs::resolve_resume_path`
+    ///   Introduction handler'ında fresh placeholder yerine `meta.dest_path`'i
+    ///   register eder.
     ///
-    /// **PR #136 Gemini high yorumu sonrası geri kapatıldı** (receiver
-    /// `truncate(true)` → veri kaybı). **PR-G ile geri açıldı:**
-    /// `payload.rs::ingest_file` artık resume aktifken `truncate(false)` +
-    /// `seek(received_bytes)` ile mevcut `.part`'a devam eder; hasher önceki
-    /// byte'larla feed edilir (final SHA-256 chain tutarlı kalır);
-    /// `connection.rs::resolve_resume_path` Introduction handler'ında fresh
-    /// placeholder yerine `meta.dest_path`'i register eder.
-    pub const ALL_SUPPORTED: u64 = CHUNK_HMAC_V1 | RESUME_V1;
+    /// Tarihçe (RFC-0005 `FOLDER_STREAM_V1`):
+    /// - PR-A → PR-E ile primitives + sender enumerate + receiver extract +
+    ///   chunk-HMAC/resume entegrasyonu tamamlandı.
+    /// - **PR-F'de aktive edildi**: `ALL_SUPPORTED` bayrağa eklendi; UI
+    ///   accept dialog folder summary + completion notification "Klasörü Aç"
+    ///   aksiyonu wire'landı; `FOLDER_BUNDLE_MIME` Introduction'da
+    ///   bulunduğunda extract pipeline (`crate::folder::extract`) atomic-reject
+    ///   garantisiyle devreye girer.
+    pub const ALL_SUPPORTED: u64 = CHUNK_HMAC_V1 | RESUME_V1 | FOLDER_STREAM_V1;
 
     /// Bu build için reserved (henüz hiçbir RFC'nin sahip olmadığı) bit'ler.
     /// Test'lerde forward-compat akışını doğrulamak için kullanılır.
     ///
-    /// `ALL_SUPPORTED`'a dahil olmayan ama bit konumu kayıtlı feature'lar
-    /// (`RESUME_V1`, `FOLDER_STREAM_V1`) burada otomatik içerilir — peer'ın
-    /// "ben bu future bit'i destekliyorum" demesinin AND ile düşmesi forward-
-    /// compat semantiğini gösterir.
+    /// PR-F (RFC-0005) sonrası `ALL_SUPPORTED = CHUNK_HMAC_V1 | RESUME_V1 |
+    /// FOLDER_STREAM_V1`; geri kalan tüm üst bit'ler henüz herhangi bir RFC'ye
+    /// atanmamış reserved alandır. Peer'ın "ben bu future bit'i destekliyorum"
+    /// demesinin AND ile düşmesi forward-compat semantiğini gösterir.
     #[cfg(test)]
     pub const RESERVED_FUTURE: u64 = !ALL_SUPPORTED;
 }
@@ -375,17 +380,18 @@ mod tests {
     #[test]
     fn all_supported_only_has_implemented_features() {
         // PR #103 review (Copilot): ALL_SUPPORTED yalnızca implementasyonu
-        // hazır feature'ları içerir. RFC-0004 (RESUME_V1) PR-F'de açıldı,
-        // PR #136 high yorumu sonrası geri kapatıldı (receiver truncate(true)
-        // → resume body sıfırlama riski). **PR-G ile geri açıldı**: receiver
-        // append/seek + hasher feed entegre. RFC-0005 (FOLDER_STREAM_V1)
-        // hâlâ unimplemented → advertise edilmez.
+        // hazır feature'ları içerir. RFC-0004 (RESUME_V1) PR-G ile geri
+        // açıldı (receiver append/seek + hasher feed entegre). **RFC-0005
+        // (FOLDER_STREAM_V1) PR-F ile aktive edildi**: PR-A → PR-E ile
+        // primitives + sender + receiver + chunk-HMAC/resume entegrasyonu
+        // tamamlandı, PR-F UI dialog + completion notification + capability
+        // gate açtı.
         assert_eq!(
             features::ALL_SUPPORTED,
-            features::CHUNK_HMAC_V1 | features::RESUME_V1
+            features::CHUNK_HMAC_V1 | features::RESUME_V1 | features::FOLDER_STREAM_V1
         );
         assert_ne!(features::ALL_SUPPORTED & features::CHUNK_HMAC_V1, 0);
         assert_ne!(features::ALL_SUPPORTED & features::RESUME_V1, 0);
-        assert_eq!(features::ALL_SUPPORTED & features::FOLDER_STREAM_V1, 0);
+        assert_ne!(features::ALL_SUPPORTED & features::FOLDER_STREAM_V1, 0);
     }
 }

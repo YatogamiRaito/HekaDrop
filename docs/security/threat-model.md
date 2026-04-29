@@ -297,6 +297,25 @@ Tam denetim yukarıda (§5.3 E-row). Doğrulama listesi:
 
 Test coverage: `src/connection.rs:1455+` (`sanitize_*` test bloğu). Fuzz-coverage fuzz/ altında mevcut (ayrı inceleme).
 
+**RFC-0005 folder bundle (HEKABUND, v0.8.0):** klasör transfer'inde her manifest
+entry path'i ek bir sanitize katmanından geçer
+(`crates/hekadrop-core/src/folder/sanitize.rs`):
+
+* Per-segment `..`/`.` reject — split segments üzerinde tek tek kontrol (joined
+  path'te whole-string compare yetersiz olurdu, bkz. `a/../b` saldırısı).
+* Null byte (`\0`) ve control char reject — POSIX/NTFS path engine'lerinde
+  truncation/early termination saldırılarına karşı.
+* Forward + backward separator collapse: receiver `\` ve `/` ikisini de
+  segment ayırıcı sayar, mixed-separator escape engellenir.
+* Manifest depth ≤ 32, entry count ≤ 10 000 — DoS guard (cf. §7.4).
+* Root name sanitize (`sanitize_root_name`): aynı kurallar + tek-segment.
+
+Mitigation kontrol noktası **çift**: sender `build_manifest` aşamasında ve
+receiver `extract_bundle` aşamasında aynı sanitize çalışır (defense in depth).
+Receiver-side **atomic-reject pipeline**: herhangi bir entry sanitize fail
+ederse staging dizini Drop guard ile silinir, hiçbir extracted dosya
+kullanıcının `~/Downloads`'una geçmez.
+
 ### 7.2 Rate Limiting Bypass (Issue #17 / PR #81)
 
 Önceki davranış: gate öncesi `is_trusted_legacy(peer_name, peer_id)` muafiyet; peer-controlled string spoof → 10/60s bypass → 32-permit `Semaphore` doldur → meşru peer DoS. Fix (commit `52e4ff1`, PR #81):
@@ -312,6 +331,22 @@ Test coverage: `src/connection.rs:1455+` (`sanitize_*` test bloğu). Fuzz-covera
 `ingest_file` — `symlink_metadata` (`src/payload.rs:349-360`) link resolve etmeden tip kontrol; symlink tespit → iptal. Test: `src/payload.rs:690-713`.
 
 **Kalan risk:** hardlink saldırısı (same-inode alt-dizinde placeholder olarak yaratıldıktan sonra A5 hardlink ekler) — `create_new` hardlink'e karşı koruma vermez; ama Downloads dir tipik olarak user-only ve hardlink için kaynak inode'a yazma izni zaten gerekir.
+
+**RFC-0005 folder bundle (v0.8.0):** Bundle extract pipeline TOCTOU + symlink
+race'lere karşı **staging-dir + atomic-rename** stratejisi kullanır
+(`crates/hekadrop-core/src/folder/extract.rs`):
+
+* Tüm extract işlemi `~/Downloads/.hekadrop-staging-<session_hex>/` altına
+  yapılır (`OpenOptions::create_new`); session-deterministik isim race
+  pencerelerini sıfırlar.
+* Per-entry sanitize fail, manifest mismatch, partial write veya cancel →
+  `ExtractGuard` Drop'ta tüm staging dizini silinir (atomic-reject); hiçbir
+  yarım dosya kullanıcı görünür alana geçmez.
+* Başarılı extract sonrası staging → final path `std::fs::rename` ile atomik
+  taşınır; collision varsa `unique_downloads_path` ile suffix.
+* Bundle dosyası (`.hekadrop-temp-<session>.bundle`) extract bittikten sonra
+  silinir; crash artığı kaldıysa sonraki Introduction'da `RESUME_V1` aktifse
+  partial olarak korunur, değilse silinir.
 
 ### 7.4 Resource Exhaustion
 

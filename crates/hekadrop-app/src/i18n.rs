@@ -201,6 +201,14 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "accept.trust_yes" => "Evet, güven",
         "accept.trust_later" => "Sadece bu sefer",
 
+        // RFC-0005 PR-F — folder accept dialog body satırı: peer'dan klasör
+        // bundle geldiğinde dosya listesi yerine "klasör — N dosya, X" özeti.
+        "prompt.folder_accept.body" => "📁 {0} klasörü — {1} dosya, {2}",
+
+        // RFC-0005 PR-F — folder completion notification
+        "notification.folder_received.title" => "{0} klasörü tamam",
+        "notification.folder_received.body" => "{1} dosya, {2} alındı",
+
         // Sender dialog
         "send.choose_title" => "Gönderilecek dosyaları seçin",
         "send.device_prompt" => "Hedef cihaz",
@@ -407,6 +415,13 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "accept.trust_prompt" => "Add {0} to the trusted devices list for this and future transfers?",
         "accept.trust_yes" => "Yes, trust",
         "accept.trust_later" => "Just this once",
+
+        // RFC-0005 PR-F — folder accept dialog body line.
+        "prompt.folder_accept.body" => "📁 {0} folder — {1} files, {2}",
+
+        // RFC-0005 PR-F — folder completion notification.
+        "notification.folder_received.title" => "Folder {0} received",
+        "notification.folder_received.body" => "{1} files, {2} received",
 
         // Sender dialog
         "send.choose_title" => "Select files to send",
@@ -774,6 +789,10 @@ mod tests {
             "onboarding.body",
             "onboarding.cta_settings",
             "onboarding.cta_dismiss",
+            // RFC-0005 PR-F — folder UI keys
+            "prompt.folder_accept.body",
+            "notification.folder_received.title",
+            "notification.folder_received.body",
         ];
         for k in &sample_keys {
             assert!(lookup_tr(k).is_some(), "Türkçe çeviri eksik: {k}");
