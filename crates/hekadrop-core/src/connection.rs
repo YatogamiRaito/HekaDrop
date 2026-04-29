@@ -1670,8 +1670,7 @@ mod tests {
         let mut p = std::env::temp_dir();
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos());
         // process id'yi de karıştır ki paralel test thread'leri çakışmasın.
         p.push(format!(
             "hekadrop-test-{}-{}-{}",

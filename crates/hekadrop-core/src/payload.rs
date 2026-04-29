@@ -1198,7 +1198,7 @@ mod tests {
         // body ingest pending'e düşer, henüz disk'te bir şey yok.
         assert!(a.ingest(&f0).await.unwrap().is_none());
         // verify_chunk_tag çağrılmadan dosya boyutu hâlâ 0 olmalı (placeholder).
-        let on_disk_after_body0 = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+        let on_disk_after_body0 = std::fs::metadata(&tmp).map_or(0, |m| m.len());
         assert_eq!(
             on_disk_after_body0, 0,
             "verify öncesi disk'e yazma olmamalı"

@@ -186,8 +186,7 @@ mod hex_hash_opt {
 fn now_epoch() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 impl TrustedDevice {
@@ -826,8 +825,7 @@ pub(crate) fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Resu
 pub fn backup_corrupt_file(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_nanos());
     let pid = std::process::id();
     let mut last_err: Option<std::io::Error> = None;
     for attempt in 0..16u32 {
