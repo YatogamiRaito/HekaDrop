@@ -55,7 +55,9 @@ use hekadrop::payload::{BundleMarker, PayloadAssembler};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use tempfile::tempdir;
 
 mod common;
