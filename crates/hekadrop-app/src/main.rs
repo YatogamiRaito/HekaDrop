@@ -22,6 +22,12 @@
         clippy::map_err_ignore,
     )
 )]
+// Scope-limited enforce: bkz. `lib.rs` aynı attribute. Bin compilation unit
+// ayrı olduğu için aynı `#![warn]` burada da gerekli — main.rs içindeki
+// modüller (`mod i18n;` vb.) private, pub-reachable yüzey yok denecek kadar az;
+// 0 hit ile direkt enforce. Yeni `pub fn` eklenirse `# Errors` / `# Panics`
+// doc bloğu zorunlu (CI `-D warnings` ile blok).
+#![warn(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 use anyhow::Result;
 use std::fmt::Write as _;
