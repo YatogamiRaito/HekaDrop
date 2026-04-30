@@ -137,7 +137,6 @@ impl DeviceIdentity {
 
     /// İleride `signed_data` doğrulaması için ECDSA imza anahtarı türetir.
     /// v0.6'da kullanılmıyor; imza akışı v0.7 pairing protokolüyle gelecek.
-    #[allow(dead_code)]
     #[must_use]
     pub fn signing_key(&self) -> [u8; 32] {
         let h = crate::crypto::hkdf_sha256(

@@ -348,7 +348,6 @@ impl Settings {
     /// Davranış: `is_trusted_legacy` ile aynı — legacy kayıtları hâlâ
     /// çalıştırır, TTL kontrolü yapmaz. Yeni kodun `is_trusted_by_hash`
     /// kullanması beklenir.
-    #[allow(dead_code)]
     #[must_use]
     pub fn is_trusted(&self, device_name: &str, id: &str) -> bool {
         self.is_trusted_legacy(device_name, id)
@@ -508,7 +507,6 @@ impl Settings {
     ///
     /// Gelecekte UI "bu ad/id çifti güvenlikten çıksın" seçeneği sunduğunda
     /// kullanılacak — şu an yalnız testlerden çağrılıyor.
-    #[allow(dead_code)]
     pub fn remove_trusted_by_id(&mut self, device_name: &str, id: &str) {
         self.trusted_devices
             .retain(|d| !(d.name == device_name && d.id == id));
@@ -519,7 +517,6 @@ impl Settings {
     /// v0.6'da zengin UI (TTL rozeti) kullanılmaya başlandığından ana UI
     /// yolu `push_trusted_to_ui` içindeki yapılandırılmış JSON'u tercih
     /// eder; bu fonksiyon legacy IPC çağrıları ve testler için korunur.
-    #[allow(dead_code)]
     #[must_use]
     pub fn trusted_display_list(&self) -> Vec<String> {
         self.trusted_devices.iter().map(|d| d.display()).collect()

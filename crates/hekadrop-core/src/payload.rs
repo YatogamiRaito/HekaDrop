@@ -78,12 +78,10 @@ pub const ASSEMBLER_GC_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Debug)]
 pub enum CompletedPayload {
     Bytes {
-        #[allow(dead_code)]
         id: i64,
         data: Vec<u8>,
     },
     File {
-        #[allow(dead_code)]
         id: i64,
         path: PathBuf,
         total_size: i64,
@@ -429,7 +427,6 @@ impl PayloadAssembler {
     /// Hiç chunk gelmemiş pending destination kayıtları için de diskteki
     /// 0-bayt placeholder'ı siler — aksi halde iptal sonrası indirme
     /// klasöründe sahibsiz sıfır bayt dosyalar birikir (review-18 MED).
-    #[allow(dead_code)]
     pub fn cancel(&mut self, payload_id: i64) {
         self.bytes_buffers.remove(&payload_id);
         if let Some(sink) = self.file_sinks.remove(&payload_id) {

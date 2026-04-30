@@ -106,7 +106,10 @@ struct PlannedFolder {
     /// Sender disk root path (folder kökü). Şu anda sadece debug log'da
     /// kullanılıyor; ileride retry/resume yolunda walk-yenileme için
     /// gerekecek (PR-D sonrası).
-    #[allow(dead_code)] // PR-C scope: log + future use; field zaten plan-level.
+    #[expect(
+        dead_code,
+        reason = "PR-C scope: log + future use; field plan-level (PR-D sonrası kullanılacak)"
+    )]
     root_path: std::path::PathBuf,
     /// Manifest validate edilmiş + JSON-serialize için hazır.
     manifest: crate::folder::BundleManifest,
