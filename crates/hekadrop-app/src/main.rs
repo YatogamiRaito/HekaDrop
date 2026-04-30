@@ -216,7 +216,7 @@ fn main() {
         )]
         {
             eprintln!("[HekaDrop] config yüklenirken hata: {err}");
-        }
+        };
         if matches!(err, settings::LoadError::Corrupt { .. }) {
             match settings::backup_corrupt_file(&config_path) {
                 Ok(backup) => {
@@ -376,7 +376,7 @@ fn setup_logging(log_level: settings::LogLevel) {
             )]
             {
                 eprintln!("[HekaDrop] log appender kurulamadı ({e}); stdout-only devam");
-            }
+            };
             None
         }
     };

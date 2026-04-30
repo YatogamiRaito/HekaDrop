@@ -119,7 +119,7 @@ impl TempHome {
         // SAFETY: HOME_LOCK altında seri çalışıyoruz; concurrent set_var yok.
         unsafe {
             std::env::set_var(key, &dir);
-        }
+        };
         Self {
             dir,
             saved,
@@ -343,7 +343,7 @@ async fn e2e_resume_happy_path_meta_lookup_and_hint_verify() {
         // `.meta` checkpoint pass'inde zaten yazıldı + `cancel()` çağrılmadığı
         // için partial dosya + .meta diskte kalır (resume senaryosu için).
         drop(asm);
-    }
+    };
 
     let dir = partial_dir().expect("partial_dir");
     let meta_path = dir.join(meta_filename(session_id, payload_id));
@@ -505,7 +505,7 @@ async fn e2e_resume_hash_mismatch_triggers_reject_and_fresh_restart() {
         )
         .await;
         drop(asm); // scope drop → BufWriter::drop flush'ler; cancel() çağırma → .meta + partial korunur
-    }
+    };
 
     let dir = partial_dir().expect("partial_dir");
     let meta_path = dir.join(meta_filename(session_id, payload_id));
@@ -524,7 +524,7 @@ async fn e2e_resume_hash_mismatch_triggers_reject_and_fresh_restart() {
         f.seek(SeekFrom::Start(partial_bytes / 2)).unwrap();
         f.write_all(&[0xFFu8]).unwrap();
         f.sync_all().unwrap();
-    }
+    };
 
     // Tamper sonrası hash farklı olmalı.
     let tampered_hash = partial_hash_streaming(&dest, partial_bytes).unwrap();
@@ -750,7 +750,7 @@ async fn e2e_resume_chunk_hmac_fastpath_tag_persisted_in_meta() {
         )
         .await;
         drop(asm); // scope drop → BufWriter::drop flush'ler; cancel() çağırma → .meta + partial korunur
-    }
+    };
 
     let dir = partial_dir().expect("partial_dir");
     let meta_path = dir.join(meta_filename(session_id, payload_id));
@@ -911,7 +911,7 @@ async fn e2e_pr_g_receiver_append_preserves_existing_part() {
             offset += chunk_len;
         }
         drop(asm); // BufWriter::drop → flush
-    }
+    };
 
     // Session 1 sonrası dosya boyutu tam 2 chunk; içerik 0xCC.
     let mid_bytes = std::fs::read(&dest).unwrap();
@@ -1021,7 +1021,7 @@ async fn e2e_pr_g_receiver_seek_to_received_bytes() {
         let ci = build_chunk_integrity(payload_id, 1, chunk_len, new_chunk.len(), tag).unwrap();
         let completed = asm.verify_chunk_tag(&ci).await.unwrap();
         assert!(completed.is_some(), "last_chunk verify finalize etmeli");
-    }
+    };
 
     let final_bytes = std::fs::read(&dest).unwrap();
     assert_eq!(

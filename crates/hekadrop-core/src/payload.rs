@@ -1036,7 +1036,7 @@ impl PayloadAssembler {
                     ci.chunk_index
                 ))
             })?;
-        }
+        };
 
         // Verify ok — pending'i çek, diske flush et.
         let sink = self

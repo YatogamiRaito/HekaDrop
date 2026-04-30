@@ -90,7 +90,7 @@ impl TempHome {
         // Diğer testler aynı kilit üzerinde bekler — concurrent set_var yok.
         unsafe {
             std::env::set_var(key, &dir);
-        }
+        };
         Self {
             dir,
             saved,

@@ -2501,7 +2501,7 @@ mod tests {
             f1.write_all(b"half").unwrap();
             let mut f2 = std::fs::File::create(&p2).unwrap();
             f2.write_all(b"half").unwrap();
-        }
+        };
         asm.register_file_destination(101, p1.clone()).unwrap();
         asm.register_file_destination(202, p2.clone()).unwrap();
         names.insert(101, "a.bin".into());
