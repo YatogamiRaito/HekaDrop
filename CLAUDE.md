@@ -280,5 +280,11 @@ Enforce edilenler (sweep history):
   - `clippy::implicit_hasher` (1 hit manuel fix) — `crates/hekadrop-core/src/resume.rs::cleanup_sweep` `in_use: &HashSet<(i64, i64)>` parametresi `<S: ::std::hash::BuildHasher>` generic'e alındı (`&HashSet<(i64, i64), S>`). Tüm in-tree caller `HashSet::new()` (default `RandomState`) geçtiği için backward-compatible (S inferred); custom hasher passing artık mümkün — public API genişlemesi geriye dönük uyumlu.
   - `clippy::same_functions_in_if_condition` (0 hit) — `if foo() && foo()` aynı pure fn iki defa çağrılır → değer cache'lenmeli; davranış-kritik (yan etki / cost duplikasyonu).
   - `clippy::transmute_ptr_to_ptr` (0 hit) — `transmute::<*const T, *const U>(p)` → `p.cast::<U>()`; safe pointer-cast idiom (unsafe boundary'yi daraltır).
+- **pedantic batch 11** (PR `chore/lint-pedantic-batch-11`: 5 lint, **hepsi 0 hit** mevcut codebase'de — direkt enforce, fix gerekmedi; doctest / dependency / extension / docs / test-panic idiom temizliği):
+  - `clippy::needless_doctest_main` (0 hit) — doctest'te `fn main()` redundant; rustdoc otomatik wrap'ler. (Proje doctest yoğun değil.)
+  - `clippy::wildcard_dependencies` (0 hit) — `Cargo.toml` `version = "*"` → semver pinning; supply-chain hijyeni. Workspace deps zaten explicit version.
+  - `clippy::case_sensitive_file_extension_comparisons` (0 hit) — `Path::ends_with(".png")` case mismatch bug. NOT: `crates/hekadrop-core/src/settings.rs::1806/1841` `OsStr::to_string_lossy().ends_with(".tmp")` ve `tests/mdns_discovery.rs::98` `str.ends_with("._tcp.local.")` lint kapsamı dışı (lint yalnız ASCII letter içeren single-dot extension literal'ı arar).
+  - `clippy::doc_lazy_continuation` (0 hit) — markdown list item continuation indentation tutarsızlığı.
+  - `clippy::should_panic_without_expect` (0 hit) — `#[should_panic]` payload eksik → `#[should_panic(expected = "...")]`; testin doğru paniği yakaladığını garanti eder.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.

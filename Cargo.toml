@@ -165,6 +165,13 @@ useless_let_if_seq = "warn"                 # 0 hit; `let x = a; if cond { x = b
 implicit_hasher = "warn"                    # 1 hit manuel fix: `crates/hekadrop-core/src/resume.rs::cleanup_sweep` `&HashSet<(i64, i64)>` parametresi `<S: BuildHasher>` generic'e alındı. Tüm caller `HashSet::new()` (default RandomState) kullandığı için backward-compatible (S inferred); custom hasher passing artık mümkün.
 same_functions_in_if_condition = "warn"     # 0 hit; `if foo() && foo()` aynı pure fn iki defa çağrılır — değer cache'lenmeli; davranış-kritik.
 transmute_ptr_to_ptr = "warn"               # 0 hit; `transmute::<*const T, *const U>(p)` → `p.cast::<U>()`; safe pointer cast idiom.
+# pedantic batch 11 — doctest / dependency / extension / docs / test-panic idiom temizliği (PR: chore/lint-pedantic-batch-11)
+# 5 lint, hepsi 0 hit; davranış-koruyucu, direkt enforce (RFC-0001 sonrası strictness sweep stratejisinin 11. batch'i).
+needless_doctest_main = "warn"                          # 0 hit; doctest'te `fn main()` redundant — rustdoc otomatik wrap'ler.
+wildcard_dependencies = "warn"                          # 0 hit; `Cargo.toml` `version = "*"` → semver pinning gerekli; supply-chain hijyeni (workspace deps zaten explicit).
+case_sensitive_file_extension_comparisons = "warn"      # 0 hit; `path.ends_with(".png")` → `Path::extension() + eq_ignore_ascii_case`; case mismatch bug. (Mevcut `OsStr::to_string_lossy().ends_with(".tmp")` Cow<str> üzerinde olduğu için lint kapsamı dışı.)
+doc_lazy_continuation = "warn"                          # 0 hit; markdown list item continuation indentation tutarsızlığı.
+should_panic_without_expect = "warn"                    # 0 hit; `#[should_panic]` payload eksik → `#[should_panic(expected = "...")]`; testin doğru paniği yakaladığını garanti eder.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
