@@ -414,6 +414,11 @@ pub(crate) fn copy_to_clipboard(text: &str) {
 // ---------------------------------------------------------------------------
 #[cfg(target_os = "windows")]
 pub(crate) mod win {
+    // Win32 sub-modülü çok sayıda parent symbol kullanır (PathBuf, Path,
+    // std::ffi, std::os::windows::*, vb.); explicit import listesi
+    // sürdürülemez (>20 symbol). Narrow scope `#[allow]` parent re-export
+    // pattern'ini koruyor.
+    #[allow(clippy::wildcard_imports)]
     use super::*;
     use std::cell::Cell;
     use windows::core::{Result, GUID, PCWSTR, PWSTR};
