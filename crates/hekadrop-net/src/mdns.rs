@@ -5,7 +5,11 @@ use std::net::IpAddr;
 use tracing::{info, warn};
 
 pub struct MdnsHandle {
+    /// `mdns-sd` arka plan daemon handle'ı; drop edildiğinde servis kaydı
+    /// `unregister` çağrısı ile temizlenir (bkz. `Drop` impl).
     daemon: ServiceDaemon,
+    /// Yayın yapılan servis kaydının tam mDNS adı (`<instance>.<service_type>`);
+    /// `Drop` sırasında `daemon.unregister(...)` parametresi olarak kullanılır.
     fullname: String,
 }
 
