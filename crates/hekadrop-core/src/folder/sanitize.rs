@@ -42,7 +42,7 @@ pub fn sanitize_received_relative_path(raw: &str) -> Result<Vec<String>, PathErr
     let mut out: Vec<String> = Vec::new();
     for seg in raw.split('/') {
         match seg {
-            "" | "." => continue,
+            "" | "." => {}
             ".." => return Err(PathError::Traversal),
             other => out.push(other.to_owned()),
         }

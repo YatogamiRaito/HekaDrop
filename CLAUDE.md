@@ -238,5 +238,11 @@ Enforce edilenler (sweep history):
   - `clippy::checked_conversions` (0 hit) — `i32 as u32` overflow-aware `try_from` alternatif.
   - `clippy::ptr_as_ptr` (0 hit) — `*const T as *const U` → `.cast()`.
   - `clippy::ref_option_ref` (0 hit) — `&Option<&T>` redundant indirection.
+- **pedantic batch 4** (PR `chore/lint-pedantic-batch-4`: 5 lint, 3 hit manuel fix; 0 allow; control-flow + iterator + collection idiom temizliği):
+  - `clippy::implicit_clone` (0 hit) — Clone tipinde `.to_owned()` → `.clone()`; intent netliği.
+  - `clippy::map_flatten` (0 hit) — `.map(...).flatten()` → `.flat_map(...)`; tek pass.
+  - `clippy::needless_continue` (3 hit manuel fix) — `crates/hekadrop-core/src/folder/sanitize.rs` (1) + `crates/hekadrop-core/src/settings.rs` (2 site: `backup_corrupt_file` retry loop + `atomic_write_mode` tmp open loop). Match arm sonu `=> continue` → `=> {}`; loop akışı zaten devam ediyor.
+  - `clippy::manual_assert` (0 hit) — `if !cond { panic!(...) }` → `assert!(cond, ...)`; idiomatic.
+  - `clippy::range_minus_one` (0 hit) — `0..(n-1)` → `0..=(n-2)`; inclusive range netliği.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.
