@@ -647,7 +647,10 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                 let mut s = state.stats.write();
                                 for plan in &plans {
                                     // INVARIANT: .max(0) ile alt sınır 0 → try_from infallible.
-                                    #[allow(clippy::expect_used)] // INVARIANT: max(0) ≥ 0
+                                    #[expect(
+                                        clippy::expect_used,
+                                        reason = "INVARIANT: plan.size.max(0) ≥ 0 → u64::try_from infallible"
+                                    )]
                                     let size_u = u64::try_from(plan.size.max(0))
                                         .expect("INVARIANT: max(0) sonrası i64 ≥ 0");
                                     s.record_sent(&peer_label, size_u);
@@ -960,7 +963,10 @@ pub async fn send_text(
                             let snap_opt = {
                                 let mut s = state.stats.write();
                                 // INVARIANT: .max(0) ile alt sınır 0 → try_from infallible.
-                                #[allow(clippy::expect_used)] // INVARIANT: max(0) ≥ 0
+                                #[expect(
+                                    clippy::expect_used,
+                                    reason = "INVARIANT: total_bytes.max(0) ≥ 0 → u64::try_from infallible"
+                                )]
                                 let total_bytes_u = u64::try_from(total_bytes.max(0))
                                     .expect("INVARIANT: max(0) sonrası i64 ≥ 0");
                                 s.record_sent(&peer_label, total_bytes_u);
@@ -1012,7 +1018,10 @@ pub async fn send_text(
 /// Metni Bytes payload olarak gönderir. Küçük metin tek chunk + son empty
 /// chunk ile biter; büyük metin `CHUNK_SIZE` sınırıyla bölünür (Android
 /// tarafı her iki durumu da assembler reassembly ile ele alır).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "send pipeline helper — socket/ctx/state/cancel/payload context; struct refactor v0.9'a defer"
+)]
 async fn send_text_bytes(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
@@ -1117,7 +1126,10 @@ fn build_introduction_text(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "send pipeline helper — file/ctx/state/resume context; struct refactor v0.9'a defer"
+)]
 async fn send_file_chunks(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
@@ -1141,7 +1153,10 @@ async fn send_file_chunks(
     if start_offset > 0 {
         // INVARIANT: start_offset > 0 outer if + caller `wait_for_resume_hint_or_zero`
         // negatif değerleri fallback `0` ile değiştiriyor → try_from infallible.
-        #[allow(clippy::expect_used)] // INVARIANT: start_offset > 0 (outer if)
+        #[expect(
+            clippy::expect_used,
+            reason = "INVARIANT: start_offset > 0 (outer if) + caller-checked non-negative → u64::try_from infallible"
+        )]
         let pos = u64::try_from(start_offset)
             .expect("INVARIANT: start_offset > 0 (outer if) + caller-checked non-negative");
         file.seek(std::io::SeekFrom::Start(pos)).await?;
@@ -1268,7 +1283,6 @@ async fn send_file_chunks(
 ///    - Hash verify (fast-path: `last_chunk_tag` + `chunk_hmac_key`, slow-
 ///      path: `partial_hash_streaming`) → mismatch → `HASH_MISMATCH` + 0
 /// 4. Tüm kontroller geçerse `hint.offset` döndür → caller seek edecek.
-#[allow(clippy::too_many_arguments)]
 async fn wait_for_resume_hint_or_zero(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
@@ -1436,7 +1450,10 @@ async fn verify_partial_hash_full(
     use subtle::ConstantTimeEq;
     // INVARIANT: caller `offset > 0` kontrolünü zaten yaptı (§5 row 3);
     // ayrıca spec_offset >= 0 garanti — try_from infallible.
-    #[allow(clippy::expect_used)] // INVARIANT: caller §5 row 3 rejects offset < 0
+    #[expect(
+        clippy::expect_used,
+        reason = "INVARIANT: caller §5 row 3 `INVALID_OFFSET` rejects offset < 0 → u64::try_from infallible"
+    )]
     let off_u = u64::try_from(offset)
         .expect("INVARIANT: caller §5 row 3 `INVALID_OFFSET` rejects offset < 0");
     let owned_path = path.to_path_buf();
@@ -1479,7 +1496,10 @@ async fn verify_last_chunk_tag(
 
     let mut file = tokio::fs::File::open(path).await?;
     // INVARIANT: caller offset > 0 + chunk-aligned + < file_size → last_chunk_start >= 0.
-    #[allow(clippy::expect_used)] // INVARIANT: last_chunk_start >= 0 (caller-checked)
+    #[expect(
+        clippy::expect_used,
+        reason = "INVARIANT: last_chunk_start >= 0 (caller offset > 0 + chunk-aligned) → u64::try_from infallible"
+    )]
     let pos = u64::try_from(last_chunk_start)
         .expect("INVARIANT: last_chunk_start >= 0 (caller offset > 0 + chunk-aligned)");
     file.seek(std::io::SeekFrom::Start(pos)).await?;
@@ -1688,7 +1708,10 @@ fn flatten_folder_to_files(folder: &PlannedFolder) -> Vec<PlannedFile> {
 /// artan `offset`. Last chunk `flags=1`. RFC-0003 chunk-HMAC enabled ise her
 /// data chunk'ından sonra `ChunkIntegrity` envelope'u emit edilir (mevcut
 /// `send_file_chunks` pattern'ı).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "folder bundle send pipeline — socket/ctx/state/manifest/cancel context; struct refactor v0.9'a defer"
+)]
 async fn send_folder_bundle(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
@@ -1808,7 +1831,10 @@ async fn send_folder_bundle(
 /// Tek bundle chunk'ını wrap + encrypt + write yap; chunk-HMAC enabled ise
 /// `ChunkIntegrity` envelope'u peşinden ekle. PR-C: hot-path artık
 /// `send_file_chunks` ile aynı emit pattern'ı.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bundle chunk emit helper — socket/ctx/payload/offset/body/flags context; struct refactor v0.9'a defer"
+)]
 async fn send_bundle_chunk(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
@@ -1923,7 +1949,10 @@ fn compute_percent(bytes_before: i64, offset: i64, total: i64) -> Option<u8> {
     let product = cumulative.checked_mul(100)?;
     let raw = product.checked_div(total)?;
     // INVARIANT: clamp(0, 100) sonrası değer 0..=100 → u8::try_from infallible.
-    #[allow(clippy::expect_used)] // INVARIANT: clamp(0, 100) ⊆ u8 range
+    #[expect(
+        clippy::expect_used,
+        reason = "INVARIANT: clamp(0, 100) ⊆ u8 range → u8::try_from infallible"
+    )]
     let percent =
         u8::try_from(raw.clamp(0, 100)).expect("INVARIANT: clamp(0, 100) → 0..=100 fits in u8");
     Some(percent)

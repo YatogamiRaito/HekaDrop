@@ -183,7 +183,10 @@ impl BundleManifest {
         let digest = self.manifest_sha256()?;
         // INVARIANT: digest sabit 32 byte; [0..8] slice her zaman 8 byte.
         // try_into() infallible — array → array.
-        #[allow(clippy::expect_used)] // INVARIANT: 32-byte digest, [0..8] her zaman 8 byte
+        #[expect(
+            clippy::expect_used,
+            reason = "INVARIANT: 32-byte sha256 digest; [0..8] slice her zaman 8 byte → try_into infallible"
+        )]
         let prefix: [u8; 8] = digest[0..8].try_into().expect("sha256 prefix is 8 bytes");
         Ok(i64::from_be_bytes(prefix))
     }

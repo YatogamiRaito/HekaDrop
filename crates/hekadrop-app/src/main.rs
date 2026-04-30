@@ -1422,7 +1422,10 @@ fn js_safe_json(v: &serde_json::Value) -> String {
     // fail etmez (yalnız map key'i string olmayan veya recursive yapı
     // panic'leyebilir, ama `Value`'nun map key tipi `String`'tir). Bu
     // expect runtime hatası değil, invariant'ı belgelemek için.
-    #[allow(clippy::expect_used)]
+    #[expect(
+        clippy::expect_used,
+        reason = "INVARIANT: serde_json::Value serialize infallible (map key tipi String, recursion yok)"
+    )]
     let s = serde_json::to_string(v).expect("serde_json::Value serialize infallible");
     s.replace("</", "<\\/")
         .replace('\u{2028}', "\\u2028")

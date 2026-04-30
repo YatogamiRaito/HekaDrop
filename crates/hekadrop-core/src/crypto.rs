@@ -20,7 +20,10 @@ pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> 
     // INVARIANT: HKDF-SHA256 yalnızca `len > 255 * HashLen (= 8160 bayt)` için
     // başarısız olur; tüm caller'lar (UKEY2 key derivation, Quick Share session
     // keys) ≤32 bayt ister. Çağrı kontrat ihlali = programlama hatası.
-    #[allow(clippy::expect_used)]
+    #[expect(
+        clippy::expect_used,
+        reason = "INVARIANT: HKDF len ≤ 8160 bayt; tüm caller'lar ≤32 bayt ister, fail = programlama hatası"
+    )]
     hk.expand(info, &mut out)
         .expect("HKDF len > 255*32 invariant ihlali");
     out
@@ -83,7 +86,10 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     // (kısa key zero-pad'lenir, uzun key SHA-256'dan geçer). `new_from_slice`
     // dökümante edilmiş olarak hiçbir koşulda fail etmez — yalnız trait
     // signature uniformluğu için Result döner.
-    #[allow(clippy::expect_used)]
+    #[expect(
+        clippy::expect_used,
+        reason = "INVARIANT: HMAC-SHA256 (RFC 2104) tüm key uzunluklarını kabul eder; Result yalnız trait uniformluğu"
+    )]
     let mut mac =
         HmacSha256::new_from_slice(key).expect("HMAC-SHA256 her key uzunluğunu kabul eder");
     mac.update(data);

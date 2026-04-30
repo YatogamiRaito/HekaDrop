@@ -333,7 +333,10 @@ impl PayloadAssembler {
     // INVARIANT: 8 argüman — production caller tek nokta (handle_resume_for_file).
     // Builder pattern overkill; receiver-side resume injection field'ları (4 yeni)
     // organik olarak biriktirildi, struct-arg refactor scope dışı.
-    #[allow(clippy::too_many_arguments)] // INVARIANT: tek production caller, struct-arg refactor scope dışı
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "INVARIANT: tek production caller (handle_resume_for_file); resume injection field'ları organik biriktirildi, struct refactor v0.9'a defer"
+    )]
     pub fn enable_resume_with_offset(
         &mut self,
         payload_id: i64,

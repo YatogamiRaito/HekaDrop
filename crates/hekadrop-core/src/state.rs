@@ -152,7 +152,10 @@ impl AppState {
         // yazılamıyor identity ile yola devam etmek "her cihaz aynı görünür"
         // güvenlik açığı doğurur. Startup'ta panik = kullanıcıya hata göster,
         // devam etme. Issue #17.
-        #[allow(clippy::expect_used)]
+        #[expect(
+            clippy::expect_used,
+            reason = "SECURITY: identity load/create fail = trust kararı geçersiz; startup panik kullanıcıya hata gösterir (Issue #17)"
+        )]
         let identity = DeviceIdentity::load_or_create_at(identity_path)
             .expect("DeviceIdentity yüklenemedi/oluşturulamadı — identity.key kontrol edin");
         // Stats corrupt olursa default + uyarı; geçmiş istatistikler kaybolur
