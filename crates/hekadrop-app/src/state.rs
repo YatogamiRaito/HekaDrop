@@ -49,7 +49,10 @@ pub(crate) fn get() -> Arc<AppState> {
     // INVARIANT: `init()` her zaman `main`'in ilk işlerinden — `get()`
     // öncesinde çağrılması garanti. Aksi durum programlama hatası, panik
     // yerine sessiz default state üretmek bug'ı maskeler.
-    #[allow(clippy::expect_used)]
+    #[expect(
+        clippy::expect_used,
+        reason = "INVARIANT: state::init() main'in ilk işi; get() öncesinde çağrılmamış olması = programlama hatası"
+    )]
     STATE
         .get()
         .expect("state::init() çağrılmadan state::get() çağrıldı")

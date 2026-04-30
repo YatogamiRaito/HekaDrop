@@ -498,7 +498,10 @@ pub async fn handle(
 /// içinde Drop guard); UI'a `ToastRaw` ile reject mesajı düşer ve hiçbir
 /// `History` kaydı eklenmez. Başarı → `History` extract edilen klasör
 /// path'i ile push edilir.
-#[allow(clippy::too_many_arguments)] // INVARIANT: 9 arg — UI/state/assembler dispatch tek nokta
+#[expect(
+    clippy::too_many_arguments,
+    reason = "9 arg — UI/state/assembler dispatch tek nokta; struct refactor v0.9'a defer"
+)]
 async fn finalize_received_payload(
     peer: &SocketAddr,
     id: i64,
@@ -561,8 +564,10 @@ async fn finalize_received_payload(
                     // INVARIANT (CLAUDE.md I-5): payload finalize'da
                     // total_size ≥ 0 garanti (payload.rs ingest_file negatif
                     // reject); try_from non-negative garantisini lint'e taşır.
-                    #[allow(clippy::expect_used)]
-                    // INVARIANT: payload ingest_file rejects total_size < 0
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "INVARIANT: payload ingest_file rejects total_size < 0 → u64::try_from infallible"
+                    )]
                     let total_u = u64::try_from(total_size).expect(
                         "INVARIANT: total_size >= 0 (payload ingest_file rejects negative)",
                     );
@@ -696,7 +701,10 @@ fn finalize_received_file(
         let snap_opt = {
             let mut s = state.stats.write();
             // payload.rs ingest_file aşamasında `total_size < 0` reddediliyor — burada >= 0 garanti.
-            #[allow(clippy::expect_used)] // INVARIANT: payload ingest_file rejects total_size < 0
+            #[expect(
+                clippy::expect_used,
+                reason = "INVARIANT: payload ingest_file rejects total_size < 0 → u64::try_from infallible"
+            )]
             let total_size_u = u64::try_from(total_size)
                 .expect("INVARIANT: total_size >= 0 (payload ingest_file rejects negative)");
             s.record_received(remote_name, total_size_u);
@@ -808,7 +816,10 @@ enum FlowOutcome {
 // RFC-0001 §5 Adım 5b: handler call-graph'ında 13 arg vardı; 14. olarak `ui`
 // eklendi. Adım 5c'de 15. olarak `state` eklendi (singleton lookup yerine
 // inject); helper'lar bir sonraki refactor'da struct olarak gruplanacak.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "RFC-0001 §5 — handler call-graph (15 arg: socket/ctx/assembler/ui/state/...); HandlerCtx struct refactor v0.9'a defer"
+)]
 async fn handle_sharing_frame(
     peer: &SocketAddr,
     socket: &mut TcpStream,
@@ -1563,7 +1574,10 @@ fn resolve_resume_path(
     // SECURITY: untrusted-disk size — `meta.received_bytes` ile eşleşmesi
     // resume offset semantiğinin disk gerçeğine oturduğunu garanti eder.
     // `try_from` validate() received_bytes >= 0 garantisini lint'e taşır.
-    #[allow(clippy::expect_used)] // INVARIANT: PartialMeta::validate() rejects received_bytes < 0
+    #[expect(
+        clippy::expect_used,
+        reason = "INVARIANT: PartialMeta::validate() rejects received_bytes < 0 → u64::try_from infallible"
+    )]
     let expected = u64::try_from(meta.received_bytes)
         .expect("INVARIANT: PartialMeta::validate() guards received_bytes >= 0");
     if md.len() != expected {
@@ -1592,7 +1606,10 @@ fn resolve_resume_path(
 ///
 /// Bu PR (PR-C) kapsamında sadece **emit** tarafı; sender bu hint'i consume
 /// edecek (PR-D), receiver `.part` üstüne devam edecek (PR-E).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "resume hint emit pipeline — socket/ctx/assembler/dir/session/payload/file context; struct refactor v0.9'a defer"
+)]
 async fn handle_resume_for_file(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
@@ -1738,8 +1755,10 @@ async fn handle_resume_for_file(
         // SECURITY: receiver tarafı kendi diskindeki `.part`'ı doğruluyor —
         // `meta.received_bytes` validate'lı. `try_from` validate() guarantee'sini
         // lint'e taşır (panic infallible).
-        #[allow(clippy::expect_used)]
-        // INVARIANT: PartialMeta::validate() rejects received_bytes < 0
+        #[expect(
+            clippy::expect_used,
+            reason = "INVARIANT: PartialMeta::validate() rejects received_bytes < 0 → u64::try_from infallible"
+        )]
         let off_u = u64::try_from(meta.received_bytes)
             .expect("INVARIANT: PartialMeta::validate() guards received_bytes >= 0");
         let dest_path = std::path::Path::new(&meta.dest_path);
@@ -1794,7 +1813,10 @@ async fn handle_resume_for_file(
 /// - Bilinmeyen `Payload` varyantı → log + skip (forward-compat).
 ///
 /// Hata döner: socket write, ctx.encrypt, prost decode failure'ları.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "hekadrop frame dispatcher — socket/ctx/capabilities/peer/state context; struct refactor v0.9'a defer"
+)]
 async fn handle_hekadrop_frame(
     bytes: &[u8],
     peer: &SocketAddr,

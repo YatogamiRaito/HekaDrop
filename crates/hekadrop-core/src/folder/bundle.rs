@@ -84,20 +84,29 @@ impl BundleHeader {
 
         // INVARIANT: slice uzunluğu ≥ 16 yukarıda doğrulandı; aşağıdaki
         // try_into'lar sabit-array slice → array, infallible.
-        #[allow(clippy::expect_used)] // INVARIANT: 8-byte slice → [u8; 8] sonsuz.
+        #[expect(
+            clippy::expect_used,
+            reason = "INVARIANT: bytes.len() >= 16 yukarıda doğrulandı; 8-byte slice → [u8; 8] infallible"
+        )]
         let magic: [u8; 8] = bytes[0..8].try_into().expect("8-byte slice");
         if magic != HEKABUND_MAGIC {
             return Err(BundleError::MagicMismatch(magic));
         }
 
-        #[allow(clippy::expect_used)] // INVARIANT: 4-byte slice → [u8; 4] sonsuz.
+        #[expect(
+            clippy::expect_used,
+            reason = "INVARIANT: bytes.len() >= 16 yukarıda doğrulandı; 4-byte slice → [u8; 4] infallible"
+        )]
         let version_bytes: [u8; 4] = bytes[8..12].try_into().expect("4-byte slice");
         let version = u32::from_be_bytes(version_bytes);
         if version != HEKABUND_VERSION {
             return Err(BundleError::UnsupportedVersion(version));
         }
 
-        #[allow(clippy::expect_used)] // INVARIANT: 4-byte slice → [u8; 4] sonsuz.
+        #[expect(
+            clippy::expect_used,
+            reason = "INVARIANT: bytes.len() >= 16 yukarıda doğrulandı; 4-byte slice → [u8; 4] infallible"
+        )]
         let manifest_len_bytes: [u8; 4] = bytes[12..16].try_into().expect("4-byte slice");
         let manifest_len = u32::from_be_bytes(manifest_len_bytes);
         if manifest_len == 0 {

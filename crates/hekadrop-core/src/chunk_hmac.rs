@@ -118,7 +118,10 @@ pub fn compute_tag(
     // gereği TÜM key uzunluklarını kabul eder (kısa key zero-pad'lenir, uzun
     // key SHA-256'dan geçer). Burada key sabit 32 byte; `Result` yalnız trait
     // signature uniformluğu için var. `crypto::hmac_sha256` ile aynı invariant.
-    #[allow(clippy::expect_used)]
+    #[expect(
+        clippy::expect_used,
+        reason = "INVARIANT: HMAC-SHA256 (RFC 2104) tüm key uzunluklarını kabul eder; Result yalnız trait uniformluğu"
+    )]
     let mut mac = HmacSha256::new_from_slice(chunk_hmac_key)
         .expect("HMAC-SHA256 her key uzunluğunu kabul eder");
     mac.update(&prefix);
