@@ -454,15 +454,24 @@ pub(crate) mod win {
     /// `SHGetKnownFolderPath` → `PathBuf`. Çıktı bellek `CoTaskMemFree` ile serbest
     /// bırakılır (aksi halde leak). Bellek tahsisi başarısızsa `None`.
     pub(super) fn known_folder(folder: &GUID) -> Option<PathBuf> {
-        // SAFETY: `folder` is a valid GUID reference from the caller.
-        // `SHGetKnownFolderPath` on success writes a freshly CoTaskMem-
-        // allocated, null-terminated UTF-16 string whose ownership we take
-        // via `pwstr`. We null-check before deref, compute `len` with
-        // `PCWSTR::len()` (stops at the NUL the API writes), build a
-        // read-only slice bounded by that `len`, copy it into an
-        // `OsString` via `from_wide`, and only then release the buffer
-        // with the matching allocator `CoTaskMemFree`. No dangling
-        // reference escapes the block.
+        // SAFETY: `SHGetKnownFolderPath`
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath)
+        // - `folder` is a `&GUID` from the caller; only read, no aliasing.
+        // - On success the API writes a freshly `CoTaskMemAlloc`'d,
+        //   NUL-terminated UTF-16 string whose ownership transfers to us
+        //   via `pwstr`. `.ok()?` short-circuits on HRESULT failure
+        //   (no buffer was allocated to leak).
+        // - We null-check before any deref; compute `len` with
+        //   `PCWSTR::len()` which stops at the NUL the API guarantees to
+        //   write, then build a read-only slice bounded by exactly that
+        //   `len` (no over-read).
+        // - The buffer is released via the matching allocator
+        //   `CoTaskMemFree`
+        //   (MSDN: learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-cotaskmemfree)
+        //   on every path that took ownership; no dangling reference
+        //   escapes the block (the `OsString` owns a copy).
+        // - Thread-safe: `SHGetKnownFolderPath` is callable from any
+        //   thread without prior COM init for `KF_FLAG_DEFAULT`.
         unsafe {
             // windows-rs 0.60: flag enum doğrudan geçilir (eski sürümlerde u32).
             let pwstr: PWSTR = SHGetKnownFolderPath(folder, KF_FLAG_DEFAULT, None).ok()?;
@@ -483,14 +492,20 @@ pub(crate) mod win {
 
     /// Bilgisayar DNS hostname'i. Başarısızsa `None`.
     pub(super) fn computer_name() -> Option<String> {
-        // SAFETY: `buf` is a heap `Vec<u16>` of 256 elements owned for the
-        // full call. We pass a `PWSTR` pointing at its start together with
-        // `&mut size` giving the API the exact capacity in wide chars.
-        // `GetComputerNameExW` writes at most `size` wide chars and
-        // updates `size` to the count excluding the NUL, so
-        // `buf.truncate(size)` stays within bounds. No other reference
-        // aliases `buf` during the FFI call, and `&mut size` is the
-        // exclusive borrow of a local.
+        // SAFETY: `GetComputerNameExW`
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getcomputernameexw)
+        // - `buf` is a heap `Vec<u16>` of 256 elements owned for the full
+        //   call; no other borrow exists during the FFI call.
+        // - `PWSTR(buf.as_mut_ptr())` is a unique exclusive pointer into
+        //   that allocation; `&mut size` is the exclusive borrow of a
+        //   local `u32`.
+        // - Per MSDN the API writes at most `*size` wide chars and on
+        //   success updates `*size` to the count excluding the NUL, so
+        //   `buf.truncate(size)` stays strictly within the 256-cap
+        //   allocation (no OOB).
+        // - On `Err`: we return `None` without reading `buf`; allocation
+        //   is dropped by `Vec` destructor.
+        // - Thread-safe per MSDN; no shared state.
         unsafe {
             let mut size: u32 = 256;
             let mut buf = vec![0u16; size as usize];
@@ -540,12 +555,21 @@ pub(crate) mod win {
             if flag.get() {
                 return;
             }
-            // SAFETY: `CoInitializeEx` takes no pointer inputs from us —
-            // the first argument is `None` (reserved) and the second is a
-            // bitflag value. It is documented by MSDN as callable from any
-            // thread; thread-safety is handled by COM itself. We inspect
-            // the returned HRESULT below and only mark `COM_INITED` once
-            // per thread so the per-thread COM ref-count does not grow.
+            // SAFETY: `CoInitializeEx`
+            // (MSDN: learn.microsoft.com/en-us/windows/win32/api/objbase/nf-objbase-coinitializeex)
+            // - First arg `None` (reserved, must be NULL) — pointer-free,
+            //   no dereference.
+            // - Second arg is a `COINIT` bitflag enum value (not a
+            //   pointer).
+            // - Callable from any thread; per-thread COM ref-count is
+            //   managed by COM. Our `COM_INITED` thread-local guards
+            //   against incrementing the count more than once per thread
+            //   (we never call `CoUninitialize`; OS reaps on process
+            //   exit, see RFC note above).
+            // - Return is an HRESULT inspected below; `S_FALSE` and
+            //   `RPC_E_CHANGED_MODE` are explicitly handled as success
+            //   variants. On unknown failure the flag stays `false` so a
+            //   subsequent call may retry.
             let hr =
                 unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
             // windows-rs `HRESULT` → `ok()` S_OK/S_FALSE'ı tamam sayar,
@@ -563,14 +587,19 @@ pub(crate) mod win {
     pub(super) fn shell_execute_open(target: &std::ffi::OsStr) {
         let wide = to_wide_os(target);
         let verb = to_wide("open");
-        // SAFETY: `wide` and `verb` are local `Vec<u16>`s, both NUL-
-        // terminated by `to_wide*` and kept alive for the whole call
-        // (they are dropped at end-of-scope, after `ShellExecuteW`
-        // returns). The `PCWSTR`s read at most until the embedded NUL;
-        // the remaining arguments are `PCWSTR::null()`, documented as
-        // valid for "no parameters / default directory". `ShellExecuteW`
-        // is synchronous w.r.t. its argument reads, so neither buffer is
-        // touched after return.
+        // SAFETY: `ShellExecuteW`
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew)
+        // - `wide` and `verb` are local `Vec<u16>`s NUL-terminated by
+        //   `to_wide*`; both are alive for the whole block (dropped only
+        //   at end of scope, after the synchronous call returns).
+        // - The `PCWSTR`s are read at most until the embedded NUL.
+        // - `lpDirectory` and `lpParameters` are `PCWSTR::null()`, which
+        //   per MSDN means "use defaults" — both arguments accept NULL.
+        // - `hwnd = None` (NULL parent) is permitted; result is a
+        //   pseudo-`HINSTANCE` we deliberately discard with `let _` (we
+        //   only care about best-effort launch; failure is silent).
+        // - Synchronous w.r.t. argument reads, so buffers are not
+        //   touched after return.
         unsafe {
             let _ = ShellExecuteW(
                 None,
@@ -589,14 +618,22 @@ pub(crate) mod win {
     pub(super) fn select_in_explorer(path: &Path) -> Result<()> {
         ensure_com_init();
         let wide = to_wide_os(path.as_os_str());
-        // SAFETY: COM is initialised for this thread by `ensure_com_init`
-        // above — precondition of both APIs used here. `wide` is a local
-        // NUL-terminated UTF-16 buffer alive for the whole block. On
-        // success `ILCreateFromPathW` returns a PIDL we own; we null-
-        // check it before use and always free it with the matching
-        // `ILFree` on both success and error paths of
-        // `SHOpenFolderAndSelectItems`. The call only reads the PIDL
-        // and returns a `Result`; no reference escapes.
+        // SAFETY: `ILCreateFromPathW` + `SHOpenFolderAndSelectItems`
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-ilcreatefrompathw)
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shopenfolderandselectitems)
+        // - COM is initialised for this thread by `ensure_com_init`
+        //   above — documented precondition for both APIs.
+        // - `wide` is a local NUL-terminated UTF-16 buffer alive for the
+        //   whole block; the `PCWSTR` reads only until that NUL.
+        // - On success `ILCreateFromPathW` returns a PIDL whose ownership
+        //   transfers to us; we null-check before use.
+        // - The PIDL is freed via the matching allocator `ILFree`
+        //   (MSDN: learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-ilfree)
+        //   on both success and error paths of
+        //   `SHOpenFolderAndSelectItems` (the latter only reads the
+        //   PIDL, never assumes ownership).
+        // - On allocation failure we return early with the per-thread
+        //   Win32 error; no PIDL was allocated to leak.
         unsafe {
             let pidl = ILCreateFromPathW(PCWSTR(wide.as_ptr()));
             if pidl.is_null() {
@@ -626,23 +663,36 @@ pub(crate) mod win {
         let bytes = wide.len() * std::mem::size_of::<u16>();
 
         // SAFETY: This block drives the documented Win32 clipboard
-        // protocol. `wide` is a local NUL-terminated `Vec<u16>` alive for
-        // the full block; `bytes` is its exact byte length. Each raw-
-        // pointer op respects its precondition:
-        //   - `GlobalAlloc(GMEM_MOVEABLE, bytes)` returns an owned HGLOBAL
-        //     or NULL (handled); we free it via `GlobalFree` on every
-        //     error path.
-        //   - `GlobalLock(hmem)` yields a pointer valid for `bytes` bytes
-        //     until the matching `GlobalUnlock`; we null-check, copy
-        //     exactly `wide.len()` u16s (non-overlapping, within size),
-        //     then Unlock before releasing the lock.
+        // ownership-transfer protocol
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats
+        //  + learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata).
+        // - `wide` is a local NUL-terminated `Vec<u16>` alive for the
+        //   full block; `bytes` is its exact byte length.
+        // Each raw-pointer op respects its precondition:
+        //   - `GlobalAlloc(GMEM_MOVEABLE, bytes)`
+        //     (MSDN: learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-globalalloc)
+        //     returns an owned HGLOBAL or NULL (handled); we free it via
+        //     `GlobalFree` on every error path.
+        //   - `GlobalLock(hmem)`
+        //     (MSDN: learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-globallock)
+        //     yields a pointer valid for `bytes` bytes until the matching
+        //     `GlobalUnlock`; we null-check, copy exactly `wide.len()`
+        //     `u16`s with `copy_nonoverlapping` (src/dst are disjoint
+        //     allocations and `wide.len() * size_of::<u16>() == bytes`,
+        //     so no OOB), then `GlobalUnlock` releases the lock before
+        //     any other API touches the handle.
         //   - `OpenClipboard`/`EmptyClipboard`/`CloseClipboard` take no
-        //     pointer inputs; errors free `hmem` and close the clipboard.
-        //   - On `SetClipboardData` success the clipboard takes ownership
-        //     of `hmem` — we must not free it. On failure we free.
+        //     pointer inputs (apart from optional NULL hwnd); on any
+        //     error we free `hmem` AND close the clipboard.
+        //   - On `SetClipboardData` success the system takes ownership
+        //     of `hmem` (per MSDN) — we must NOT free it. On failure we
+        //     free it ourselves.
         // Net effect: `hmem` is freed exactly once on every error path
         // and transferred to the clipboard on the success path, so no
         // leak and no double free.
+        // Thread safety: `OpenClipboard`/`CloseClipboard` serialize via
+        // the system clipboard owner; concurrent callers block, never
+        // race.
         unsafe {
             let hmem = GlobalAlloc(GMEM_MOVEABLE, bytes)?;
             if hmem.0.is_null() {
@@ -701,11 +751,27 @@ pub(crate) mod win {
     /// buraya clamp ediyoruz (malformed/oob handle'da buffer over-read yok).
     pub(super) fn clipboard_get() -> Result<Option<String>> {
         const CF_UNICODETEXT: u32 = 13;
-        // SAFETY: OpenClipboard alır → GetClipboardData handle'ı döner (sahiplik
-        // clipboard'ta kalır, biz sadece okuruz). GlobalLock → sabit pointer.
-        // Okunacak u16 sayısı MIN(GlobalSize/2, PCWSTR::len()) — iki bağımsız
-        // üst sınır, ikisi de NUL'a kadar garanti verir. GlobalUnlock ve
-        // CloseClipboard her yoldan çağrılır; handle'ın sahipliği clipboard'ta.
+        // SAFETY: Read-only clipboard access pattern
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getclipboarddata
+        //  + learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-globallock).
+        // - `OpenClipboard(None)` (NULL hwnd OK per MSDN); failure
+        //   propagates via `?` and no resource was acquired.
+        // - `GetClipboardData(CF_UNICODETEXT)` returns a borrowed handle;
+        //   the system retains ownership (we MUST NOT free or modify the
+        //   underlying buffer — read-only).
+        // - `GlobalLock(hglobal)` yields a stable pointer valid until the
+        //   matching `GlobalUnlock`; we null-check before any deref.
+        // - Read length is `min(GlobalSize/2, PCWSTR::len())`. Two
+        //   independent upper bounds:
+        //     * `GlobalSize` (MSDN: ...nf-winbase-globalsize) is the true
+        //       allocation size in bytes — divides by 2 for `u16` slots,
+        //       guards against malformed (non-NUL-terminated) data.
+        //     * `PCWSTR::len()` walks until the embedded NUL.
+        //   The smaller wins, so `from_raw_parts(ptr, len)` cannot
+        //   over-read the allocation regardless of malformed input.
+        // - `GlobalUnlock` and `CloseClipboard` are called on every exit
+        //   path (early-return guards include both); the handle's
+        //   ownership remains with the clipboard.
         unsafe {
             OpenClipboard(None)?;
             let Ok(handle) = GetClipboardData(CF_UNICODETEXT) else {

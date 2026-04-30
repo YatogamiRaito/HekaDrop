@@ -2024,12 +2024,23 @@ fn toggle_login_item() {
 
     // Mevcut durumu yokla (varsa sil → toggle off).
     let mut hkey = HKEY::default();
-    // SAFETY: `subkey_w` ve `value_w` `to_wide` ile üretilmiş NUL-terminated
-    // local `Vec<u16>`'lar; blok süresince canlı. `&mut hkey` lokal HKEY'in
-    // exclusive borrow'u — `RegOpenKeyExW` başarılı olursa açılan handle'ı
-    // yazar; `RegCloseKey` ile her iki dalda da kapatıyoruz. `RegQueryValueExW`
-    // pData/pcbData için `None`/`Some(&mut size)` veriyor, bu yalnızca
-    // değerin varlığını/uzunluğunu sorgular, buffer over-write riski yok.
+    // SAFETY: Existence check for HKCU\...\Run\HekaDrop value.
+    // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regopenkeyexw)
+    // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regqueryvalueexw)
+    // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regclosekey)
+    // - `subkey_w`/`value_w` are NUL-terminated local `Vec<u16>`s alive
+    //   for the whole block; PCWSTRs read only up to the NUL.
+    // - `&mut hkey` is the exclusive borrow of a local `HKEY` — only
+    //   written by `RegOpenKeyExW` on success; on the `rc != ERROR_SUCCESS`
+    //   path no handle exists so no close is required.
+    // - On open success we always invoke `RegCloseKey(hkey)` before
+    //   returning the boolean (no handle leak).
+    // - `RegQueryValueExW` is called with `lpType = None`,
+    //   `lpData = None`, `lpcbData = Some(&mut size)`; per MSDN this
+    //   form ONLY reports the value type / required buffer size — no
+    //   buffer is written, so over-write is impossible.
+    // - Thread-safe per MSDN; no shared state besides the registry
+    //   itself which the kernel serialises.
     let exists = unsafe {
         let rc = RegOpenKeyExW(
             HKEY_CURRENT_USER,
@@ -2057,11 +2068,22 @@ fn toggle_login_item() {
 
     if exists {
         let mut hkey = HKEY::default();
-        // SAFETY: `subkey_w` ve `value_w` `to_wide`'dan gelen NUL-terminated
-        // local buffer'lar; blok süresince canlı. `&mut hkey` lokal HKEY'e
-        // exclusive borrow. Açılan handle başarı durumunda `RegCloseKey` ile
-        // kapatılıyor; başarısız `RegOpenKeyExW`'da handle yazılmaz, kapatma
-        // gerekmez. `RegDeleteValueW` yalnızca PCWSTR'i NUL'a kadar okur.
+        // SAFETY: Delete value (toggle off branch).
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regopenkeyexw)
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regdeletevaluew)
+        // - `subkey_w`/`value_w` are NUL-terminated local `Vec<u16>`s
+        //   alive for the whole block; PCWSTRs read only up to the NUL.
+        // - `&mut hkey` is the exclusive borrow of a local `HKEY` —
+        //   `RegOpenKeyExW` writes the handle only on `ERROR_SUCCESS`.
+        // - On success: `RegDeleteValueW` reads its PCWSTR up to NUL and
+        //   does not write any caller buffer; we always pair it with
+        //   `RegCloseKey` (no handle leak).
+        // - On open failure: no handle was written, so no close is
+        //   needed (and the `if rc == ERROR_SUCCESS` guard prevents
+        //   touching `hkey`).
+        // - Per-user HKCU is unique to the running user — no cross-
+        //   process sharing risk beyond what the kernel already
+        //   serialises.
         unsafe {
             let rc = RegOpenKeyExW(
                 HKEY_CURRENT_USER,
@@ -2119,14 +2141,26 @@ fn toggle_login_item() {
     // REG_SZ: byte uzunluğu (null dahil).
     let byte_len = cmdline_w.len() * std::mem::size_of::<u16>();
 
-    // SAFETY: `subkey_w`/`value_w`/`cmdline_w` NUL-terminated local
-    // `Vec<u16>`'lar, blok süresince canlı. `byte_len = cmdline_w.len() *
-    // size_of::<u16>()` yani `from_raw_parts`'a verdiğimiz `u8` slice tam
-    // olarak `cmdline_w`'in bellek bölgesini kapsıyor (alignment u16 ⊇ u8,
-    // overflow yok — `with_capacity` zaten allocate etti). REG_SZ için
-    // byte uzunluğu null-terminator dahil verilir; bu doğru. `&mut hkey`
-    // lokal değişkene exclusive borrow; handle başarılı openda `RegCloseKey`
-    // ile, başarısız openda hiç yazılmadığı için kapatılmaz.
+    // SAFETY: Write value (toggle on branch).
+    // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regopenkeyexw)
+    // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regsetvalueexw)
+    // - `subkey_w`/`value_w`/`cmdline_w` are NUL-terminated local
+    //   `Vec<u16>`s alive for the whole block.
+    // - The `slice::from_raw_parts(cmdline_w.as_ptr() as *const u8,
+    //   byte_len)` reinterprets the `u16` allocation as `u8`: alignment
+    //   is downgraded (u16 ⊇ u8 always valid), `byte_len = cmdline_w
+    //   .len() * size_of::<u16>()` is exactly the live region (no
+    //   overflow — `with_capacity` already allocated this many `u16`s),
+    //   and the slice is read-only for the duration of the FFI call.
+    // - REG_SZ per MSDN expects the byte length INCLUDING the trailing
+    //   NUL — we push `0` into `cmdline_w` before computing `byte_len`,
+    //   so this is satisfied.
+    // - `&mut hkey` is the exclusive borrow of a local `HKEY`; handle
+    //   is written only on successful open and always paired with
+    //   `RegCloseKey`. On failed open `hkey` stays default and no close
+    //   is required (the `if rc != ERROR_SUCCESS` early-return prevents
+    //   any further use).
+    // - HKCU\...\Run is per-user; no cross-process aliasing.
     unsafe {
         let mut hkey = HKEY::default();
         let rc = RegOpenKeyExW(

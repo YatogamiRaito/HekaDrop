@@ -759,11 +759,22 @@ fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
     src_w.push(0);
     let mut dst_w: Vec<u16> = dst.as_os_str().encode_wide().collect();
     dst_w.push(0);
-    // SAFETY: `src_w` ve `dst_w` `encode_wide` + manuel `push(0)` ile
-    // NUL-terminated UTF-16 buffer'lar; `MoveFileExW` senkron çağrısı
-    // süresince scope'ta canlı. PCWSTR'ler yalnızca embedded NUL'a kadar
-    // okunur; başka pointer/handle paylaşımı yok, dönüş değeri Result olarak
-    // ele alınıyor.
+    // SAFETY: `MoveFileExW`
+    // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)
+    // - `src_w` and `dst_w` are local `Vec<u16>`s built from
+    //   `encode_wide` + manual `push(0)`, so both are NUL-terminated;
+    //   they live for the synchronous `MoveFileExW` call (dropped at
+    //   end of scope after return).
+    // - The two `PCWSTR`s are read at most up to the embedded NUL.
+    // - Flags `MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH` are
+    //   pure bitflags; per MSDN replace requires both src and dst on
+    //   the same volume (caller-side guarantee — atomic save uses a
+    //   tmp file beside `dst`).
+    // - Synchronous; no pointer/handle escape, no shared state. Return
+    //   is a `windows::core::Result` mapped to `io::Error::other` for
+    //   the caller.
+    // - Thread-safe per MSDN (file system serialises directory
+    //   updates).
     unsafe {
         MoveFileExW(
             PCWSTR(src_w.as_ptr()),
