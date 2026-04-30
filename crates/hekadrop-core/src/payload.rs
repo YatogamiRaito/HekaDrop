@@ -92,7 +92,10 @@ pub enum CompletedPayload {
 
 /// BYTES payload'ı için kısmi buffer + son chunk timestamp'i.
 struct BytesBuf {
+    /// Şu ana kadar biriktirilmiş chunk bayt'ları — payload tamamlanınca
+    /// caller'a teslim edilir.
     data: Vec<u8>,
+    /// Son chunk'ın geldiği an — idle-timeout ölçümü için.
     last_chunk_at: Instant,
 }
 
@@ -108,12 +111,18 @@ struct BytesBuf {
 /// `current_thread` runtime'da (unit test) `block_in_place` panik edeceği için
 /// sync çağrı direkt yapılır.
 struct FileSink {
+    /// Hedef `.part` dosyasına 128 KiB tamponlu yazıcı.
     writer: BufWriter<File>,
+    /// Yazılan dosyanın diskteki tam yolu (downloads/<name>.part).
     path: PathBuf,
+    /// Beklenen toplam payload boyutu — INTRODUCTION'dan alınır.
     total_size: i64,
     /// Toplam yazılmış bayt — `total_size`'a karşı overrun doğrulaması için.
     written: i64,
+    /// Streaming SHA-256 hasher — son chunk yazıldığında integrity tag elde
+    /// edilir.
     hasher: Sha256,
+    /// Son chunk'ın geldiği an — idle-timeout ölçümü için.
     last_chunk_at: Instant,
     /// RFC-0003 §5: chunk-HMAC capability aktif iken her data chunk'ı geçici
     /// olarak burada tutulur, sonraki frame'de `ChunkIntegrity` gelir, verify
@@ -181,16 +190,22 @@ struct PendingChunk {
 
 /// Introduction'da onaylanmış ama hiç chunk gelmemiş dosyanın hedef yolu.
 struct PendingDest {
+    /// Hedef `.part` dosyasının yolu — ilk chunk geldiğinde bu yolda açılır.
     path: PathBuf,
+    /// Destination'ın register edildiği an — orphan-cleanup TTL için.
     registered_at: Instant,
 }
 
 /// Caller `enable_resume` çağırınca buraya biriktirilir; ilk FILE chunk
 /// geldiğinde `FileSink.resume_state`'e taşınır. Pre-chunk pending state.
 struct PendingResume {
+    /// Sidecar `.meta` dosyasının saklanacağı `partials/` dizini.
     partial_dir: PathBuf,
+    /// UKEY2 session id (i64 bit-cast) — `.meta` adlandırması için.
     session_id: i64,
+    /// Peer endpoint id — sidecar metadata içinde kayıtlı.
     peer_endpoint_id: String,
+    /// Dosya adı — sidecar dosya isimlendirmesi için kullanılır.
     file_name: String,
     /// PR-G: receiver bu transfer için resume offset; `0` → fresh start
     /// (mevcut davranış), `>0` → `ingest_file` bu offset'ten başlayarak
@@ -237,8 +252,11 @@ pub struct BundleMarker {
 
 #[derive(Default)]
 pub struct PayloadAssembler {
+    /// BYTES kind payload buffer'ları, `payload_id` → ara birikim.
     bytes_buffers: HashMap<i64, BytesBuf>,
+    /// FILE kind payload disk sink'leri, `payload_id` → açık dosya state.
     file_sinks: HashMap<i64, FileSink>,
+    /// Introduction'da onaylanmış ama hiç chunk gelmemiş dosya destination'ları.
     pending_destinations: HashMap<i64, PendingDest>,
     /// RFC-0003 §4.1: chunk-HMAC anahtarı. `None` → capability kapalı,
     /// chunk body'leri eskisi gibi chunk geldiği anda diske yazılır
@@ -591,6 +609,8 @@ impl PayloadAssembler {
         }
     }
 
+    /// BYTES payload chunk'ını biriktir; `last_chunk` true ise tüm buffer
+    /// `Bytes`'a paketlenip caller'a döndürülür. 4 MiB üstü → `DoS` hatası.
     fn ingest_bytes(
         &mut self,
         id: i64,
@@ -631,6 +651,9 @@ impl PayloadAssembler {
         Ok(None)
     }
 
+    /// FILE payload chunk'ını sink'e yaz; `last_chunk` true ise dosya finalize
+    /// edilir, hash + path döndürülür. Chunk-HMAC capability aktif iken
+    /// `pending_chunk` üzerinden iki-adımlı verify-then-write akışı çalışır.
     async fn ingest_file(
         &mut self,
         id: i64,

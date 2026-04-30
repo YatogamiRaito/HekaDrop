@@ -119,6 +119,7 @@ fn parse_capabilities(plain: &[u8]) -> Option<u64> {
 }
 
 impl NegotiationOutcome {
+    /// Capability frame algılanmayan legacy peer için boş (leftover'sız) sonuç.
     fn legacy_no_leftover() -> Self {
         Self {
             active: ActiveCapabilities::legacy(),
@@ -126,6 +127,8 @@ impl NegotiationOutcome {
         }
     }
 
+    /// Legacy peer; ilk plaintext frame okundu ama capabilities değildi —
+    /// caller'a tekrar işlemesi için aynı bayt'ları geri ver.
     fn legacy_with_leftover(plain: Bytes) -> Self {
         Self {
             active: ActiveCapabilities::legacy(),

@@ -41,6 +41,7 @@ pub struct Stats {
     pub last_use_epoch: u64,
 }
 
+/// Şu anki Unix epoch saniyeyi `u64` olarak döndür; saat geri sarılmışsa 0.
 fn now_epoch() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

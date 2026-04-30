@@ -171,6 +171,8 @@ pub fn enumerate_folder(root: &Path) -> Result<Vec<EnumeratedEntry>, EnumerateEr
     Ok(out)
 }
 
+/// `current` dizinini recursive walk eder; bulduğu girişleri `out`'a yazar.
+/// `depth` her seviyede +1 artar; `MAX_FOLDER_DEPTH` aşılırsa hata.
 fn walk_directory(
     root: &Path,
     current: &Path,
@@ -277,17 +279,20 @@ fn relative_to_root(root: &Path, child: &Path) -> Result<String, EnumerateError>
     Ok(parts.join("/"))
 }
 
+/// Unix permission bits — `fs::Metadata` üzerinden manifest için yakala.
 #[cfg(unix)]
 fn extract_mode(meta: &fs::Metadata) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
     Some(meta.permissions().mode())
 }
 
+/// Non-Unix platformlar — Unix permission kavramı yok, `None`.
 #[cfg(not(unix))]
 fn extract_mode(_meta: &fs::Metadata) -> Option<u32> {
     None
 }
 
+/// Dosyanın mtime'ını Unix epoch saniyeye çevir; metadata erişilmezse `None`.
 fn extract_mtime(meta: &fs::Metadata) -> Option<u64> {
     let mt = meta.modified().ok()?;
     let dur = mt.duration_since(UNIX_EPOCH).ok()?;
@@ -380,6 +385,7 @@ fn file_sha256_hex(path: &Path) -> std::io::Result<String> {
     Ok(hex_lower(&digest))
 }
 
+/// Bayt dizisini lowercase hex string'e çevir; alloc-once.
 fn hex_lower(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut s = String::with_capacity(bytes.len() * 2);

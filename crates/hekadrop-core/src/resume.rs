@@ -160,6 +160,8 @@ pub fn partial_dir() -> io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// Verilen dizini 0700 (yalnız owner) izniyle ayarla — sidecar key material'ı
+/// barındırdığı için diğer kullanıcılardan izole.
 #[cfg(unix)]
 fn set_dir_mode_0700(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -178,6 +180,8 @@ fn set_dir_mode_0700(_dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Kullanıcının home dizinini cross-platform şekilde döndür; boş veya unset
+/// ise `None`.
 fn home_dir() -> Option<PathBuf> {
     // POSIX: $HOME; Windows: %USERPROFILE%. Empty string treated as unset.
     let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
@@ -468,11 +472,17 @@ fn contains_path_traversal(name: &str) -> bool {
 /// `cleanup_sweep` iç inventarisi — yalnızca aday toplama + LRU sıralama
 /// için kullanılır; caller görmez.
 struct Candidate {
+    /// Sidecar `.meta` dosyasının tam yolu.
     meta_path: PathBuf,
+    /// Eşleşen `.part` dosyasının tam yolu.
     part_path: PathBuf,
+    /// `.part` dosyasının disk üstü boyutu — budget hesabı için.
     part_size: u64,
+    /// Sidecar son güncelleme zaman damgası — TTL ve LRU karşılaştırmaları.
     updated_at: DateTime<Utc>,
+    /// Çıkarılan UKEY2 `session_id` (`i64` bit-cast).
     session_id: i64,
+    /// Çıkarılan `payload_id`.
     payload_id: i64,
 }
 

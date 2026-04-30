@@ -86,6 +86,7 @@ pub const ENVELOPE_VERSION: u32 = 1;
 /// Construct edildikten sonra immutable; query method'ları O(1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActiveCapabilities {
+    /// Bitmask — yalnız `FeatureFlag` üyelerinin set edilmiş bitleri.
     features: u64,
 }
 

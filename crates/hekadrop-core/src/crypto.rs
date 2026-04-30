@@ -9,8 +9,11 @@ use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
+/// HMAC-SHA256 instance — `hmac_sha256`/`verify_mac` çağrılarında kullanılır.
 type HmacSha256 = Hmac<Sha256>;
+/// AES-256-CBC encryptor — secure frame şifrelemesinde kullanılır.
 type Aes256CbcEnc = Encryptor<Aes256>;
+/// AES-256-CBC decryptor — secure frame şifre çözümünde kullanılır.
 type Aes256CbcDec = Decryptor<Aes256>;
 
 /// HKDF-SHA256 ile `len` bayt key türet.

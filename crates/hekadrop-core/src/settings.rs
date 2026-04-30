@@ -36,20 +36,25 @@ use std::path::{Path, PathBuf};
 /// 7 gün = 604800 saniye.
 pub const DEFAULT_TRUST_TTL_SECS: u64 = 7 * 24 * 3600;
 
+/// `serde(default)` için trust TTL varsayılanı.
 fn default_trust_ttl_secs() -> u64 {
     DEFAULT_TRUST_TTL_SECS
 }
 
+/// `serde(default)` için `advertise` alanı varsayılanı (mDNS yayını açık).
 fn default_advertise() -> bool {
     true
 }
 
+/// `serde(default)` için `disable_update_check` varsayılanı (kapalı = update
+/// kontrolü devre dışı).
 fn default_disable_update_check() -> bool {
     // Privacy-first: update kontrolü kapalı başlar. Kullanıcı Settings'ten
     // açana kadar GitHub API'ye hiçbir istek çıkmaz.
     true
 }
 
+/// `serde(default)` için `keep_stats` varsayılanı (kullanım sayaçları açık).
 fn default_keep_stats() -> bool {
     true
 }
@@ -152,6 +157,7 @@ mod hex_hash_opt {
         clippy::trivially_copy_pass_by_ref,
         reason = "API: serde signature kontratı `&Option<T>` ister — pass-by-value yapılamaz."
     )]
+    /// `Option<[u8; 6]>` → opsiyonel lowercase hex string serializer.
     pub(super) fn serialize<S: Serializer>(
         value: &Option<[u8; 6]>,
         s: S,
@@ -164,6 +170,7 @@ mod hex_hash_opt {
         }
     }
 
+    /// Hex string → `Option<[u8; 6]>` deserializer; uzunluk != 6 hata.
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(
         d: D,
     ) -> Result<Option<[u8; 6]>, D::Error> {
@@ -185,6 +192,7 @@ mod hex_hash_opt {
     }
 }
 
+/// Şu anki Unix epoch saniyeyi `u64` olarak döndür; saat geriye sarılmışsa 0.
 fn now_epoch() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -738,10 +746,12 @@ pub fn validate_download_dir(path: &Path) -> Result<()> {
 /// rename hatası, paniğe neden olan bir hata) Drop çalışır ve tmp diskte
 /// sızmaz — review-18 (MED) cleanup gereksinimi.
 struct TmpCleanup {
+    /// Drop anında silinecek tmp yol; `defuse()` sonrası `None`.
     path: Option<std::path::PathBuf>,
 }
 
 impl TmpCleanup {
+    /// Silme planlanmış yeni guard kur — `defuse()` çağrılmazsa Drop siler.
     fn new(path: std::path::PathBuf) -> Self {
         Self { path: Some(path) }
     }
