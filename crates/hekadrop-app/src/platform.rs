@@ -240,6 +240,7 @@ pub(crate) fn reveal_path(path: &Path) {
 /// doğru biçimde kodlanır.
 #[cfg(target_os = "linux")]
 fn path_to_file_uri(path: &Path) -> String {
+    use std::fmt::Write as _;
     let bytes = path.as_os_str().as_encoded_bytes();
     let mut out = String::from("file://");
     for &b in bytes {
@@ -249,7 +250,9 @@ fn path_to_file_uri(path: &Path) -> String {
         if unreserved {
             out.push(b as char);
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            // PR #165 lint fix: format_push_string — write! ile direkt
+            // String'e yaz, ara `format!` allocation yok.
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out

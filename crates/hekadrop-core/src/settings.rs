@@ -207,6 +207,11 @@ impl TrustedDevice {
 
 /// Uygulama ayarları. `#[serde(default)]` ile ileri uyumlu — bilinmeyen alanlar
 /// okunurken atlanır; eksik alanlar default değerlerle doldurulur.
+// API: 5 ayrı bool alanı taşınan bağımsız kullanıcı preference'ı (auto-accept,
+// mDNS advertise, stats keep, update check disable, first-launch flag). Her biri
+// farklı semantic domain — flag enum / bitfield refactor'u serde JSON wire format'ı
+// kıracağı için (mevcut config.json migration tabanı) uygulanmıyor.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     /// Kullanıcı tarafından atanan görünen ad (boş bırakılırsa `scutil --get ComputerName`).
