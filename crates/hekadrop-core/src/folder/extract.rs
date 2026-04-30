@@ -352,11 +352,12 @@ fn extract_bundle_inner(
                 let _ = fs::remove_dir_all(&final_path);
                 return Err(copy_err);
             }
-            // Source'u sil (best-effort). NOT (PR #148 medium): Drop guard
-            // yalnızca staging dir'i izler; eğer burada başarısız olursak
-            // staging artık kabul edilmiş success path üzerinde olduğundan
-            // (rename hedefi final_path tamam) Drop *staging*'i tekrar dener.
-            // final_path zaten merge'lenmiş gerçek hedef, dokunulmaz.
+            // Source'u sil (best-effort). Outer caller success path'inde
+            // `disarm_staging` çağırır — bu noktada `remove_dir_all` fail
+            // olursa staging dir orphan kalır (Drop guard disarm sonrası
+            // tekrar denemez). Pratikte EXDEV+rename başarılı + remove fail
+            // nadir; orphan staging cleanup sweep'ı tarafından sonradan
+            // toplanır.
             let _ = fs::remove_dir_all(staging_dir);
         }
         Err(e) => return Err(ExtractError::Io(e)),

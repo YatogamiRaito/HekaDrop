@@ -454,6 +454,10 @@ pub(crate) mod win {
     /// `SHGetKnownFolderPath` → `PathBuf`. Çıktı bellek `CoTaskMemFree` ile serbest
     /// bırakılır (aksi halde leak). Bellek tahsisi başarısızsa `None`.
     pub(super) fn known_folder(folder: &GUID) -> Option<PathBuf> {
+        // MSDN `SHGetKnownFolderPath` UI thread dışından çağrıldığında COM
+        // init şart koşar; `KF_FLAG_DEFAULT` bu gereksinimi düşürmez.
+        // Defensive: unsafe block öncesi idempotent per-thread ref-count.
+        ensure_com_init();
         // SAFETY: `SHGetKnownFolderPath`
         // (MSDN: learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath)
         // - `folder` is a `&GUID` from the caller; only read, no aliasing.
@@ -470,8 +474,8 @@ pub(crate) mod win {
         //   (MSDN: learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-cotaskmemfree)
         //   on every path that took ownership; no dangling reference
         //   escapes the block (the `OsString` owns a copy).
-        // - Thread-safe: `SHGetKnownFolderPath` is callable from any
-        //   thread without prior COM init for `KF_FLAG_DEFAULT`.
+        // - Thread-safety: COM init `ensure_com_init()` çağrısı (yukarıda)
+        //   ile garanti altında; her thread per-call idempotent.
         unsafe {
             // windows-rs 0.60: flag enum doğrudan geçilir (eski sürümlerde u32).
             let pwstr: PWSTR = SHGetKnownFolderPath(folder, KF_FLAG_DEFAULT, None).ok()?;
@@ -761,14 +765,17 @@ pub(crate) mod win {
         //   underlying buffer — read-only).
         // - `GlobalLock(hglobal)` yields a stable pointer valid until the
         //   matching `GlobalUnlock`; we null-check before any deref.
-        // - Read length is `min(GlobalSize/2, PCWSTR::len())`. Two
-        //   independent upper bounds:
+        // - **Read length policy** (PR #156 SECURITY-HIGH fix):
         //     * `GlobalSize` (MSDN: ...nf-winbase-globalsize) is the true
-        //       allocation size in bytes — divides by 2 for `u16` slots,
-        //       guards against malformed (non-NUL-terminated) data.
-        //     * `PCWSTR::len()` walks until the embedded NUL.
-        //   The smaller wins, so `from_raw_parts(ptr, len)` cannot
-        //   over-read the allocation regardless of malformed input.
+        //       allocation size in bytes — divides by 2 for `u16` slots.
+        //     * Build slice with `from_raw_parts(ptr, max_u16)` FIRST
+        //       (allocation-bounded), then search for NUL inside that slice.
+        //     * **DO NOT** call `PCWSTR::len()` first — it walks until NUL
+        //       without bounds, so malformed (non-NUL-terminated) clipboard
+        //       data triggers a buffer over-read past `GlobalSize`. The
+        //       previous "min(PCWSTR::len(), GlobalSize/2)" pattern was a
+        //       latent UB: PCWSTR::len() already over-read by the time min
+        //       was applied.
         // - `GlobalUnlock` and `CloseClipboard` are called on every exit
         //   path (early-return guards include both); the handle's
         //   ownership remains with the clipboard.
@@ -784,13 +791,17 @@ pub(crate) mod win {
                 let _ = CloseClipboard();
                 return Err(windows::core::Error::from_win32());
             }
-            // GlobalSize bayt döner; u16 slot sayısına çevir.
+            // GlobalSize bayt döner; u16 slot sayısına çevir (allocation-bounded).
             let size_bytes = GlobalSize(hglobal);
             let max_u16 = if size_bytes >= 2 { size_bytes / 2 } else { 0 };
-            // İkinci üst sınır: NUL'a kadar say. İkisi de NUL/OOM'a karşı savunma.
-            let nul_len = PCWSTR::from_raw(ptr).len();
-            let len = nul_len.min(max_u16);
-            let slice = std::slice::from_raw_parts(ptr, len);
+            // PR #156 SECURITY-HIGH fix: önce allocation-bounded slice oluştur,
+            // SONRA NUL ara. Eski kod `PCWSTR::len()` ile bounds-free taramayı
+            // önce yapıyordu — malformed clipboard'da `GlobalSize` aşımı
+            // (buffer over-read UB).
+            let bounded_slice = std::slice::from_raw_parts(ptr, max_u16);
+            let nul_pos = bounded_slice.iter().position(|&w| w == 0);
+            let len = nul_pos.unwrap_or(max_u16);
+            let slice = &bounded_slice[..len];
             let s = String::from_utf16_lossy(slice);
             let _ = GlobalUnlock(hglobal);
             let _ = CloseClipboard();
