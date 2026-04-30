@@ -211,7 +211,7 @@ hedefini karşılıyor. Aktif iş **RFC-0003** (chunk-HMAC + capabilities exchan
 ## Deferred strictness sweep'leri (PR #87 body'sinde liste)
 
 Workspace'a eklenmemiş ama eklenmeli lint'ler — ayrı PR serisi:
-`clippy::pedantic` (~1,228), `clippy::doc_markdown` (445+792), `cast_possible_wrap` (36 — security audit gerek), vs.
+`clippy::pedantic` (~1,228 — kademeli batch'ler enable ediliyor), `clippy::doc_markdown` (445+792), `cast_possible_wrap` (36 — security audit gerek), vs.
 
 Enforce edilenler (sweep history):
 - `unreachable_pub` (PR #107: RFC-0001 workspace refactor sonrası 349 → 58 → 0 hit; `pub` → `pub(crate)` indirgemesi + workspace.lints.rust enforce. Bugün 0 hit + 0 allow ile temiz).
@@ -220,5 +220,11 @@ Enforce edilenler (sweep history):
 - `clippy::items_after_statements` (7 site fix — const/use/inner-fn yukarı taşındı).
 - `clippy::map_unwrap_or` (13 site auto-fix — `.map(f).unwrap_or(d)` → `.map_or(d, f)`).
 - `clippy::match_same_arms` (Cargo.toml'da `warn`; kod auto-fix sonrası 0 hit; 4 item-level scoped allow yorumla — connection.rs `compute_recv_percent` doc-arm + i18n.rs translation tabloları forward-compat için).
+- **pedantic batch 1** (PR `chore/lint-pedantic-batch-1`: 5 lint, **hepsi 0 hit** mevcut codebase'de — direkt enforce, fix gerekmedi; kademeli pedantic enable stratejisinin ilk batch'i):
+  - `clippy::redundant_else` (0 hit) — `if { return } else {}` redundant else.
+  - `clippy::if_not_else` (0 hit) — `if !cond { a } else { b }` → pozitif form.
+  - `clippy::single_char_pattern` (0 hit) — `.split("a")` → `.split('a')`.
+  - `clippy::inefficient_to_string` (0 hit) — `&T: Display` üzerinde `.to_string()`.
+  - `clippy::needless_late_init` (0 hit) — declaration-time init.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.
