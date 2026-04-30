@@ -515,7 +515,10 @@ impl Settings {
     /// eder; bu fonksiyon legacy IPC çağrıları ve testler için korunur.
     #[must_use]
     pub fn trusted_display_list(&self) -> Vec<String> {
-        self.trusted_devices.iter().map(|d| d.display()).collect()
+        self.trusted_devices
+            .iter()
+            .map(TrustedDevice::display)
+            .collect()
     }
 }
 
@@ -1796,13 +1799,16 @@ mod tests {
 
         let leftovers: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
             .collect();
         assert!(
             leftovers.is_empty(),
             "atomic_write sonrası tmp dosya kalmamalı: {:?}",
-            leftovers.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+            leftovers
+                .iter()
+                .map(std::fs::DirEntry::file_name)
+                .collect::<Vec<_>>()
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1828,13 +1834,16 @@ mod tests {
         // dir içinde hiç .tmp kalmamalı (eğer tmp yaratıldıysa cleanup silmeli).
         let leftovers: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
             .collect();
         assert!(
             leftovers.is_empty(),
             "hatalı yazım sonrası tmp dosya kalmamalı: {:?}",
-            leftovers.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+            leftovers
+                .iter()
+                .map(std::fs::DirEntry::file_name)
+                .collect::<Vec<_>>()
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

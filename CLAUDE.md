@@ -226,5 +226,11 @@ Enforce edilenler (sweep history):
   - `clippy::single_char_pattern` (0 hit) — `.split("a")` → `.split('a')`.
   - `clippy::inefficient_to_string` (0 hit) — `&T: Display` üzerinde `.to_string()`.
   - `clippy::needless_late_init` (0 hit) — declaration-time init.
+- **pedantic batch 2** (PR `chore/lint-pedantic-batch-2`: 5 lint, 17 hit `cargo clippy --fix` auto-fix; 0 allow; davranış-koruyucu mikro temizlik):
+  - `clippy::redundant_closure_for_method_calls` (16 hit auto-fix) — `|x| x.foo()` → `Foo::foo` (`Bytes::len`, `Result::ok`, `IpAddr::is_ipv4`, `DirEntry::file_name`, `PoisonError::into_inner`, `str::trim`, `VecDeque::len`, `TrustedDevice::display`).
+  - `clippy::cloned_instead_of_copied` (0 hit) — `.cloned()` Copy type üzerinde → `.copied()`.
+  - `clippy::manual_string_new` (0 hit) — `String::from("")` → `String::new()`.
+  - `clippy::unnested_or_patterns` (1 hit auto-fix) — `Err(A) | Err(B)` → `Err(A | B)` (`folder/sanitize.rs`).
+  - `clippy::flat_map_option` (0 hit) — `.flat_map(Option)` → `.filter_map`.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.

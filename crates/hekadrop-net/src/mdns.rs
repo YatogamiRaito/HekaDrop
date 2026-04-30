@@ -54,7 +54,7 @@ pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
         .filter(|i| !i.is_p2p())
         .filter(|i| !skip_prefix.iter().any(|p| i.name.starts_with(p)))
         .map(|i| i.ip())
-        .filter(|ip| ip.is_ipv4())
+        .filter(std::net::IpAddr::is_ipv4)
         .collect();
 
     if addrs.is_empty() {

@@ -715,7 +715,7 @@ pathList
     let text = String::from_utf8_lossy(&out.stdout);
     let paths: Vec<_> = text
         .lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(std::path::PathBuf::from)
         .collect();

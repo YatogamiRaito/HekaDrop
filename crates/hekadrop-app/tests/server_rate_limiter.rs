@@ -283,7 +283,11 @@ fn hash_dogrulanmadan_muafiyet_verilmez() {
     // Hash yok → forget_most_recent çağrılmıyor. Queue 5 kayıtlı kalmalı.
     // (Mirror'daki RateLimiter'da forget_most_recent direct erişim yok;
     // production side ile aynı davranış: çağrı yoksa queue değişmez.)
-    let queue_len = rl.windows.read().get(&ip).map_or(0, |q| q.len());
+    let queue_len = rl
+        .windows
+        .read()
+        .get(&ip)
+        .map_or(0, std::collections::VecDeque::len);
     assert_eq!(
         queue_len, 5,
         "hash doğrulanmadığında queue intact kalmalı (forget_most_recent çağrılmaz)"

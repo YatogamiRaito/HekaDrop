@@ -363,7 +363,7 @@ pub async fn handle(
                         let id = header.id.unwrap_or(0);
                         let total = header.total_size.unwrap_or(0);
                         let offset = chunk.offset.unwrap_or(0);
-                        let body_len_usize = chunk.body.as_ref().map_or(0, |b| b.len());
+                        let body_len_usize = chunk.body.as_ref().map_or(0, bytes::Bytes::len);
                         // SECURITY: peer'den gelen `offset` + `body_len` + `total`
                         // alanları unvalidated. `*100` ve `+` operasyonlarını
                         // checked aritmetikle koru; overflow olursa progress

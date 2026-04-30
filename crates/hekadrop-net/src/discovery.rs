@@ -41,7 +41,7 @@ pub async fn scan(duration: Duration, own_port: u16) -> Result<Vec<DiscoveredDev
         })
         .await
         .ok()
-        .and_then(|r| r.ok());
+        .and_then(std::result::Result::ok);
 
         let Some(event) = event_opt else { continue };
 
