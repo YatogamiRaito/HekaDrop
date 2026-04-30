@@ -866,14 +866,14 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
     // double'lıyoruz (PS'te single-quoted string içinde `''` → `'`).
     let desc = crate::i18n::t("pick.download_folder").replace('\'', "''");
     let script = format!(
-        r#"
+        r"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
 $dlg.Description = '{desc}'
 $dlg.ShowNewFolderButton = $true
 if ($dlg.ShowDialog() -eq 'OK') {{ $dlg.SelectedPath }}
-"#
+"
     );
     let out = Command::new("powershell")
         .args([
@@ -996,7 +996,7 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
     let t_send = ps_esc(crate::i18n::t("common.send"));
     let t_cancel = ps_esc(crate::i18n::t("common.cancel"));
     let script = format!(
-        r#"
+        r"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 Add-Type -AssemblyName System.Drawing | Out-Null
@@ -1029,7 +1029,7 @@ $cancel.DialogResult = 'Cancel'
 $form.CancelButton = $cancel
 $form.Controls.Add($cancel)
 if ($form.ShowDialog() -eq 'OK') {{ $listbox.SelectedItem }}
-"#
+"
     );
     let out = Command::new("powershell")
         .args([

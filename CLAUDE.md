@@ -256,5 +256,11 @@ Enforce edilenler (sweep history):
   - `clippy::unnecessary_box_returns` (0 hit) — `fn f() -> Box<T>` → `fn f() -> T`; ekstra heap indirection gereksizse direkt by-value döndür.
   - `clippy::struct_excessive_bools` (1 hit scoped allow) — `crates/hekadrop-core/src/settings.rs::Settings` 5 bool field (`auto_accept` / `advertise` / `keep_stats` / `disable_update_check` / `first_launch_completed`). Her biri bağımsız user preference; flag enum / bitfield refactor'u serde JSON wire format'ı kıracağı için (mevcut `config.json` migration tabanı) item-level `#[allow(clippy::struct_excessive_bools)]` + API gerekçesi.
   - `clippy::large_types_passed_by_value` (0 hit) — büyük (>256 byte) type by-value parametre → `&T`; gereksiz move/copy.
+- **pedantic batch 7** (PR `chore/lint-pedantic-batch-7`: 5 lint değerlendirildi; 4 enforce (1 manuel fix + 3 zero-hit) + 1 KAPSAM-DIŞI; argüman / pointer / visibility / binding / string idiom temizliği):
+  - `clippy::needless_pass_by_ref_mut` (0 hit) — `&mut T` argüman gerçekten mutate edilmiyorsa `&T`; immutability disiplini.
+  - `clippy::ref_as_ptr` (0 hit) — `&x as *const T` → `std::ptr::from_ref(&x)`; pointer cast idiom (Rust 1.76+).
+  - `clippy::no_effect_underscore_binding` (1 hit manuel fix) — `crates/hekadrop-core/src/settings.rs::v06_reject_path_legacy_upgrade_yapmaz` test'inde `let _peer_hash = [0xCC; 6];` no-op binding (eski kodun ne yaptığını dökümante etmek için). Yorum bloğuna dönüştürüldü; `0xCC` literal aşağıdaki assertion'da zaten var (`is_trusted_by_hash(&[0xCC; 6])`).
+  - `clippy::needless_raw_string_hashes` (0 hit) — `r#"..."#` raw string'de gereksiz `#` (string'de `"` yoksa); idiomatic.
+  - `clippy::redundant_pub_crate` (58 hit, **KAPSAM-DIŞI**) — `hekadrop-app` `lib.rs + main.rs` hibrit crate; `i18n/paths/platform/state/ui/ui_adapter` modülleri yalnız `main.rs`'in private modül ağacında ve `pub(crate)` kullanıyor. Auto-fix `pub`'a çevirmek istiyor — fakat workspace zaten `unreachable_pub = "warn"` enforce ediyor; bu lint aynı item'ları tam tersi yönde (`pub` → `pub(crate)`) raporlar. İki lint **uzlaşmaz**: `redundant_pub_crate` enforce etmek için `unreachable_pub` invariant'ını gevşetmek gerekir. RFC-0001 sonrası `app` crate yeniden yapılandırılırken (örn. salt-binary `bin/`) yeniden değerlendirilecek.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.
