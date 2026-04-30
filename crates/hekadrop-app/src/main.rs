@@ -2072,9 +2072,7 @@ fn toggle_login_item() {
             KEY_READ,
             &mut hkey,
         );
-        if rc != ERROR_SUCCESS {
-            false
-        } else {
+        if rc == ERROR_SUCCESS {
             let mut size: u32 = 0;
             let q = RegQueryValueExW(
                 hkey,
@@ -2086,6 +2084,8 @@ fn toggle_login_item() {
             );
             let _ = RegCloseKey(hkey);
             q == ERROR_SUCCESS
+        } else {
+            false
         }
     };
 
