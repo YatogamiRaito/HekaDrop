@@ -15,7 +15,11 @@ use std::process::Command;
 use std::process::{Command, Stdio};
 use tokio::task;
 
-#[allow(unused_imports)]
+#[expect(
+    unused_imports,
+    reason = "API: PathBuf cfg-gated platform branch'larında (Linux GTK / macOS / Windows) \
+              kullanılıyor; lokal host platform tarafında kullanılmadığı görünebilir."
+)]
 use std::path::PathBuf;
 
 pub(crate) struct FileSummary {
@@ -558,10 +562,12 @@ pub(crate) fn fatal_error_dialog(title: &str, body: &str) {
                 .args(["--title", title, "--error", body])
                 .status();
         } else {
-            // Dialog yoksa stderr'e düş — headless / VM / SSH ortamlarında
-            // en azından kullanıcı terminalde fatal mesajı görür. Tracing
-            // henüz initialize olmamış olabilir (startup-fatal).
-            #[allow(clippy::print_stderr)]
+            #[expect(
+                clippy::print_stderr,
+                reason = "HUMAN: Dialog yoksa stderr'e düş — headless / VM / SSH ortamlarında \
+                          en azından kullanıcı terminalde fatal mesajı görür. Tracing \
+                          henüz initialize olmamış olabilir (startup-fatal)."
+            )]
             {
                 eprintln!("[HekaDrop] {title}: {body}");
             }
@@ -1179,8 +1185,10 @@ fn have(bin: &str) -> bool {
 
 fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    // HUMAN: byte sayısını okunur birime çevirmek için precision loss kabul.
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "HUMAN: byte sayısını okunur birime çevirmek için precision loss kabul."
+    )]
     let mut n = bytes as f64;
     let mut i = 0;
     while n >= 1024.0 && i < UNITS.len() - 1 {

@@ -133,12 +133,14 @@ pub(crate) fn apply_args(template: &str, args: &[&str]) -> String {
 // ---------------------------------------------------------------------------
 // Türkçe çeviriler (default)
 // ---------------------------------------------------------------------------
-// API: i18n key→string lookup; farklı key'lerin aynı çeviriye düşmesi doğal
-// (ör. "app.title" ve "tray.tooltip_format" için aynı kısaltma); semantik
-// olarak ayrı tutulmaları gerek — match arm'larını birleştirmek key'lerin
-// anlamını yok eder. PR #87 deferred listesinden match_same_arms enforce
-// edilirken bu fn istisna.
-#[allow(clippy::match_same_arms)]
+#[expect(
+    clippy::match_same_arms,
+    reason = "API: i18n key→string lookup; farklı key'lerin aynı çeviriye düşmesi doğal \
+              (ör. \"app.title\" ve \"tray.tooltip_format\" için aynı kısaltma); semantik \
+              olarak ayrı tutulmaları gerek — match arm'larını birleştirmek key'lerin \
+              anlamını yok eder. PR #87 deferred listesinden match_same_arms enforce \
+              edilirken bu fn istisna."
+)]
 fn lookup_tr(key: &str) -> Option<&'static str> {
     Some(match key {
         // Tray / menü
@@ -352,8 +354,10 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
 // ---------------------------------------------------------------------------
 // English translations
 // ---------------------------------------------------------------------------
-// API: Bkz. lookup_tr — i18n table'da farklı key'lerin aynı çeviriye düşmesi doğal.
-#[allow(clippy::match_same_arms)]
+#[expect(
+    clippy::match_same_arms,
+    reason = "API: Bkz. lookup_tr — i18n table'da farklı key'lerin aynı çeviriye düşmesi doğal."
+)]
 fn lookup_en(key: &str) -> Option<&'static str> {
     Some(match key {
         // Tray / menu

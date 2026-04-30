@@ -148,8 +148,10 @@ pub struct TrustedDevice {
 mod hex_hash_opt {
     use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
 
-    // serde signature kontratı `&Option<T>` ister — pass-by-value yapılamaz.
-    #[allow(clippy::trivially_copy_pass_by_ref)]
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "API: serde signature kontratı `&Option<T>` ister — pass-by-value yapılamaz."
+    )]
     pub(super) fn serialize<S: Serializer>(
         value: &Option<[u8; 6]>,
         s: S,
@@ -311,10 +313,6 @@ impl Settings {
     /// (süresiz trust). Kayıt silinmez, sadece güvenilir sayılmaz —
     /// kullanıcı yeniden "kabul + güven" seçerse `add_trusted_with_hash`
     /// timestamp'i yeniler.
-    // API ergonomics: caller'lar `&hash` ile çağırıyor (storage'da `Option<[u8;6]>`),
-    // by-value `*hash` deref talebi kod akışını bozar. 2 byte pass-by-ref overhead
-    // kabul edilebilir; bu yöntem hot path değil (trust kontrolü, frame başına ≤1).
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     #[must_use]
     pub fn is_trusted_by_hash(&self, hash: &[u8; 6]) -> bool {
         let now = now_epoch();
@@ -407,8 +405,6 @@ impl Settings {
     /// Mevcut trusted bağlantı yeniden kullanıldığında timestamp'i yenile
     /// (sliding-window TTL). Aksi halde aktif cihazlar 7 gün sonunda
     /// dialog sorardı; bu UX'i fena bozar. Hash eşleşmeyen çağrı no-op.
-    // API ergonomics: bkz. `is_trusted_by_hash` aynı gerekçe.
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn touch_trusted_by_hash(&mut self, hash: &[u8; 6]) {
         let now = now_epoch();
         if let Some(existing) = self

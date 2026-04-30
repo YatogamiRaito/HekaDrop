@@ -207,10 +207,12 @@ fn main() {
     let mut config_backup_failed = false;
     let mut config_backup_path: Option<std::path::PathBuf> = None;
     if let Some(err) = &settings_load_err {
-        // HUMAN: Tracing subscriber henüz kurulmadı; kullanıcının fark
-        // etmesi için stderr'e bas. setup_logging sonra tracing channel'ı
-        // açar; kalıcı uyarı UI dialog ile (aşağıda) verilir.
-        #[allow(clippy::print_stderr)]
+        #[expect(
+            clippy::print_stderr,
+            reason = "HUMAN: Tracing subscriber henüz kurulmadı; kullanıcının fark \
+                      etmesi için stderr'e bas. setup_logging sonra tracing channel'ı \
+                      açar; kalıcı uyarı UI dialog ile (aşağıda) verilir."
+        )]
         {
             eprintln!("[HekaDrop] config yüklenirken hata: {err}");
         }
@@ -218,8 +220,10 @@ fn main() {
             match settings::backup_corrupt_file(&config_path) {
                 Ok(backup) => {
                     config_backup_path = Some(backup.clone());
-                    // HUMAN: bkz. yukarı.
-                    #[allow(clippy::print_stderr)]
+                    #[expect(
+                        clippy::print_stderr,
+                        reason = "HUMAN: tracing subscriber bu noktada henüz kurulmamış (config load corrupt path startup'ın çok erken aşaması); kullanıcıya görünür uyarı için doğrudan stderr şart."
+                    )]
                     {
                         eprintln!(
                             "[HekaDrop] bozuk config yedeklendi: {} — varsayılan ile devam",
@@ -229,8 +233,10 @@ fn main() {
                 }
                 Err(e) => {
                     config_backup_failed = true;
-                    // HUMAN: bkz. yukarı.
-                    #[allow(clippy::print_stderr)]
+                    #[expect(
+                        clippy::print_stderr,
+                        reason = "HUMAN: tracing subscriber bu noktada henüz kurulmamış (config load corrupt path startup'ın çok erken aşaması); kullanıcıya görünür uyarı için doğrudan stderr şart."
+                    )]
                     {
                         eprintln!(
                             "[HekaDrop] UYARI: bozuk config yedeklenemedi ({e}) — varsayılan ayarlar kullanılıyor; AYAR DEĞİŞİKLİĞİ YAPMAYIN, mevcut config.json'u manuel kurtarmaya çalışın"
@@ -363,8 +369,10 @@ fn setup_logging(log_level: settings::LogLevel) {
             Some(fmt::layer().with_writer(file_writer).with_ansi(false))
         }
         Err(e) => {
-            // Tracing subscriber henüz kurulmadı — eprintln! tek başvuru.
-            #[allow(clippy::print_stderr)]
+            #[expect(
+                clippy::print_stderr,
+                reason = "HUMAN: Tracing subscriber henüz kurulmadı — eprintln! tek başvuru."
+            )]
             {
                 eprintln!("[HekaDrop] log appender kurulamadı ({e}); stdout-only devam");
             }
@@ -498,9 +506,11 @@ fn run_app() -> ! {
                 "HekaDrop başlatılamıyor",
                 &format!("pencere oluşturulamadı: {e}"),
             );
-            // Fatal startup; ?-propagation main()'e tanrı-Result zorlar — exit
-            // burada anlamlı: kullanıcı hata gördü, RAII temizliğe gerek yok.
-            #[allow(clippy::exit)]
+            #[expect(
+                clippy::exit,
+                reason = "API: Fatal startup; ?-propagation main()'e tanrı-Result zorlar — \
+                          exit burada anlamlı: kullanıcı hata gördü, RAII temizliğe gerek yok."
+            )]
             std::process::exit(1);
         }
     };
@@ -543,8 +553,10 @@ fn run_app() -> ! {
                 "HekaDrop başlatılamıyor",
                 "GTK pencere kabı (vbox) alınamadı. GTK3 + WebKit2GTK kurulu olduğundan emin olun.",
             );
-            // Fatal startup; bkz. yukarı.
-            #[allow(clippy::exit)]
+            #[expect(
+                clippy::exit,
+                reason = "API: Fatal startup hatası — runtime/event loop kurulmadan önce process'i temiz çıkışla sonlandır (panic yerine kullanıcıya anlamlı exit code)"
+            )]
             std::process::exit(1);
         };
         match builder.build_gtk(vbox) {
@@ -554,8 +566,10 @@ fn run_app() -> ! {
                     "HekaDrop başlatılamıyor",
                     &format!("webview oluşturulamadı: {e}"),
                 );
-                // Fatal startup; bkz. yukarı.
-                #[allow(clippy::exit)]
+                #[expect(
+                    clippy::exit,
+                    reason = "API: Fatal startup hatası — runtime/event loop kurulmadan önce process'i temiz çıkışla sonlandır (panic yerine kullanıcıya anlamlı exit code)"
+                )]
                 std::process::exit(1);
             }
         }
@@ -568,8 +582,10 @@ fn run_app() -> ! {
                 "HekaDrop başlatılamıyor",
                 &format!("webview oluşturulamadı: {e}"),
             );
-            // Fatal startup; bkz. yukarı.
-            #[allow(clippy::exit)]
+            #[expect(
+                clippy::exit,
+                reason = "API: Fatal startup hatası — runtime/event loop kurulmadan önce process'i temiz çıkışla sonlandır (panic yerine kullanıcıya anlamlı exit code)"
+            )]
             std::process::exit(1);
         }
     };
@@ -930,9 +946,11 @@ fn graceful_quit() -> ! {
             .args(["--user", "stop", "hekadrop.service"])
             .status();
     }
-    // Quit handler — daemon'ları durdurduktan sonra event loop'u beklemeden
-    // çık. Wry'de event-loop kontrol akışı dışına temiz çıkış yolu yok.
-    #[allow(clippy::exit)]
+    #[expect(
+        clippy::exit,
+        reason = "API: Quit handler — daemon'ları durdurduktan sonra event loop'u beklemeden \
+                  çık. Wry'de event-loop kontrol akışı dışına temiz çıkış yolu yok."
+    )]
     std::process::exit(0);
 }
 
@@ -1902,8 +1920,10 @@ fn relative_time(secs: u64) -> String {
 
 fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    // HUMAN: byte sayısını okunur birime çevirmek için precision loss kabul.
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "HUMAN: byte sayısını okunur birime çevirmek için precision loss kabul."
+    )]
     let mut n = bytes as f64;
     let mut i = 0;
     while n >= 1024.0 && i < UNITS.len() - 1 {
@@ -2122,9 +2142,13 @@ fn toggle_login_item() {
     // Yoksa ekle — current_exe path'ini tırnak içine al.
     // path.display() UTF-8 olmayan byte'ları lossy dönüştürebilir; OsStr'in
     // wide encoding'ini kullanarak lossless UTF-16 üretiyoruz.
-    // Err binding'i `e` format!'da kullanılıyor — `let-else` formunda Err
-    // değişkenine ulaşılamaz; bu match form bilinçli tutuluyor. clippy
-    // refactor önerir ama burada error context detayını koruma tercihi.
+    //
+    // API: Err binding'i `e` format!'da kullanılıyor — `let-else` formunda Err
+    // değişkenine ulaşılamaz; bu match form bilinçli. clippy refactor önerir
+    // ama error context detayını koruma tercihi. NOT: `#[allow]` (değil
+    // `#[expect]`) çünkü clippy `manual_let_else`/`single_match_else` lint
+    // davranışı platform-version'a göre değişiyor (macOS clippy tetikler,
+    // Linux/Windows tetiklemez); platform-stable allow.
     #[allow(clippy::manual_let_else, clippy::single_match_else)]
     let exe = match std::env::current_exe() {
         Ok(p) => p,
@@ -2236,9 +2260,11 @@ fn toggle_login_item() {
         return;
     }
 
-    // Err binding'i `e` format!'da kullanılıyor — `let-else` formunda Err
-    // değişkenine ulaşılamaz; bu match form bilinçli tutuluyor. clippy
-    // refactor önerir ama burada error context detayını koruma tercihi.
+    // API: Err binding'i `e` format!'da kullanılıyor — `let-else` formunda
+    // Err değişkenine ulaşılamaz; match form bilinçli. NOT: `#[allow]` (değil
+    // `#[expect]`) — clippy `manual_let_else`/`single_match_else` davranışı
+    // platform-version'a göre değişir (macOS tetikler, Linux/Windows etmez);
+    // platform-stable allow.
     #[allow(clippy::manual_let_else, clippy::single_match_else)]
     let exe = match std::env::current_exe() {
         Ok(p) => p,

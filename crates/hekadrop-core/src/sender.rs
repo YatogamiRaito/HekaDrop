@@ -339,7 +339,6 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     // INVARIANT (CLAUDE.md I-2): legacy() initial value capabilities exchange
     // atlanırsa (peer extension_supported=false) kullanılan canonical default;
     // exchange tetiklenirse `outcome.active` ile overwrite olur.
-    #[allow(unused_assignments)]
     let mut active_capabilities = crate::capabilities::ActiveCapabilities::legacy();
     // RFC-0003 §4.1: chunk-HMAC anahtarı capability negotiation sonrası
     // `keys.next_secret`'ten HKDF-SHA256 ile türetilir; capability inactive
@@ -1983,10 +1982,13 @@ fn build_connection_request(our_name: &str) -> OfflineFrame {
 }
 
 #[cfg(test)]
-// Test profile relaxation (CLAUDE.md I-2): hardcoded fixture verisi (CHUNK_SIZE *
-// 2 → i64 cast vb.) için per-statement allow tutarsız olur; module-bazlı dar
-// scope. Production lint'leri bozmaz çünkü `#[cfg(test)]` altındadır.
-#[allow(clippy::cast_possible_wrap, clippy::doc_markdown)]
+#[expect(
+    clippy::cast_possible_wrap,
+    clippy::doc_markdown,
+    reason = "Test profile relaxation (CLAUDE.md I-2): hardcoded fixture verisi (CHUNK_SIZE * \
+              2 → i64 cast vb.) için per-statement allow tutarsız olur; module-bazlı dar \
+              scope. Production lint'leri bozmaz çünkü `#[cfg(test)]` altındadır."
+)]
 mod tests {
     use super::*;
 
