@@ -703,7 +703,7 @@ pub(crate) mod win {
                 return Err(windows::core::Error::from_win32());
             }
 
-            let dst = GlobalLock(hmem) as *mut u16;
+            let dst = GlobalLock(hmem).cast::<u16>();
             if dst.is_null() {
                 let _ = GlobalFree(Some(hmem));
                 return Err(windows::core::Error::from_win32());
@@ -725,7 +725,7 @@ pub(crate) mod win {
                 return Err(e);
             }
             // windows-rs 0.60: hmem `Option<HANDLE>` (NULL = clear format data).
-            match SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0 as _))) {
+            match SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0.cast()))) {
                 Ok(_) => {
                     // Sahipliği clipboard aldı; free ETMEYİZ.
                     let _ = CloseClipboard();
@@ -785,7 +785,7 @@ pub(crate) mod win {
                 let _ = CloseClipboard();
                 return Ok(None);
             };
-            let hglobal = HGLOBAL(handle.0 as _);
+            let hglobal = HGLOBAL(handle.0.cast());
             let ptr = GlobalLock(hglobal) as *const u16;
             if ptr.is_null() {
                 let _ = CloseClipboard();

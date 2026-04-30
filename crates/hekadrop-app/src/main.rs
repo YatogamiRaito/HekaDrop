@@ -2173,7 +2173,7 @@ fn toggle_login_item() {
     // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regsetvalueexw)
     // - `subkey_w`/`value_w`/`cmdline_w` are NUL-terminated local
     //   `Vec<u16>`s alive for the whole block.
-    // - The `slice::from_raw_parts(cmdline_w.as_ptr() as *const u8,
+    // - The `slice::from_raw_parts(cmdline_w.as_ptr().cast::<u8>(),
     //   byte_len)` reinterprets the `u16` allocation as `u8`: alignment
     //   is downgraded (u16 ⊇ u8 always valid), `byte_len = cmdline_w
     //   .len() * size_of::<u16>()` is exactly the live region (no
@@ -2210,7 +2210,7 @@ fn toggle_login_item() {
             None,
             REG_SZ,
             Some(std::slice::from_raw_parts(
-                cmdline_w.as_ptr() as *const u8,
+                cmdline_w.as_ptr().cast::<u8>(),
                 byte_len,
             )),
         );
