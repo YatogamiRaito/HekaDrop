@@ -139,6 +139,12 @@ struct PlannedFolder {
 /// - Introduction reject (peer kabul etmedi, timeout)
 /// - Chunk read / encrypt / write fail (disk I/O, socket)
 /// - Cancel token tetiklendi
+///
+/// # Panics
+///
+/// Pratik olarak panik etmez; hot path'teki `u64::try_from(plan.size.max(0))`
+/// `expect` çağrısı `max(0)` invariant'ı sayesinde infallible (i64 ≥ 0 her
+/// zaman u64'e sığar). INVARIANT yorumu kod içinde mevcut.
 pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     if req.files.is_empty() {
         // Not: "hiç dosya yok" ile "toplam 0 bayt dosya var" semantik olarak
@@ -772,6 +778,12 @@ fn detect_url_kind(text: &str) -> TextKind {
 /// - TCP connect / UKEY2 / Introduction fail (peer offline, reject)
 /// - Secure frame encrypt / write fail (socket, sequence overflow)
 /// - Cancel token tetiklendi
+///
+/// # Panics
+///
+/// Pratik olarak panik etmez; hot path'teki `u64::try_from(total_bytes.max(0))`
+/// `expect` çağrısı `max(0)` invariant'ı sayesinde infallible (i64 ≥ 0 her
+/// zaman u64'e sığar). INVARIANT yorumu kod içinde mevcut.
 pub async fn send_text(
     req: SendTextRequest,
     state: Arc<AppState>,

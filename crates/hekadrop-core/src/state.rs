@@ -140,6 +140,14 @@ impl AppState {
     /// (app-singleton katmanı) tarafından inject edilir. Bu sayede
     /// `AppState` core'da `crate::paths` veya `crate::platform` (app-only)
     /// bağımlılığı sızdırmaz.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `DeviceIdentity::load_or_create_at(identity_path)` fail
+    /// olursa (disk read/write izin yok, key parse bozuk vb.). Bu kasıtlı:
+    /// trust kararı identity'ye dayanır; bozuk identity ile devam etmek
+    /// "her cihaz aynı görünür" güvenlik açığı doğurur (Issue #17). Startup
+    /// panik kullanıcıya açık hata göstermeyi tercih eder.
     pub fn new(
         settings: Settings,
         identity_path: &std::path::Path,

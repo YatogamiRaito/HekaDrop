@@ -110,6 +110,12 @@ fn encode_hmac_prefix(
 /// Returns [`ChunkBuildError::BodyTooLarge`] if `body.len() > u32::MAX`
 /// (4 GiB). Quick Share chunk pratiği 512 KiB olduğu için normal akışta
 /// tetiklenmez.
+///
+/// # Panics
+///
+/// Pratik olarak panik etmez; `Hmac::<Sha256>::new_from_slice` (RFC 2104)
+/// her key uzunluğunu kabul eder, `Result` yalnız trait signature uniformluğu
+/// için döner ve burada `expect` ile unwrap edilir (INVARIANT yorumu).
 pub fn compute_tag(
     chunk_hmac_key: &[u8; 32],
     payload_id: i64,

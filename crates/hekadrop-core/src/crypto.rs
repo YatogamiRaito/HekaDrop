@@ -13,6 +13,12 @@ type HmacSha256 = Hmac<Sha256>;
 type Aes256CbcEnc = Encryptor<Aes256>;
 type Aes256CbcDec = Decryptor<Aes256>;
 
+/// HKDF-SHA256 ile `len` bayt key türet.
+///
+/// # Panics
+///
+/// Panics if `len > 255 * 32 = 8160` bayt (HKDF-SHA256 spec limiti).
+/// Tüm in-tree caller ≤32 bayt ister; bu sınır aşılırsa programlama hatası.
 #[must_use]
 pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
     let hk = Hkdf::<Sha256>::new(Some(salt), ikm);
@@ -80,6 +86,13 @@ pub fn session_fingerprint(auth_key: &[u8]) -> String {
     hex::encode(&digest[..3]) // 6 hex karakter
 }
 
+/// HMAC-SHA256 tag türet.
+///
+/// # Panics
+///
+/// Pratik olarak panik etmez; `Hmac::<Sha256>::new_from_slice` (RFC 2104)
+/// her key uzunluğunu kabul eder, `Result` yalnız trait signature uniformluğu
+/// için döner ve burada `expect` ile unwrap edilir (INVARIANT yorumu).
 #[must_use]
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     // INVARIANT: HMAC-SHA256 spec'i (RFC 2104) tüm key uzunluklarını kabul eder
