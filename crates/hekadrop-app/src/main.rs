@@ -24,6 +24,7 @@
 )]
 
 use anyhow::Result;
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tao::event::{Event, WindowEvent};
@@ -1413,7 +1414,8 @@ fn js_string(s: &str) -> String {
             '\u{2029}' => out.push_str("\\u2029"),
             // Ctrl chars 0x00-0x1F (except already-handled \n\r\t) — strip yerine escape
             c if (c as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04X}", c as u32));
+                // write! into String never fails (infallible Write impl); ignore Result.
+                let _ = write!(out, "\\u{:04X}", c as u32);
             }
             c => out.push(c),
         }

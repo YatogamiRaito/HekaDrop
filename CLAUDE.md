@@ -250,5 +250,11 @@ Enforce edilenler (sweep history):
   - `clippy::naive_bytecount` (0 hit) — `bytes.iter().filter(|&&b| b == X).count()` → `bytecount` crate; ekstra dep gerekmedi (0 hit, yüksek-volüm byte tarama yok).
   - `clippy::needless_collect` (1 hit manuel fix) — `crates/hekadrop-app/tests/folder_sender_send.rs` `let dirs: Vec<_> = ...filter(...).collect(); dirs.len()` → `let dir_count = ...filter(...).count()`; ara Vec allocation gereksiz.
   - `clippy::wildcard_imports` (0 hit) — `use foo::*;` → explicit import. Test modüllerindeki `use super::*;` ve `pub use ...::*` re-export pattern'ları clippy default exempt.
+- **pedantic batch 6** (PR `chore/lint-pedantic-batch-6`: 5 lint, 1 hit manuel fix + 1 scoped allow + 3 zero-hit lint enable; string-builder + struct + return-type idiom temizliği):
+  - `clippy::format_push_string` (1 hit manuel fix) — `crates/hekadrop-app/src/main.rs::js_string` ctrl-char escape `out.push_str(&format!("\\u{:04X}", c as u32))` → `let _ = write!(out, "\\u{:04X}", c as u32)` (`std::fmt::Write` trait import); ekstra `String` allocation eliminate.
+  - `clippy::manual_str_repeat` (0 hit) — `(0..n).map(|_| s).collect::<String>()` → `s.repeat(n)`; idiomatic + tek allocation. (Önerilen lint adı `manual_string_repeat` clippy 1.92'de mevcut değil; gerçek ad `manual_str_repeat`.)
+  - `clippy::unnecessary_box_returns` (0 hit) — `fn f() -> Box<T>` → `fn f() -> T`; ekstra heap indirection gereksizse direkt by-value döndür.
+  - `clippy::struct_excessive_bools` (1 hit scoped allow) — `crates/hekadrop-core/src/settings.rs::Settings` 5 bool field (`auto_accept` / `advertise` / `keep_stats` / `disable_update_check` / `first_launch_completed`). Her biri bağımsız user preference; flag enum / bitfield refactor'u serde JSON wire format'ı kıracağı için (mevcut `config.json` migration tabanı) item-level `#[allow(clippy::struct_excessive_bools)]` + API gerekçesi.
+  - `clippy::large_types_passed_by_value` (0 hit) — büyük (>256 byte) type by-value parametre → `&T`; gereksiz move/copy.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.

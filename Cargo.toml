@@ -121,6 +121,13 @@ option_option = "warn"                  # 0 hit; `Option<Option<T>>` antipattern
 naive_bytecount = "warn"                # 0 hit; `bytes.iter().filter(|&&b| b == X).count()` → `bytecount` crate (high-volume scan); ekstra dep gerekmiyor (0 hit).
 needless_collect = "warn"               # 1 hit manuel fix: tests/folder_sender_send.rs `dirs: Vec<_> = ...collect(); dirs.len()` → `.count()`; ara Vec allocation gereksiz.
 wildcard_imports = "warn"               # 0 hit; `use foo::*;` → explicit import; namespace netliği. (Test modüllerinde `use super::*;` zaten test-allow setine girer.)
+# pedantic batch 6 — string-builder + struct + return-type idiom temizliği (PR: chore/lint-pedantic-batch-6)
+# 1 hit manuel fix + 1 scoped allow (Settings serde wire format) + 3 zero-hit lint enable.
+format_push_string = "warn"             # 1 hit manuel fix: `crates/hekadrop-app/src/main.rs::js_string` ctrl-char escape `out.push_str(&format!(...))` → `write!(out, ...)` (`std::fmt::Write`); ekstra String allocation eliminate.
+manual_str_repeat = "warn"              # 0 hit; `(0..n).map(|_| s).collect::<String>()` → `s.repeat(n)`; idiomatic + tek allocation.
+unnecessary_box_returns = "warn"        # 0 hit; `fn f() -> Box<T>` → `fn f() -> T`; ekstra heap indirection gereksizse direkt by-value.
+struct_excessive_bools = "warn"         # 1 hit scoped allow: `crates/hekadrop-core/src/settings.rs::Settings` 5 bool field (auto_accept / advertise / keep_stats / disable_update_check / first_launch_completed). Her biri bağımsız user preference; flag enum / bitfield refactor'u serde JSON wire format kırar (config.json migration tabanı).
+large_types_passed_by_value = "warn"    # 0 hit; büyük (>256 byte) type by-value parametre → `&T`; gereksiz move/copy.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
