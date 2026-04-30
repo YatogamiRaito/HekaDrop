@@ -13,11 +13,13 @@
 // hiçbir sembol kullanılmıyor — `cargo machete` false-pozitif önlenmiş
 // (ignore listesi `Cargo.toml`'da). v0.10.0'da kaldırılacak.
 
-// CLI binary stdout output legitimate use case; workspace-wide
-// `clippy::print_stdout = "warn"` (PR #87 Tier 1) UI/library kodu için
-// konuldu. v0.10.0'da clap subcommand layer + structured output (--json
-// flag) gelince bu allow kaldırılır.
-#[allow(clippy::print_stdout)]
+#[expect(
+    clippy::print_stdout,
+    reason = "API: CLI binary stdout output legitimate use case; workspace-wide \
+              `clippy::print_stdout = \"warn\"` (PR #87 Tier 1) UI/library kodu için \
+              konuldu. v0.10.0'da clap subcommand layer + structured output (--json \
+              flag) gelince bu expect kaldırılır."
+)]
 fn main() {
     println!("HekaDrop CLI v0 — coming in v0.10.0");
     println!("Şimdilik GUI tarafını kullanın: `hekadrop` (workspace binary).");

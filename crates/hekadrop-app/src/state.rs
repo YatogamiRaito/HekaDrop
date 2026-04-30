@@ -11,15 +11,16 @@
 //! Singleton plumbing app-only kalır (CLAUDE.md I-6: core'da hidden global
 //! state YASAK).
 
-// API: app yüzeyini koru — `hekadrop::state::*` consumer'ları (lib.rs
-// `TransferGuard`, `RateLimiter`, `DEFAULT_COMPLETED_IDLE_DELAY` sembollerini
-// app içinden import etmek için bin-private use. PR #107'de `pub use` →
-// `pub(crate) use` indirildi (unreachable_pub cleanup); tests/benches
-// `hekadrop::state::*`'e dokunmadığı için external API daralması olmadı.
-// Gelecekte `Geçmiş` UI sekmesi `HistoryItem`/`RateLimiter`'ı bin
-// içinden referans verir; kullanım eklenince `#[allow(unused_imports)]`
-// kaldırılır.
-#[allow(unused_imports)]
+#[expect(
+    unused_imports,
+    reason = "API: app yüzeyini koru — `hekadrop::state::*` consumer'ları (lib.rs \
+              `TransferGuard`, `RateLimiter`, `DEFAULT_COMPLETED_IDLE_DELAY` sembollerini \
+              app içinden import etmek için bin-private use. PR #107'de `pub use` → \
+              `pub(crate) use` indirildi (unreachable_pub cleanup); tests/benches \
+              `hekadrop::state::*`'e dokunmadığı için external API daralması olmadı. \
+              Gelecekte `Geçmiş` UI sekmesi `HistoryItem`/`RateLimiter`'ı bin içinden \
+              referans verir; kullanım eklenince bu expect kaldırılır."
+)]
 pub(crate) use hekadrop_core::state::{
     AppState, HistoryItem, ProgressState, RateLimiter, TransferGuard, DEFAULT_COMPLETED_IDLE_DELAY,
 };

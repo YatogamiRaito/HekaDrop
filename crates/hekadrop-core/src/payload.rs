@@ -767,9 +767,11 @@ impl PayloadAssembler {
                 let mut buf = vec![0u8; 64 * 1024];
                 let mut remaining = received_u64;
                 while remaining > 0 {
-                    // INVARIANT: buf.len() = 64 KiB; remaining caller-bounded
-                    // (received_bytes <= total_size <= MAX_FILE_BYTES = 1 TiB).
-                    #[allow(clippy::cast_possible_truncation)]
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        reason = "INVARIANT: buf.len() = 64 KiB; remaining caller-bounded \
+                                  (received_bytes <= total_size <= MAX_FILE_BYTES = 1 TiB)."
+                    )]
                     let want = remaining.min(buf.len() as u64) as usize;
                     let n = file.read(&mut buf[..want]).with_context(|| {
                         format!(
@@ -1221,7 +1223,11 @@ fn remove_resume_meta(payload_id: i64, rs: &ResumeState) {
 }
 
 #[cfg(test)]
-#[allow(clippy::cast_possible_wrap)]
+#[expect(
+    clippy::cast_possible_wrap,
+    reason = "Test profile relaxation (CLAUDE.md I-2): hardcoded fixture i64 cast'leri \
+              için per-statement allow tutarsız olur; module-bazlı dar scope."
+)]
 mod tests {
     use super::*;
     use hekadrop_proto::location::nearby::connections::payload_transfer_frame::{

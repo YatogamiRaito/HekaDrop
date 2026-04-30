@@ -29,6 +29,12 @@
 //! `#[allow(...)]` inject etmek. O zaman bu wrapper bile gerekmezdi. Şimdilik
 //! sade çözüm yeterli; v0.8 implementation fazında değerlendirilir.
 
+// PROTO: prost-üretilmiş modül; el yazımı kontrol dışı. Generated kod proto
+// field/enum convention'larını (snake_case ihlali, doc_markdown vb.) koruyamaz.
+// Module-level `#[allow]` CLAUDE.md I-2 istisnası (sadece generated kod
+// include'u için sanctioned). `#[expect]` denendi → her generated modül her
+// lint'i tetiklemediği için unfulfilled hataları çıktı; allow burada doğru
+// disiplin.
 #[allow(
     clippy::all,
     clippy::doc_markdown,
@@ -44,6 +50,12 @@ pub mod securegcm {
     include!(concat!(env!("OUT_DIR"), "/securegcm.rs"));
 }
 
+// PROTO: prost-üretilmiş modül; el yazımı kontrol dışı. Generated kod proto
+// field/enum convention'larını (snake_case ihlali, doc_markdown vb.) koruyamaz.
+// Module-level `#[allow]` CLAUDE.md I-2 istisnası (sadece generated kod
+// include'u için sanctioned). `#[expect]` denendi → her generated modül her
+// lint'i tetiklemediği için unfulfilled hataları çıktı; allow burada doğru
+// disiplin.
 #[allow(
     clippy::all,
     clippy::doc_markdown,
@@ -59,6 +71,12 @@ pub mod securemessage {
     include!(concat!(env!("OUT_DIR"), "/securemessage.rs"));
 }
 
+// PROTO: prost-üretilmiş modül; el yazımı kontrol dışı. Generated kod proto
+// field/enum convention'larını (snake_case ihlali, doc_markdown vb.) koruyamaz.
+// Module-level `#[allow]` CLAUDE.md I-2 istisnası (sadece generated kod
+// include'u için sanctioned). `#[expect]` denendi → her generated modül her
+// lint'i tetiklemediği için unfulfilled hataları çıktı; allow burada doğru
+// disiplin.
 #[allow(
     clippy::all,
     clippy::doc_markdown,
@@ -86,6 +104,12 @@ pub mod location {
     }
 }
 
+// PROTO: prost-üretilmiş modül; el yazımı kontrol dışı. Generated kod proto
+// field/enum convention'larını (snake_case ihlali, doc_markdown vb.) koruyamaz.
+// Module-level `#[allow]` CLAUDE.md I-2 istisnası (sadece generated kod
+// include'u için sanctioned). `#[expect]` denendi → her generated modül her
+// lint'i tetiklemediği için unfulfilled hataları çıktı; allow burada doğru
+// disiplin.
 #[allow(
     clippy::all,
     clippy::doc_markdown,
@@ -113,6 +137,12 @@ pub mod sharing {
 /// `resume_reject=13`, `folder_mft=14`. 1..9 ve 15..63 reserved.
 ///
 /// Wire-byte-exact spec: `docs/protocol/capabilities.md`.
+// PROTO: prost-üretilmiş modül; el yazımı kontrol dışı. Generated kod proto
+// field/enum convention'larını (snake_case ihlali, doc_markdown vb.) koruyamaz.
+// Module-level `#[allow]` CLAUDE.md I-2 istisnası (sadece generated kod
+// include'u için sanctioned). `#[expect]` denendi → her generated modül her
+// lint'i tetiklemediği için unfulfilled hataları çıktı; allow burada doğru
+// disiplin.
 #[allow(
     clippy::all,
     clippy::doc_markdown,

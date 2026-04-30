@@ -57,11 +57,13 @@ pub fn derive_chunk_hmac_key(next_secret: &[u8]) -> [u8; 32] {
 /// wire'a koyabilirdi. Şimdi explicit error döner; caller bu chunk'ı reject
 /// etmek zorunda.
 fn checked_body_len_u32(body_len: usize) -> Result<u32, ChunkBuildError> {
-    // INVARIANT (CLAUDE.md I-3): `TryFromIntError`'un içeriği `body_len` ile
-    // redundant — `actual` değeri zaten burada inline. Source error chain'in
-    // ek değeri yok. `with_context` anyhow'a özel; custom error type için
-    // narrow allow + yorum.
-    #[allow(clippy::map_err_ignore)]
+    #[expect(
+        clippy::map_err_ignore,
+        reason = "INVARIANT (CLAUDE.md I-3): `TryFromIntError`'un içeriği `body_len` ile \
+                  redundant — `actual` değeri zaten burada inline. Source error chain'in \
+                  ek değeri yok. `with_context` anyhow'a özel; custom error type için \
+                  narrow expect + reason."
+    )]
     u32::try_from(body_len).map_err(|_| ChunkBuildError::BodyTooLarge { actual: body_len })
 }
 

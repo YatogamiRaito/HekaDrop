@@ -101,9 +101,11 @@ pub fn endpoint_info(device_name: &str) -> Vec<u8> {
     rng.fill(&mut rnd);
     out.extend_from_slice(&rnd);
 
-    // PROTO: `name_bytes.len()` ≤ MAX_DEVICE_NAME_BYTES (= 171) << 255, yani
-    // u8 dönüşümü truncation üretmez.
-    #[allow(clippy::cast_possible_truncation)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "PROTO: `name_bytes.len()` ≤ MAX_DEVICE_NAME_BYTES (= 171) << 255, \
+                  yani u8 dönüşümü truncation üretmez."
+    )]
     let name_len = name_bytes.len() as u8;
     out.push(name_len);
     out.extend_from_slice(name_bytes);

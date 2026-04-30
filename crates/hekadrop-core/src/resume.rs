@@ -115,8 +115,10 @@ pub fn partial_hash_streaming(path: &Path, offset: u64) -> io::Result<[u8; 32]> 
         // INVARIANT: HASH_BUF_SIZE = 1 MiB ≪ usize::MAX on every supported
         // target; `min` of u64 with usize-as-u64 cannot wrap.
         let take = remaining.min(HASH_BUF_SIZE as u64);
-        // SAFETY-CAST: `take <= HASH_BUF_SIZE` (line above) → fits usize.
-        #[allow(clippy::cast_possible_truncation)] // INVARIANT: bounded by HASH_BUF_SIZE
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "INVARIANT: `take <= HASH_BUF_SIZE` (line above) → fits usize."
+        )]
         let take_usize = take as usize;
         reader.read_exact(&mut buf[..take_usize])?;
         hasher.update(&buf[..take_usize]);
@@ -157,7 +159,10 @@ fn set_dir_mode_0700(dir: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-#[allow(clippy::unnecessary_wraps)] // API: cross-platform Result signature parity
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "API: cross-platform Result signature parity with the Unix variant."
+)]
 fn set_dir_mode_0700(_dir: &Path) -> io::Result<()> {
     // Windows: DACL hygiene is hekadrop-app's responsibility on the app
     // data root; no per-subdir hardening here.
