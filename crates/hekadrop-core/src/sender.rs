@@ -192,9 +192,15 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                 .into());
             }
             // SAFETY-CAST: total_u64 > i64::MAX kontrolü yukarıda; cast wrap yapamaz.
-            #[allow(clippy::cast_possible_wrap)] // INVARIANT: total_u64 ≤ i64::MAX checked
+            #[expect(
+                clippy::cast_possible_wrap,
+                reason = "total_u64 ≤ i64::MAX checked yukarıda — wrap imkansız"
+            )]
             let total_i64 = total_u64 as i64;
-            #[allow(clippy::cast_possible_wrap)] // INVARIANT: u64 >> 1 high bit sıfır
+            #[expect(
+                clippy::cast_possible_wrap,
+                reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
+            )]
             let payload_id_i64 = (rand::thread_rng().next_u64() >> 1) as i64;
             planned_folder = Some(PlannedFolder {
                 root_path: path.clone(),
@@ -225,9 +231,15 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
         // SAFETY-CAST: `raw_size > i64::MAX as u64` üstünde checked oldu
         // (yukarıdaki `if raw_size > i64::MAX as u64`). u64 >> 1 high-bit
         // sıfır → her zaman 0..=i64::MAX. İki cast da wrap yapamaz.
-        #[allow(clippy::cast_possible_wrap)]
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "raw_size > i64::MAX checked yukarıda — wrap imkansız"
+        )]
         let size_i64 = raw_size as i64;
-        #[allow(clippy::cast_possible_wrap)]
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
+        )]
         let payload_id_i64 = (rand::thread_rng().next_u64() >> 1) as i64;
         plans.push(PlannedFile {
             path: path.clone(),
@@ -634,9 +646,10 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                             let snap_opt = {
                                 let mut s = state.stats.write();
                                 for plan in &plans {
-                                    // .max(0) ile alt sınır 0 — sign loss imkansız.
-                                    #[allow(clippy::cast_sign_loss)]
-                                    let size_u = plan.size.max(0) as u64;
+                                    // INVARIANT: .max(0) ile alt sınır 0 → try_from infallible.
+                                    #[allow(clippy::expect_used)] // INVARIANT: max(0) ≥ 0
+                                    let size_u = u64::try_from(plan.size.max(0))
+                                        .expect("INVARIANT: max(0) sonrası i64 ≥ 0");
                                     s.record_sent(&peer_label, size_u);
                                 }
                                 if keep {
@@ -760,7 +773,10 @@ pub async fn send_text(
     let total_bytes: i64 = i64::try_from(text.len())
         .with_context(|| format!("metin payload çok büyük: {} bayt", text.len()))?;
     // SAFETY-CAST: u64 >> 1 high-bit sıfır → daima 0..=i64::MAX.
-    #[allow(clippy::cast_possible_wrap)]
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
+    )]
     let payload_id = (rand::thread_rng().next_u64() >> 1) as i64;
     // URL şeklinde ise TextKind::Url ile etiketliyoruz: Android/alıcı share
     // sheet'te URL'i "Tarayıcıda aç" aksiyonuyla gösterir. Aksi hâlde düz TEXT.
@@ -943,9 +959,10 @@ pub async fn send_text(
                             let keep = state.settings.read().keep_stats;
                             let snap_opt = {
                                 let mut s = state.stats.write();
-                                // .max(0) ile alt sınır 0 — sign loss imkansız.
-                                #[allow(clippy::cast_sign_loss)]
-                                let total_bytes_u = total_bytes.max(0) as u64;
+                                // INVARIANT: .max(0) ile alt sınır 0 → try_from infallible.
+                                #[allow(clippy::expect_used)] // INVARIANT: max(0) ≥ 0
+                                let total_bytes_u = u64::try_from(total_bytes.max(0))
+                                    .expect("INVARIANT: max(0) sonrası i64 ≥ 0");
                                 s.record_sent(&peer_label, total_bytes_u);
                                 if keep {
                                     Some(s.clone())
@@ -1122,12 +1139,11 @@ async fn send_file_chunks(
     // garantisini önceden sağlamış olmalı; defensive olarak bu seviyede de
     // tekrar doğrulamıyoruz (caller-side single source of truth).
     if start_offset > 0 {
-        // INVARIANT: start_offset >= 0 caller tarafından doğrulandı (non-negative
-        // check `wait_for_resume_hint_or_zero`'da `< 0` kontrolü ile yapıldı).
-        // Burada `as u64` semantik olarak güvenli; üstteki ResumeReject yolu
-        // `0` start_offset'i fallback olarak set eder.
-        #[allow(clippy::cast_sign_loss)] // INVARIANT: start_offset >= 0 caller-checked
-        let pos = start_offset as u64;
+        // INVARIANT: start_offset > 0 outer if + caller `wait_for_resume_hint_or_zero`
+        // negatif değerleri fallback `0` ile değiştiriyor → try_from infallible.
+        #[allow(clippy::expect_used)] // INVARIANT: start_offset > 0 (outer if)
+        let pos = u64::try_from(start_offset)
+            .expect("INVARIANT: start_offset > 0 (outer if) + caller-checked non-negative");
         file.seek(std::io::SeekFrom::Start(pos)).await?;
     }
     let mut buf = vec![0u8; CHUNK_SIZE];
@@ -1206,9 +1222,11 @@ async fn send_file_chunks(
                 .ok_or_else(|| anyhow!("chunk_index taştı (payload_id={payload_id})"))?;
         }
         // SAFETY-CAST: `n` AsyncReadExt::read'den geliyor, max CHUNK_SIZE
-        // (4 KiB) ile sınırlı; usize → i64 wrap pratik olarak imkânsız.
-        // Defensive: try_from + unwrap_or yerine allow + comment yeterli.
-        #[allow(clippy::cast_possible_wrap)]
+        // (512 KiB) ile sınırlı; usize → i64 wrap pratik olarak imkânsız.
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "n ≤ CHUNK_SIZE (512 KiB) << i64::MAX — wrap imkansız"
+        )]
         let n_i64 = n as i64;
         offset += n_i64;
 
@@ -1417,9 +1435,10 @@ async fn verify_partial_hash_full(
 ) -> std::io::Result<bool> {
     use subtle::ConstantTimeEq;
     // INVARIANT: caller `offset > 0` kontrolünü zaten yaptı (§5 row 3);
-    // ayrıca spec_offset >= 0 garanti, sign loss yok.
-    #[allow(clippy::cast_sign_loss)] // INVARIANT: offset > 0 caller-checked
-    let off_u = offset as u64;
+    // ayrıca spec_offset >= 0 garanti — try_from infallible.
+    #[allow(clippy::expect_used)] // INVARIANT: caller §5 row 3 rejects offset < 0
+    let off_u = u64::try_from(offset)
+        .expect("INVARIANT: caller §5 row 3 `INVALID_OFFSET` rejects offset < 0");
     let owned_path = path.to_path_buf();
     let local = tokio::task::spawn_blocking(move || {
         crate::resume::partial_hash_streaming(&owned_path, off_u)
@@ -1459,8 +1478,10 @@ async fn verify_last_chunk_tag(
     let chunk_len = CHUNK_SIZE;
 
     let mut file = tokio::fs::File::open(path).await?;
-    #[allow(clippy::cast_sign_loss)] // INVARIANT: last_chunk_start >= 0 caller-checked
-    let pos = last_chunk_start as u64;
+    // INVARIANT: caller offset > 0 + chunk-aligned + < file_size → last_chunk_start >= 0.
+    #[allow(clippy::expect_used)] // INVARIANT: last_chunk_start >= 0 (caller-checked)
+    let pos = u64::try_from(last_chunk_start)
+        .expect("INVARIANT: last_chunk_start >= 0 (caller offset > 0 + chunk-aligned)");
     file.seek(std::io::SeekFrom::Start(pos)).await?;
     let mut buf = vec![0u8; chunk_len];
     file.read_exact(&mut buf).await?;
@@ -1481,7 +1502,10 @@ async fn verify_last_chunk_tag(
 /// `CHUNK_SIZE` `i64` cinsinden — `i64::from` ile maliyetsiz cast için.
 /// `CHUNK_SIZE = 524288 < i64::MAX` olduğundan literal cast wrap'siz.
 // SAFETY-CAST: CHUNK_SIZE compile-time literal 524288 << i64::MAX, wrap imkansız.
-#[allow(clippy::cast_possible_wrap)] // INVARIANT: CHUNK_SIZE = 512 KiB literal
+#[expect(
+    clippy::cast_possible_wrap,
+    reason = "CHUNK_SIZE = 512 KiB compile-time literal << i64::MAX"
+)]
 const CHUNK_SIZE_I64: i64 = CHUNK_SIZE as i64;
 
 /// SHA-256 / HMAC-SHA256 tag length (32 byte) — `partial_hash` ve
@@ -1633,7 +1657,10 @@ fn flatten_folder_to_files(folder: &PlannedFolder) -> Vec<PlannedFile> {
             continue;
         };
         // SAFETY-CAST (CLAUDE.md I-2): u64 >> 1 high-bit sıfır.
-        #[allow(clippy::cast_possible_wrap)] // INVARIANT: u64 >> 1
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
+        )]
         let payload_id_i64 = (rand::thread_rng().next_u64() >> 1) as i64;
         out.push(PlannedFile {
             path: entry.absolute_path.clone(),
@@ -1732,7 +1759,10 @@ async fn send_folder_bundle(
                 .await?;
                 // SAFETY-CAST: chunk.len() == CHUNK_SIZE (512 KiB) usize → i64
                 // wrap imkansız (CHUNK_SIZE << i64::MAX).
-                #[allow(clippy::cast_possible_wrap)] // INVARIANT: CHUNK_SIZE = 512 KiB
+                #[expect(
+                    clippy::cast_possible_wrap,
+                    reason = "chunk.len() ≤ CHUNK_SIZE (512 KiB) << i64::MAX"
+                )]
                 let chunk_len_i64 = chunk.len() as i64;
                 offset = offset
                     .checked_add(chunk_len_i64)
@@ -1892,9 +1922,10 @@ fn compute_percent(bytes_before: i64, offset: i64, total: i64) -> Option<u8> {
     let cumulative = bytes_before.checked_add(offset)?;
     let product = cumulative.checked_mul(100)?;
     let raw = product.checked_div(total)?;
-    // clamp(0, 100) sonrası değer 0..=100 aralığında — sign loss imkansız.
-    #[allow(clippy::cast_sign_loss)]
-    let percent = raw.clamp(0, 100) as u8;
+    // INVARIANT: clamp(0, 100) sonrası değer 0..=100 → u8::try_from infallible.
+    #[allow(clippy::expect_used)] // INVARIANT: clamp(0, 100) ⊆ u8 range
+    let percent =
+        u8::try_from(raw.clamp(0, 100)).expect("INVARIANT: clamp(0, 100) → 0..=100 fits in u8");
     Some(percent)
 }
 

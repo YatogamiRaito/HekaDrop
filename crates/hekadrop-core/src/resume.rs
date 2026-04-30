@@ -181,7 +181,10 @@ fn home_dir() -> Option<PathBuf> {
 pub fn meta_filename(session_id: i64, payload_id: i64) -> String {
     // INVARIANT: `as u64` reinterprets the bit pattern only — no value
     // change beyond signedness. 16 hex chars is exact for u64.
-    #[allow(clippy::cast_sign_loss)] // INVARIANT: bit-cast for hex rendering, not arithmetic
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "bit-cast for hex rendering, not arithmetic — round-trip via parse_session_hex"
+    )]
     let sid_u = session_id as u64;
     format!("{sid_u:016x}_{payload_id}.meta")
 }
@@ -391,7 +394,10 @@ fn parse_session_hex(s: &str) -> Option<i64> {
     }
     let raw = u64::from_str_radix(s, 16).ok()?;
     // INVARIANT: bit-cast inverse of `meta_filename`'s `as u64`.
-    #[allow(clippy::cast_possible_wrap)] // INVARIANT: round-trip of session_id_i64's bit pattern
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "bit-cast round-trip of session_id_i64's bit pattern (inverse of meta_filename)"
+    )]
     Some(raw as i64)
 }
 
@@ -542,7 +548,10 @@ pub fn cleanup_sweep(
             continue;
         };
         // INVARIANT: bit-cast for filename rendering — matches meta_filename.
-        #[allow(clippy::cast_sign_loss)] // INVARIANT: bit-cast, not arithmetic
+        #[expect(
+            clippy::cast_sign_loss,
+            reason = "bit-cast for hex filename rendering — matches meta_filename"
+        )]
         let session_u = session_id as u64;
         let part_path = dir.join(format!("{session_u:016x}_{}.part", loaded.payload_id));
         let part_size = file_size_or_zero(&part_path);
@@ -843,7 +852,7 @@ mod tests {
         part_size: Option<usize>,
     ) {
         let meta_name = meta_filename(session_id, payload_id);
-        #[allow(clippy::cast_sign_loss)] // test: bit-cast for hex render
+        #[expect(clippy::cast_sign_loss, reason = "test: bit-cast for hex render")]
         let session_u = session_id as u64;
         let bytes = part_size.unwrap_or(0);
         // INVARIANT: test uses small sizes (≤ MiB); i64::try_from cannot fail.
@@ -1051,7 +1060,7 @@ mod tests {
     #[test]
     fn session_hex_parse_roundtrip() {
         for &id in &[0i64, 1, -1, i64::MIN, i64::MAX, 0x0123_4567_89AB_CDEF] {
-            #[allow(clippy::cast_sign_loss)] // test: bit-cast for hex render
+            #[expect(clippy::cast_sign_loss, reason = "test: bit-cast for hex render")]
             let hex = format!("{:016x}", id as u64);
             let parsed = parse_session_hex(&hex).unwrap();
             assert_eq!(parsed, id);
