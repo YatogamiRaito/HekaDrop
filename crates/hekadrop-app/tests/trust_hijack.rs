@@ -246,7 +246,10 @@ mod issue_17_rate_limit {
         }
 
         fn queue_len(&self, ip: IpAddr) -> usize {
-            self.windows.read().get(&ip).map_or(0, |q| q.len())
+            self.windows
+                .read()
+                .get(&ip)
+                .map_or(0, std::collections::VecDeque::len)
         }
     }
 

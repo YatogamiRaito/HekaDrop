@@ -252,7 +252,11 @@ fn hash_verified_peer_sonsuz_baglanti_yapabilir() {
     // `src/state.rs::RateLimiter::forget_most_recent` tarafından test
     // ediliyor (tests/trust_hijack.rs::issue_17_rate_limit modülü).
     assert!(!rl.check_and_record_at(trusted_ip, t));
-    let len = rl.windows.read().get(&trusted_ip).map(|q| q.len());
+    let len = rl
+        .windows
+        .read()
+        .get(&trusted_ip)
+        .map(std::collections::VecDeque::len);
     assert_eq!(
         len,
         Some(1),

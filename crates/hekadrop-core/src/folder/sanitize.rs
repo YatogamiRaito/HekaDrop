@@ -233,7 +233,7 @@ mod tests {
         let r = sanitize_received_relative_path("..\\escape");
         assert!(matches!(
             r,
-            Err(PathError::BackslashSeparator) | Err(PathError::Traversal)
+            Err(PathError::BackslashSeparator | PathError::Traversal)
         ));
     }
 

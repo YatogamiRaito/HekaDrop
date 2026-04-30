@@ -302,7 +302,7 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
             "  commitment[{}]: cipher={:?}, len={}",
             idx,
             c.handshake_cipher,
-            c.commitment.as_ref().map_or(0, |v| v.len())
+            c.commitment.as_ref().map_or(0, bytes::Bytes::len)
         );
     }
 

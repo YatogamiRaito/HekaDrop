@@ -79,7 +79,9 @@ struct TempHome {
 
 impl TempHome {
     fn new() -> Self {
-        let guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = std::env::temp_dir().join(unique_label("home"));
         std::fs::create_dir_all(&dir).expect("temp home mkdir");
         let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };

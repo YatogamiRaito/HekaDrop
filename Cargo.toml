@@ -94,6 +94,13 @@ if_not_else = "warn"            # `if !cond { a } else { b }` → `if cond { b }
 single_char_pattern = "warn"    # `s.split("a")` → `s.split('a')`; mikro-perf + idiomatic.
 inefficient_to_string = "warn"  # `&T: Display` üzerinde `.to_string()` ekstra ref; format!() inline tercih.
 needless_late_init = "warn"     # `let x; if {...} else {...}` → `let x = if {...} else {...}`; init-at-decl.
+# pedantic batch 2 — closure / pattern micro-cleanups (PR: chore/lint-pedantic-batch-2)
+# 17 hit auto-fix + 0 allow; davranış-koruyucu refactor.
+redundant_closure_for_method_calls = "warn"  # 16 hit auto-fix: `|x| x.foo()` → `Foo::foo`; closure allocation azalır.
+cloned_instead_of_copied = "warn"            # 0 hit; `.cloned()` Copy type üzerinde → `.copied()`; perf + clarity.
+manual_string_new = "warn"                   # 0 hit; `String::from("")` → `String::new()`; idiomatic.
+unnested_or_patterns = "warn"                # 1 hit auto-fix: `Foo(_) | Bar(_)` → `Foo(_) | Bar(_)` nested form.
+flat_map_option = "warn"                     # 0 hit; `.flat_map(Option)` → `.filter_map`; intent netliği.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
