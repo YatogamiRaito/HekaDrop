@@ -125,6 +125,20 @@ struct PlannedFolder {
     payload_id: i64,
 }
 
+/// Files (ve opsiyonel tek folder) için outbound transfer pipeline'ı yürüt:
+/// resolve + connect + UKEY2 + Introduction + chunk pump + finalize.
+///
+/// # Errors
+///
+/// Returns `Err` if:
+/// - `req.files` boş (`HekaError::NoFilesSelected`)
+/// - Path mevcut değil veya stat I/O fail
+/// - Folder enumerate / manifest build fail (RFC-0005 limits, I/O)
+/// - TCP connect fail (peer offline, port closed)
+/// - UKEY2 handshake / capability negotiation fail
+/// - Introduction reject (peer kabul etmedi, timeout)
+/// - Chunk read / encrypt / write fail (disk I/O, socket)
+/// - Cancel token tetiklendi
 pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     if req.files.is_empty() {
         // Not: "hiç dosya yok" ile "toplam 0 bayt dosya var" semantik olarak
@@ -748,6 +762,16 @@ fn detect_url_kind(text: &str) -> TextKind {
     }
 }
 
+/// Tek bir text payload (URL, address, free-form metin) için outbound transfer
+/// pipeline'ı yürüt.
+///
+/// # Errors
+///
+/// Returns `Err` if:
+/// - Trim sonrası `text` boş (`HekaError::EmptyPayload`)
+/// - TCP connect / UKEY2 / Introduction fail (peer offline, reject)
+/// - Secure frame encrypt / write fail (socket, sequence overflow)
+/// - Cancel token tetiklendi
 pub async fn send_text(
     req: SendTextRequest,
     state: Arc<AppState>,

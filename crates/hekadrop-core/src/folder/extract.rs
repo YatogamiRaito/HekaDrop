@@ -145,6 +145,15 @@ pub enum ExtractError {
 /// Başarılı dönüş [`ExtractedFolder`]; herhangi bir hatada staging dir +
 /// `.bundle` silinmiş olur. Caller sadece `Result`'ı UI'a yansıtır;
 /// best-effort cleanup garanti.
+///
+/// # Errors
+///
+/// Returns [`ExtractError`] if:
+/// - Bundle open / header / trailer verify fail
+/// - Manifest JSON parse / schema validate fail
+/// - `attachment_hash` mismatch (manifest tampered post-introduction)
+/// - Per-file extract sırasında SHA-256 mismatch veya I/O hatası
+/// - Final rename (staging → downloads) fail (cross-device, permission)
 pub fn extract_bundle(
     bundle_path: &Path,
     expected_manifest_sha256_prefix: i64,

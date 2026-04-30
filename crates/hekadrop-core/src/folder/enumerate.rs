@@ -147,6 +147,16 @@ pub enum BuildError {
 /// **Order:** entries deterministic sıralı. Per-directory `read_dir` çıktısı
 /// dosya adına göre `sort()` ile sıralanır → cross-platform reproducible
 /// manifest (fuzz corpus + receiver byte-exact diff).
+///
+/// # Errors
+///
+/// Returns [`EnumerateError`] variant'ları:
+/// - `RootStat` — `root` stat I/O hatası
+/// - `RootNotDirectory` — `root` symlink veya non-directory
+/// - `ReadDir` / `EntryStat` — recursive walk sırasında I/O
+/// - `DepthExceeded` — depth > `MAX_FOLDER_DEPTH`
+/// - `EntryCountExceeded` — `entries.len()` > `MAX_FOLDER_ENTRIES`
+/// - `PathEncoding` — UTF-8'e çevrilemeyen segment
 pub fn enumerate_folder(root: &Path) -> Result<Vec<EnumeratedEntry>, EnumerateError> {
     let root_meta = fs::symlink_metadata(root).map_err(EnumerateError::RootStat)?;
     if root_meta.file_type().is_symlink() {
@@ -293,6 +303,13 @@ fn extract_mtime(meta: &fs::Metadata) -> Option<u64> {
 /// **Performans notu:** her file için `BufReader` + 64 KiB chunk. 1 GB
 /// folder ~10–15 sn (host disk hızına bağlı). Async runtime'ı bloklamamak
 /// için caller `spawn_blocking` ile sarmalı.
+///
+/// # Errors
+///
+/// Returns [`BuildError`] variant'ları:
+/// - `RootName` — `root.file_name()` sanitize fail
+/// - `EntryCountOverflow` — `entries.len() > u32::MAX`
+/// - `FileRead` — bir entry dosyası açılamadı / okunamadı (SHA-256 streaming)
 pub fn build_manifest(
     root: &Path,
     entries: &[EnumeratedEntry],

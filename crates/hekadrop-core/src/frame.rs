@@ -17,6 +17,13 @@ pub const HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// engellenir.
 pub const STEADY_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Socket'ten 4-byte big-endian length prefix + body oku.
+///
+/// # Errors
+///
+/// Returns [`HekaError`] if:
+/// - Socket I/O fail (`HekaError::Io`)
+/// - Frame uzunluğu `MAX_FRAME_SIZE` (16 MiB) üstünde (`HekaError::FrameTooLarge`)
 pub async fn read_frame(stream: &mut TcpStream) -> Result<Bytes, HekaError> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf).await?;
@@ -31,6 +38,12 @@ pub async fn read_frame(stream: &mut TcpStream) -> Result<Bytes, HekaError> {
 
 /// `read_frame` + deadline. Timeout → `HekaError::ReadTimeout`; böylece
 /// çağıran taraf tokio task'ını bitirebilir ve socket kapatılır.
+///
+/// # Errors
+///
+/// Returns [`HekaError`] if:
+/// - Deadline aşıldı (`HekaError::ReadTimeout`)
+/// - `read_frame` fail (I/O ya da `FrameTooLarge`)
 pub async fn read_frame_timeout(
     stream: &mut TcpStream,
     deadline: Duration,
@@ -41,6 +54,13 @@ pub async fn read_frame_timeout(
     }
 }
 
+/// Socket'e 4-byte big-endian length prefix + body yaz.
+///
+/// # Errors
+///
+/// Returns [`HekaError`] if:
+/// - `data.len() > MAX_FRAME_SIZE` (16 MiB) → `HekaError::FrameTooLarge`
+/// - Socket write fail (`HekaError::Io`)
 pub async fn write_frame(stream: &mut TcpStream, data: &[u8]) -> Result<(), HekaError> {
     if data.len() > MAX_FRAME_SIZE {
         return Err(HekaError::FrameTooLarge(data.len()));

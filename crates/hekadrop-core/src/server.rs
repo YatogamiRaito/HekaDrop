@@ -23,6 +23,13 @@ const DEFAULT_PORT: u16 = 47893;
 /// kısa sürede reddedilir.
 const MAX_CONCURRENT_CONNECTIONS: usize = 32;
 
+/// TCP listener'ı `HEKADROP_PORT` veya default port'tan başlat (kullanımdaysa
+/// random port'a düş).
+///
+/// # Errors
+///
+/// Returns `Err` if random fallback port'a bind dahi başarısız (privilege,
+/// network stack arızası — tipik ev kullanımında tetiklenmez).
 pub async fn start_listener() -> Result<TcpListener> {
     // `HEKADROP_PORT=0` özellikle filtrelenir: 0 "OS seçsin" anlamına gelir ama
     // "sabit port" semantiğini kırar, log'u yanıltır. 0 geçilirse default'a düşer.
@@ -49,6 +56,14 @@ pub async fn start_listener() -> Result<TcpListener> {
     }
 }
 
+/// Listener'dan bağlantıları kabul et + her birini bounded semaphore altında
+/// `connection::handle` task'ına ata.
+///
+/// # Errors
+///
+/// Returns `Err` if `listener.accept()` non-recoverable hata döndürürse
+/// (network stack arızası, fd exhaustion). Per-connection hatalar task
+/// içinde swallow edilir; loop devam eder.
 pub async fn accept_loop(
     listener: TcpListener,
     ui: Arc<dyn UiPort>,

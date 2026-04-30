@@ -297,6 +297,11 @@ impl PayloadAssembler {
     /// caller silently skip etmeli (resume best-effort, fresh transfer
     /// devam eder). Bu yüzden `Result` döner — `?` ile yutmak yerine
     /// caller `.ok()` ile handle eder.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `partial_dir()` resolve fail (`HOME`/`USERPROFILE`
+    /// env unset veya `~/.hekadrop/partial/` `create_dir_all` I/O hatası).
     pub fn enable_resume(
         &mut self,
         payload_id: i64,
@@ -337,6 +342,12 @@ impl PayloadAssembler {
         clippy::too_many_arguments,
         reason = "INVARIANT: tek production caller (handle_resume_for_file); resume injection field'ları organik biriktirildi, struct refactor v0.9'a defer"
     )]
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - `partial_dir()` resolve fail (HOME/USERPROFILE unset, I/O)
+    /// - `received_bytes < 0` (peer-controlled negative value)
+    /// - `next_chunk_index < 0` (peer-controlled negative value)
     pub fn enable_resume_with_offset(
         &mut self,
         payload_id: i64,
@@ -382,6 +393,11 @@ impl PayloadAssembler {
     /// `id=X → legit.pdf` + aynı Introduction'da `id=X → _evil.sh` yollayarak
     /// UI'ın kullanıcıya `legit.pdf`'i göstermesini ama gerçekte `_evil.sh`'in
     /// yazılmasını sağlayabilirdi. İkinci register artık hata döner.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HekaError::DuplicatePayloadId` if aynı `payload_id` ile
+    /// pending destination veya açık `FileSink` zaten kayıtlı.
     pub fn register_file_destination(&mut self, payload_id: i64, path: PathBuf) -> Result<()> {
         if self.pending_destinations.contains_key(&payload_id)
             || self.file_sinks.contains_key(&payload_id)
@@ -532,6 +548,15 @@ impl PayloadAssembler {
     ///
     /// Her çağrıda önce [`Self::gc`] çalışır ([`ASSEMBLER_GC_TIMEOUT`]); böylece
     /// dışarıdan periyodik tetik gerekmeden yarım kalanlar süpürülür.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - `payload_header` veya `payload_chunk` field'ı eksik (protokol ihlali)
+    /// - `total_size` cap aşıldı (`DoS` guard, bytes/files variant)
+    /// - File sink yaratım veya disk write fail (I/O)
+    /// - `register_file_destination` ile pre-onaylanmamış payload (`UnknownPayloadId`)
+    /// - Chunk-HMAC verify fail (capability aktifse)
     pub async fn ingest(&mut self, f: &PayloadTransferFrame) -> Result<Option<CompletedPayload>> {
         // Her chunk'ta cheap GC: dolu map yoksa zaten hiçbir şey yapmaz.
         self.gc(ASSEMBLER_GC_TIMEOUT);
@@ -986,6 +1011,15 @@ impl PayloadAssembler {
     ///
     /// Hata durumunda caller spec §9 davranışını uygulamalı: `.part`/`.meta`
     /// silimi (`cancel(payload_id)`) + `Disconnection` frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - chunk-HMAC capability aktif değil (`HekaError::ProtocolState`)
+    /// - `payload_id` için açık `FileSink` veya `pending_chunk` yok
+    /// - `chunk_index` / `offset` / `body_len` beklenenle eşleşmiyor (protokol ihlali)
+    /// - HMAC verify fail (`VerifyError::TagMismatch` vb.)
+    /// - Diske body yazımı fail (I/O)
     pub async fn verify_chunk_tag(
         &mut self,
         ci: &ChunkIntegrity,
