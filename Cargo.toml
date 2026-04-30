@@ -108,6 +108,13 @@ stable_sort_primitive = "warn"          # 0 hit; primitive slice `.sort()` → `
 checked_conversions = "warn"            # 0 hit; `i32 as u32` overflow-aware checked alternatif (`u32::try_from`).
 ptr_as_ptr = "warn"                     # 0 hit; `*const T as *const U` → `.cast()`; pointer cast idiom.
 ref_option_ref = "warn"                 # 0 hit; `&Option<&T>` redundant indirection — direkt `Option<&T>`.
+# pedantic batch 4 — control-flow + iterator + collection idiom temizliği (PR: chore/lint-pedantic-batch-4)
+# 3 hit manuel fix + 0 allow; davranış-koruyucu, control-flow netliği.
+implicit_clone = "warn"                 # 0 hit; `.to_owned()` Clone tipinde → `.clone()`; intent netliği.
+map_flatten = "warn"                    # 0 hit; `.map(...).flatten()` → `.flat_map(...)`; tek pass.
+needless_continue = "warn"              # 3 hit manuel fix: match arm sonu `=> continue` → `=> {}` (sanitize.rs + settings.rs ×2); döngünün doğal akışı zaten devam ediyor.
+manual_assert = "warn"                  # 0 hit; `if !cond { panic!(...) }` → `assert!(cond, ...)`; idiomatic.
+range_minus_one = "warn"                # 0 hit; `0..(n-1)` → `0..=(n-2)`; inclusive range netliği.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

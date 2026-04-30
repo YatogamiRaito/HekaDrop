@@ -843,7 +843,6 @@ pub fn backup_corrupt_file(path: &std::path::Path) -> std::io::Result<std::path:
             Ok(()) => return Ok(backup),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 last_err = Some(e);
-                continue;
             }
             Err(e) => return Err(e),
         }
@@ -911,7 +910,7 @@ pub(crate) fn atomic_write_mode(
         }
         match opts.open(&tmp) {
             Ok(f) => break (f, tmp),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 8 => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 8 => {}
             Err(e) => return Err(e),
         }
     };
