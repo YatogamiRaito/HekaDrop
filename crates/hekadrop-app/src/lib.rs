@@ -7,7 +7,6 @@
 //! dar bir yüzey (crypto + `file_size_guard` + UKEY2 downgrade validator
 //! + H#4 privacy controls için settings) açmaktır.
 
-#![allow(dead_code)]
 // Test profili (lib unit tests + inline `#[cfg(test)] mod tests`): production
 // için ship-blocker olan lint'ler test idiomatik kullanımı engellemesin.
 // Integration test'ler (`tests/*.rs`) ayrı crate olduğu için bu attribute
@@ -68,8 +67,9 @@ pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
 // alıyordu — Adım 3 öncesi yüzeyi korumak için aynı seviyede yeniden export.
 pub use hekadrop_core::{process_client_init, validate_server_init, DerivedKeys};
 
-// `platform` modülü uygulamaya özgüdür (Win32 / macOS Cocoa / Linux GTK
-// shim'leri); core'a sızdırılmaz, tests/benches da bu modüle dokunmaz.
-// `pub(crate)` ile lib surface dışına çıkarıldı — PR #107 review (Copilot)
-// `pub mod` + iç items `pub(crate)` tutarsızlığını yakaladı.
-pub(crate) mod platform;
+// NOT: `mod platform;` lib build'de **deklare edilmez** — binary `main.rs`
+// kendi `mod platform;` deklarasyonunu yapar (Cargo lib+bin hibrit:
+// modül ağaçları bağımsız). Lib build'de redundant; aksi halde 10
+// `pub(crate) fn` lib build'inde "dead_code" warning üretirdi. Bu sayede
+// crate-level `#![allow(dead_code)]` ihtiyacı ortadan kalkar (PR #152
+// sweep + bu PR ile birlikte).
