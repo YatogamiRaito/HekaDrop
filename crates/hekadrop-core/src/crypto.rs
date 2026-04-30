@@ -51,7 +51,10 @@ pub fn pin_code_from_auth_key(key: &[u8]) -> String {
         // signed reinterpretation (0..=255 → -128..=127) kasıtlı.
         // Quick Share PIN deterministik olmalı — bu cast'i değiştirmek
         // wire incompat eder.
-        #[allow(clippy::cast_possible_wrap)]
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "wire-compat: NearDrop PIN algoritması u8 → i8 reinterpretation gerektirir"
+        )]
         let signed = i64::from(b as i8);
         hash = (hash + signed * mult).rem_euclid(MOD);
         mult = (mult * 31).rem_euclid(MOD);

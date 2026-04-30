@@ -1168,7 +1168,10 @@ fn write_resume_checkpoint(payload_id: i64, sink: &mut FileSink, is_final: bool)
     // INVARIANT: bit-cast — meta_filename / parse_session_hex round-trip
     // semantiğine birebir uyumlu, no value change. Negative i64'ler 16-char
     // hex'e ffff... olarak render olur.
-    #[allow(clippy::cast_sign_loss)] // INVARIANT: bit-cast for hex rendering, not arithmetic
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "bit-cast for hex rendering — round-trip via parse_session_hex"
+    )]
     let session_hex = format!("{:016x}", rs.session_id as u64);
     let meta = resume::PartialMeta {
         version: 1,

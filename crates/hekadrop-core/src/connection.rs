@@ -560,9 +560,12 @@ async fn finalize_received_payload(
                     let mut s = state.stats.write();
                     // INVARIANT (CLAUDE.md I-5): payload finalize'da
                     // total_size ≥ 0 garanti (payload.rs ingest_file negatif
-                    // reject); cast güvenli.
-                    #[allow(clippy::cast_sign_loss)] // INVARIANT: total_size >= 0 garanti
-                    let total_u = total_size as u64;
+                    // reject); try_from non-negative garantisini lint'e taşır.
+                    #[allow(clippy::expect_used)]
+                    // INVARIANT: payload ingest_file rejects total_size < 0
+                    let total_u = u64::try_from(total_size).expect(
+                        "INVARIANT: total_size >= 0 (payload ingest_file rejects negative)",
+                    );
                     s.record_received(remote_name, total_u);
                     if keep {
                         Some(s.clone())
@@ -693,8 +696,9 @@ fn finalize_received_file(
         let snap_opt = {
             let mut s = state.stats.write();
             // payload.rs ingest_file aşamasında `total_size < 0` reddediliyor — burada >= 0 garanti.
-            #[allow(clippy::cast_sign_loss)]
-            let total_size_u = total_size as u64;
+            #[allow(clippy::expect_used)] // INVARIANT: payload ingest_file rejects total_size < 0
+            let total_size_u = u64::try_from(total_size)
+                .expect("INVARIANT: total_size >= 0 (payload ingest_file rejects negative)");
             s.record_received(remote_name, total_size_u);
             if keep {
                 Some(s.clone())
@@ -970,7 +974,10 @@ async fn handle_sharing_frame(
                             .resolved_download_dir(|| state.default_download_dir.clone());
                         // INVARIANT (CLAUDE.md I-2): bit-cast — i64 → u64
                         // hex render, no value change.
-                        #[allow(clippy::cast_sign_loss)] // INVARIANT: bit-cast for hex rendering
+                        #[expect(
+                            clippy::cast_sign_loss,
+                            reason = "bit-cast for hex rendering — matches meta_filename"
+                        )]
                         let session_hex =
                             format!("{:016x}", crate::resume::session_id_i64(auth_key) as u64);
                         let bundle_path =
@@ -1324,7 +1331,10 @@ async fn handle_sharing_frame(
                     {
                         // INVARIANT (CLAUDE.md I-2): bit-cast — i64 → u64 hex
                         // render, no value change.
-                        #[allow(clippy::cast_sign_loss)] // INVARIANT: bit-cast for hex rendering
+                        #[expect(
+                            clippy::cast_sign_loss,
+                            reason = "bit-cast for hex rendering — matches meta_filename"
+                        )]
                         let session_hex =
                             format!("{:016x}", crate::resume::session_id_i64(auth_key) as u64);
                         assembler.register_bundle_marker(
@@ -1552,10 +1562,10 @@ fn resolve_resume_path(
     }
     // SECURITY: untrusted-disk size — `meta.received_bytes` ile eşleşmesi
     // resume offset semantiğinin disk gerçeğine oturduğunu garanti eder.
-    // `as u64` bit-cast (u64 rendering); validate() received_bytes >= 0
-    // garantilediği için sign loss yok.
-    #[allow(clippy::cast_sign_loss)] // INVARIANT: validate() guards received_bytes >= 0
-    let expected = meta.received_bytes as u64;
+    // `try_from` validate() received_bytes >= 0 garantisini lint'e taşır.
+    #[allow(clippy::expect_used)] // INVARIANT: PartialMeta::validate() rejects received_bytes < 0
+    let expected = u64::try_from(meta.received_bytes)
+        .expect("INVARIANT: PartialMeta::validate() guards received_bytes >= 0");
     if md.len() != expected {
         return None;
     }
@@ -1726,10 +1736,12 @@ async fn handle_resume_for_file(
         Vec::new()
     } else {
         // SECURITY: receiver tarafı kendi diskindeki `.part`'ı doğruluyor —
-        // `meta.received_bytes` validate'lı. `as u64` bit-cast (validate
-        // received_bytes >= 0 garantili).
-        #[allow(clippy::cast_sign_loss)] // INVARIANT: validate() guards received_bytes >= 0
-        let off_u = meta.received_bytes as u64;
+        // `meta.received_bytes` validate'lı. `try_from` validate() guarantee'sini
+        // lint'e taşır (panic infallible).
+        #[allow(clippy::expect_used)]
+        // INVARIANT: PartialMeta::validate() rejects received_bytes < 0
+        let off_u = u64::try_from(meta.received_bytes)
+            .expect("INVARIANT: PartialMeta::validate() guards received_bytes >= 0");
         let dest_path = std::path::Path::new(&meta.dest_path);
         match crate::resume::partial_hash_streaming(dest_path, off_u) {
             Ok(h) => h.to_vec(),
@@ -2209,7 +2221,10 @@ pub(crate) async fn send_sharing_frame(
     let body = sharing.encode_to_vec();
     // SAFETY-CAST: u64 >> 1 her zaman 0..=i64::MAX aralığında — high bit
     // shift ile sıfırlanıyor, wrap yok.
-    #[allow(clippy::cast_possible_wrap)]
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
+    )]
     let payload_id: i64 = (rand::thread_rng().next_u64() >> 1) as i64;
     let total = i64::try_from(body.len())
         .with_context(|| format!("sharing frame body i64'a sığmıyor: {} bayt", body.len()))?;
