@@ -128,6 +128,20 @@ manual_str_repeat = "warn"              # 0 hit; `(0..n).map(|_| s).collect::<St
 unnecessary_box_returns = "warn"        # 0 hit; `fn f() -> Box<T>` → `fn f() -> T`; ekstra heap indirection gereksizse direkt by-value.
 struct_excessive_bools = "warn"         # 1 hit scoped allow: `crates/hekadrop-core/src/settings.rs::Settings` 5 bool field (auto_accept / advertise / keep_stats / disable_update_check / first_launch_completed). Her biri bağımsız user preference; flag enum / bitfield refactor'u serde JSON wire format kırar (config.json migration tabanı).
 large_types_passed_by_value = "warn"    # 0 hit; büyük (>256 byte) type by-value parametre → `&T`; gereksiz move/copy.
+# pedantic batch 7 — argument / pointer / visibility / binding / string idiom temizliği (PR: chore/lint-pedantic-batch-7)
+# 1 hit manuel fix (no_effect_underscore_binding) + 4 zero-hit lint enable.
+# NOT: `clippy::redundant_pub_crate` (58 hit) bu batch'ten KAPSAM-DIŞI bırakıldı.
+# Hekadrop-app `lib.rs + main.rs` hibrit crate; `i18n/paths/platform/state/ui/ui_adapter`
+# modülleri yalnız `main.rs`'in private modül ağacında ve `pub(crate)` kullanıyor.
+# Auto-fix `pub`'a çevirmek istiyor — fakat workspace zaten `unreachable_pub = "warn"`
+# enforce ediyor (yukarıda lints.rust); bu lint aynı item'ları tam tersi yönde
+# (`pub` → `pub(crate)`) raporlar. İki lint uzlaşmaz; `redundant_pub_crate` enforce
+# etmek için `unreachable_pub`'ı gevşetmek gerekir — refactor RFC-0001 sonrası
+# yeniden değerlendirilecek.
+needless_pass_by_ref_mut = "warn"           # 0 hit; `&mut T` argüman gerçekten mutate edilmiyorsa `&T`; immutability disiplini.
+ref_as_ptr = "warn"                         # 0 hit; `&x as *const T` → `std::ptr::from_ref(&x)`; pointer cast idiom (Rust 1.76+).
+no_effect_underscore_binding = "warn"       # 1 hit manuel fix: `crates/hekadrop-core/src/settings.rs::v06_reject_path_legacy_upgrade_yapmaz` test'inde `let _peer_hash = [0xCC; 6];` no-op binding (eski kodun ne yaptığını dökümante etmek için). Yorum bloğuna dönüştürüldü; `0xCC` literal aşağıdaki assertion'da zaten var.
+needless_raw_string_hashes = "warn"         # 0 hit; `r#"..."#` raw string'de gereksiz `#` (string'de `"` yoksa); idiomatic.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

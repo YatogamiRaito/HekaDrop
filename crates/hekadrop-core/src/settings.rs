@@ -1567,9 +1567,8 @@ mod tests {
 
         // Reject branch'inde connection.rs `add_trusted_with_hash` çağırMAZ.
         // Hiçbir mutasyon olmadığı için settings değişmemeli.
-        // (Eski kod bu noktada `add_trusted_with_hash(name, id, h)` çağırıyordu.)
-        let _peer_hash = [0xCC; 6];
-        // no-op: yeni kodda reject'te upgrade yok.
+        // (Eski kod bu noktada `add_trusted_with_hash("Pixel 7", "endpoint-abc",
+        // [0xCC; 6])` çağırıyordu — şimdi no-op: yeni kodda reject'te upgrade yok.)
 
         assert_eq!(s.trusted_devices, snapshot_before);
         assert!(s.trusted_devices[0].secret_id_hash.is_none());
