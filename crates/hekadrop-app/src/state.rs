@@ -28,8 +28,11 @@ pub(crate) use hekadrop_core::state::{
 use hekadrop_core::settings::Settings;
 use std::sync::{Arc, OnceLock};
 
+/// Process-level `AppState` singleton — `init()` ile bir kez doldurulur.
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
 
+/// Singleton'ı doldurur — `main` startup'ında bir kez çağrılır; tekrar
+/// çağrılırsa `set` no-op döner (mevcut state korunur).
 pub(crate) fn init(settings: Settings) {
     // App-singleton katmanı path'leri ve platform default'larını inject
     // ediyor — `AppState::new` core'da global'siz çalışır. Path resolution
@@ -46,6 +49,8 @@ pub(crate) fn init(settings: Settings) {
     ));
 }
 
+/// `init()` ile doldurulmuş singleton'a paylaşımlı `Arc` referansı döner;
+/// `init()` çağrılmadıysa panik (programlama hatası).
 pub(crate) fn get() -> Arc<AppState> {
     // INVARIANT: `init()` her zaman `main`'in ilk işlerinden — `get()`
     // öncesinde çağrılması garanti. Aksi durum programlama hatası, panik
@@ -66,30 +71,38 @@ pub(crate) fn get() -> Arc<AppState> {
 // (artık core'da) doğrudan `Arc<AppState>` parametresi alıyor — singleton
 // lookup yok.
 
+/// `WebView`'e gönderilecek bir JS snippet'ini singleton kuyruğuna ekler.
 pub(crate) fn enqueue_js(js: String) {
     get().enqueue_js(js);
 }
 
+/// Bekleyen tüm JS snippet'lerini boşaltıp döner; UI tick worker tarafından
+/// çağrılır.
 pub(crate) fn drain_js() -> Vec<String> {
     get().drain_js()
 }
 
+/// UI thread'inden ana pencerenin gizlenmesini ister.
 pub(crate) fn request_hide_window() {
     get().request_hide_window();
 }
 
+/// UI thread'inden ana pencerenin gösterilmesini ister.
 pub(crate) fn request_show_window() {
     get().request_show_window();
 }
 
+/// Bekleyen "pencereyi gizle" isteğini tüketir; istek varsa `true` döner.
 pub(crate) fn consume_hide_window() -> bool {
     get().consume_hide_window()
 }
 
+/// Bekleyen "pencereyi göster" isteğini tüketir; istek varsa `true` döner.
 pub(crate) fn consume_show_window() -> bool {
     get().consume_show_window()
 }
 
+/// Belirtilen transfer (veya `None` ise hepsi) için iptal sinyalini set eder.
 pub(crate) fn request_cancel(id: Option<&str>) {
     get().request_cancel(id);
 }
@@ -99,18 +112,22 @@ pub(crate) fn request_cancel_all() {
     request_cancel(None);
 }
 
+/// TCP listener'ın bind olduğu portu kaydeder; mDNS advertise için kullanılır.
 pub(crate) fn set_listen_port(p: u16) {
     get().set_listen_port(p);
 }
 
+/// Aktif listen portunu döner; bind edilmemişse `0`.
 pub(crate) fn listen_port() -> u16 {
     get().listen_port()
 }
 
+/// Geçmiş sekmesinde gösterilecek tamamlanmış aktarımları döner.
 pub(crate) fn read_history() -> Vec<HistoryItem> {
     get().read_history()
 }
 
+/// UI tick worker için anlık ilerleme snapshot'ı döner.
 pub(crate) fn read_progress() -> ProgressState {
     get().read_progress()
 }

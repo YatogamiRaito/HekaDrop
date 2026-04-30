@@ -22,8 +22,11 @@ use tokio::task;
 )]
 use std::path::PathBuf;
 
+/// Accept dialog'unda gösterilen tek dosya satırı için minimal özet.
 pub(crate) struct FileSummary {
+    /// Sanitize edilmemiş görüntülenecek dosya adı (peer'dan).
     pub name: String,
+    /// Bayt cinsinden boyut; `human_size()` ile MB/GB formatına çevrilir.
     pub size: i64,
 }
 
@@ -34,15 +37,22 @@ pub(crate) struct FileSummary {
 /// dialog body'sinde dosya listesi yerine "klasör — N dosya, X" özeti
 /// gösterilir.
 pub(crate) struct FolderSummary {
+    /// Bundle root klasör adı (sanitize edilmiş).
     pub root_name: String,
+    /// Bundle içindeki toplam dosya/klasör girişi sayısı.
     pub entry_count: u32,
+    /// Bundle uncompressed toplam boyutu (bayt).
     pub total_size: i64,
 }
 
+/// `prompt_accept` sonucu — kullanıcı dialog'da hangi butona bastı.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AcceptResult {
+    /// Kullanıcı reddetti veya dialog kapandı.
     Reject,
+    /// Kullanıcı kabul etti (tek seferlik).
     Accept,
+    /// Kullanıcı kabul etti + cihazı trust listesine ekledi.
     AcceptAndTrust,
 }
 
@@ -107,6 +117,8 @@ fn sanitize_display_text(s: &str) -> String {
         .collect()
 }
 
+/// Dialog body'sinde gösterilecek dosya/klasör/text özet satırını üretir;
+/// sıra: folder summary → text-only count → bullet'lı dosya listesi → "boş".
 fn format_payload_lines(
     files: &[(String, i64)],
     text_count: usize,
@@ -142,6 +154,8 @@ fn format_payload_lines(
     }
 }
 
+/// macOS sürümü — `osascript` `display dialog` ile 3-buton accept prompt;
+/// stdout `button returned:<LABEL>` parse edilir.
 #[cfg(target_os = "macos")]
 fn prompt_accept_blocking(
     device: &str,
@@ -198,6 +212,8 @@ fn prompt_accept_blocking(
     }
 }
 
+/// Windows sürümü — Win32 `MessageBoxW` 3-buton accept prompt; return value
+/// `IDYES` / `IDNO` / `IDCANCEL` map'lenir.
 #[cfg(target_os = "windows")]
 fn prompt_accept_blocking(
     device: &str,
@@ -273,6 +289,8 @@ fn prompt_accept_blocking(
     }
 }
 
+/// Linux sürümü — `zenity` veya `kdialog` ile 3-buton accept prompt; her
+/// ikisi de yoksa `notify-rust` ile bilgilendirip reddet.
 #[cfg(target_os = "linux")]
 fn prompt_accept_blocking(
     device: &str,
@@ -683,6 +701,7 @@ pub(crate) fn show_info(title: &str, body: &str) {
     dead_code,
     reason = "single-file API helper; UI'da çoklu seçim default, single-pick gelecek toggle için reservoir"
 )]
+/// Tek dosya seçim dialog'u — `choose_files`'in ilk öğesini döner.
 pub(crate) async fn choose_file() -> Option<std::path::PathBuf> {
     choose_files().await.and_then(|mut v| v.pop())
 }
@@ -695,6 +714,7 @@ pub(crate) async fn choose_files() -> Option<Vec<std::path::PathBuf>> {
         .flatten()
 }
 
+/// macOS sürümü — `osascript` `choose file with multiple selections allowed` ile çoklu dosya seçimi.
 #[cfg(target_os = "macos")]
 fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
     let script = r#"
@@ -726,6 +746,7 @@ pathList
     }
 }
 
+/// Windows sürümü — Win32 `IFileOpenDialog` `FOS_ALLOWMULTISELECT` ile çoklu dosya seçimi.
 #[cfg(target_os = "windows")]
 fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
     // PowerShell + System.Windows.Forms.OpenFileDialog — cargo-install'suz,
@@ -768,6 +789,7 @@ if ($dlg.ShowDialog() -eq 'OK') { $dlg.FileNames -join "`n" }
     }
 }
 
+/// Linux sürümü — `zenity` (öncelik) veya `kdialog` ile çoklu dosya seçimi.
 #[cfg(target_os = "linux")]
 fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
     let title = crate::i18n::t("send.choose_title");
@@ -838,6 +860,7 @@ pub(crate) async fn choose_folder() -> Option<std::path::PathBuf> {
         .flatten()
 }
 
+/// macOS sürümü — `osascript` `choose folder` ile klasör seçimi.
 #[cfg(target_os = "macos")]
 fn choose_folder_blocking() -> Option<std::path::PathBuf> {
     let prompt = crate::i18n::t("pick.download_folder");
@@ -860,6 +883,7 @@ fn choose_folder_blocking() -> Option<std::path::PathBuf> {
     }
 }
 
+/// Windows sürümü — Win32 `IFileOpenDialog` `FOS_PICKFOLDERS` ile klasör seçimi.
 #[cfg(target_os = "windows")]
 fn choose_folder_blocking() -> Option<std::path::PathBuf> {
     // PowerShell'e i18n string'ini güvenli geçirmek için single-quote'ları
@@ -898,6 +922,7 @@ if ($dlg.ShowDialog() -eq 'OK') {{ $dlg.SelectedPath }}
     }
 }
 
+/// Linux sürümü — `zenity --file-selection --directory` veya `kdialog --getexistingdirectory`.
 #[cfg(target_os = "linux")]
 fn choose_folder_blocking() -> Option<std::path::PathBuf> {
     let title = crate::i18n::t("pick.download_folder");
@@ -952,6 +977,7 @@ pub(crate) async fn choose_device(labels: Vec<String>) -> Option<usize> {
     labels.iter().position(|l| *l == selected)
 }
 
+/// macOS sürümü — `osascript` `choose from list` ile cihaz seçimi (label döner).
 #[cfg(target_os = "macos")]
 fn choose_device_blocking(labels: &[String]) -> Option<String> {
     let items = labels
@@ -977,6 +1003,7 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
     Some(result)
 }
 
+/// Windows sürümü — basit numbered prompt (gerçek combobox dialog yok).
 #[cfg(target_os = "windows")]
 fn choose_device_blocking(labels: &[String]) -> Option<String> {
     // PowerShell ile minimal ListBox dialog'u. `Out-GridView -PassThru` de
@@ -1054,6 +1081,7 @@ if ($form.ShowDialog() -eq 'OK') {{ $listbox.SelectedItem }}
     }
 }
 
+/// Linux sürümü — `zenity --list` veya `kdialog --radiolist` ile cihaz seçimi.
 #[cfg(target_os = "linux")]
 fn choose_device_blocking(labels: &[String]) -> Option<String> {
     if have("zenity") {
@@ -1124,6 +1152,7 @@ pub(crate) fn send_progress_notify(device: &str, file: &str) {
     notify("HekaDrop", &format!("Gönderiliyor: {file} → {device}"));
 }
 
+/// macOS sürümü — `AppleScript` string'i için `\` ve `"` escape eder.
 #[cfg(target_os = "macos")]
 fn escape_applescript(s: &str) -> String {
     // AppleScript string literal'ında raw newline (`\n`) syntax error verir
@@ -1139,6 +1168,7 @@ fn escape_applescript(s: &str) -> String {
 /// zenity `--extra-button` flag'ini destekliyor mu? Versiyon 3.0+'da var.
 /// `zenity --version` çıktısı "3.44.0" gibi tek satır; major sayı ≥3 ise
 /// true. Hata durumunda (zenity açılmıyor vb.) false — iki-adım fallback.
+/// Linux sürümü — `zenity` argümanları için minimal escape (newline strip).
 #[cfg(target_os = "linux")]
 fn zenity_supports_extra_button() -> bool {
     let out = match Command::new("zenity")
@@ -1168,6 +1198,7 @@ fn zenity_supports_extra_button() -> bool {
 /// olsun diye `bin` içinde shell-special char görürsek direkt `false`
 /// dönüyoruz; helper ileride yanlışlıkla dış input ile çağrılırsa da
 /// güvenli kalıyor.
+/// Linux sürümü — `kdialog` argümanları için minimal escape.
 #[cfg(target_os = "linux")]
 fn have(bin: &str) -> bool {
     if bin

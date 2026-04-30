@@ -41,7 +41,14 @@
 // Net/cli/proto hâlâ kapsam dışı. CI `-D warnings` ile fiili enforce sağlar.
 // CLAUDE.md I-2: crate-level `#![warn]` `#![allow]` yasağına girmez (stricter
 // check, lint relaxasyonu değil).
-#![warn(clippy::missing_errors_doc, clippy::missing_panics_doc)]
+// `missing_docs_in_private_items` PR `chore/lint-missing-docs-private-app`
+// ile lib tarafında da aktif — re-export shim'leri lint kapsamı dışı (item
+// core'da tanımlı). Yeni private item buraya eklenirse doc zorunlu.
+#![warn(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::missing_docs_in_private_items
+)]
 
 // RFC-0001 §5 — workspace refactor implementation tamamlandı (Adım 1-8):
 //   1. Cargo workspace iskele (#85)

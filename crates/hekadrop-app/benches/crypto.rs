@@ -18,7 +18,11 @@
     clippy::use_self,
     clippy::trivially_copy_pass_by_ref,
     clippy::single_match_else,
-    clippy::map_err_ignore
+    clippy::map_err_ignore,
+    // Bench fn'leri criterion'un bilinen `fn(&mut Criterion)` signature'ı —
+    // her birine ayrı doc bloğu eklemek noise; bench dosyalarının doc kültürü
+    // farklı (modül-level //! yeterli).
+    clippy::missing_docs_in_private_items
 )]
 
 //! Criterion benchmark — kripto sıcak yolu (AES-CBC, HMAC, HKDF,
