@@ -434,6 +434,8 @@ fn apply_mode_best_effort(path: &Path, mode: Option<u32>) {
     }
 }
 
+/// `apply_mode_best_effort` no-op variant (Windows): NTFS ACL modeli POSIX
+/// mode bit'lerini temsil etmez.
 #[cfg(not(unix))]
 fn apply_mode_best_effort(_path: &Path, _mode: Option<u32>) {
     // No-op: NTFS ACL modeli POSIX mode bit'lerini temsil etmez.
@@ -449,6 +451,8 @@ fn apply_mode_best_effort_via_handle(file: &fs::File, mode: Option<u32>) {
     }
 }
 
+/// `apply_mode_best_effort_via_handle` no-op variant (Windows): file handle
+/// üzerinden permission set'i POSIX-only API.
 #[cfg(not(unix))]
 fn apply_mode_best_effort_via_handle(_file: &fs::File, _mode: Option<u32>) {
     // No-op (Windows).

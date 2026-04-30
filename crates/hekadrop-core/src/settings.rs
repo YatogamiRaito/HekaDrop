@@ -780,6 +780,9 @@ fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
     std::fs::rename(tmp, dst)
 }
 
+/// `replace_atomic` Windows variant: `MoveFileExW` ile atomik rename
+/// (`MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH`). POSIX
+/// `std::fs::rename`'in Windows-spesifik karşılığı.
 #[cfg(windows)]
 fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;

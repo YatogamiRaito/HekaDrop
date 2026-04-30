@@ -169,6 +169,9 @@ fn set_dir_mode_0700(dir: &Path) -> io::Result<()> {
     fs::set_permissions(dir, perms)
 }
 
+/// `set_dir_mode_0700` no-op variant (Windows): NTFS DACL hijyeni
+/// `hekadrop-app` katmanının app data root sorumluluğunda; per-subdir
+/// hardening yok.
 #[cfg(not(unix))]
 #[expect(
     clippy::unnecessary_wraps,
