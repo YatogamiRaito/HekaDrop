@@ -71,6 +71,12 @@ pub async fn scan(duration: Duration, own_port: u16) -> Result<Vec<DiscoveredDev
     Ok(devices)
 }
 
+/// Tek bir mDNS `ResolvedService` kaydından `DiscoveredDevice` üretir.
+///
+/// Endpoint info (`"n"` TXT record) base64-decode edilip Quick Share
+/// endpoint info bitmap'i + opsiyonel device adı parse edilir; geçersiz /
+/// kısa payload'larda `None` döner. Multi-homed cihazlarda IPv4 adres
+/// seti deterministik seçim için sıralanır (`min`).
 fn parse(info: &ResolvedService) -> Option<DiscoveredDevice> {
     // v0.15+ API: get_addresses() artık `&HashSet<ScopedIp>` döner; IPv4 için
     // get_addresses_v4() → `&HashSet<Ipv4Addr>`; .iter() `&Ipv4Addr` verir.
