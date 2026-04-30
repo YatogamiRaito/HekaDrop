@@ -39,13 +39,14 @@
         clippy::map_err_ignore,
     )
 )]
-// Scope-limited enforce: pedantic umbrella altındaki `missing_errors_doc`
-// yalnız `hekadrop-core` public protocol surface için warn olarak aktif.
-// App/net/cli/proto kapsam dışı (proto generated, app/net/cli henüz triaj
-// edilmedi) — workspace-wide enable yerine source-level warn. CI `-D warnings`
-// ile birlikte fiili enforce sağlar. CLAUDE.md I-2: crate-level `#![warn]`
-// `#![allow]` yasağına girmez (stricter check, lint relaxasyonu değil).
-#![warn(clippy::missing_errors_doc)]
+// Scope-limited enforce: pedantic umbrella altındaki `missing_errors_doc` ve
+// `missing_panics_doc` yalnız `hekadrop-core` public protocol surface için
+// warn olarak aktif. App/net/cli/proto kapsam dışı (proto generated, app/net/
+// cli henüz triaj edilmedi) — workspace-wide enable yerine source-level warn.
+// CI `-D warnings` ile birlikte fiili enforce sağlar. CLAUDE.md I-2: crate-
+// level `#![warn]` `#![allow]` yasağına girmez (stricter check, lint
+// relaxasyonu değil).
+#![warn(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 pub mod capabilities;
 pub mod chunk_hmac;

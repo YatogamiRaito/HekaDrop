@@ -199,6 +199,11 @@ impl BundleManifest {
     /// # Errors
     ///
     /// Returns [`serde_json::Error`] propagated from [`Self::manifest_sha256`].
+    ///
+    /// # Panics
+    ///
+    /// Pratik olarak panik etmez; SHA-256 digest sabit 32 byte ve `[0..8]`
+    /// slice → `[u8; 8]` `try_into` infallible. `expect` defensive.
     pub fn attachment_hash_i64(&self) -> Result<i64, serde_json::Error> {
         let digest = self.manifest_sha256()?;
         // INVARIANT: digest sabit 32 byte; [0..8] slice her zaman 8 byte.

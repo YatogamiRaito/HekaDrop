@@ -83,6 +83,12 @@ impl BundleHeader {
     /// - `UnsupportedVersion` — version field'ı `HEKABUND_VERSION` değil
     /// - `ManifestLenZero` — `manifest_len == 0`
     /// - `ManifestLenExceeded` — `manifest_len > MAX_MANIFEST_LEN`
+    ///
+    /// # Panics
+    ///
+    /// Pratik olarak panik etmez; üst kısımdaki `bytes.len() < HEADER_LEN`
+    /// guard sonrası 8 + 4 + 4 byte'lık fixed-size array `try_into`'ları
+    /// infallible. Guard atlanırsa array conversion `expect` ile panik.
     pub fn decode(bytes: &[u8]) -> Result<Self, BundleError> {
         if bytes.len() < HEADER_LEN {
             return Err(BundleError::HeaderTooShort {
