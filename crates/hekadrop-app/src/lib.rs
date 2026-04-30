@@ -33,6 +33,15 @@
         clippy::map_err_ignore,
     )
 )]
+// Scope-limited enforce: pedantic umbrella altındaki `missing_errors_doc` ve
+// `missing_panics_doc` `hekadrop-core` (PR #171/#172) ardından `hekadrop-app`
+// için de aktif. App'in pub yüzeyi büyük ölçüde `hekadrop_core::*` re-export'u
+// (re-export'lar lint kapsamına girmez — item core'da tanımlı, doc orada);
+// app-tanımlı pub fn yok denecek kadar az olduğundan 0 hit ile direkt enforce.
+// Net/cli/proto hâlâ kapsam dışı. CI `-D warnings` ile fiili enforce sağlar.
+// CLAUDE.md I-2: crate-level `#![warn]` `#![allow]` yasağına girmez (stricter
+// check, lint relaxasyonu değil).
+#![warn(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 // RFC-0001 §5 — workspace refactor implementation tamamlandı (Adım 1-8):
 //   1. Cargo workspace iskele (#85)
