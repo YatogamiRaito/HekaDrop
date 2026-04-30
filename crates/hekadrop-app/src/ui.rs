@@ -241,10 +241,18 @@ fn prompt_accept_blocking(
     let msg_w = to_wide(&message);
     let title_w = to_wide(title);
 
-    // SAFETY: `msg_w` ve `title_w` `to_wide` ile üretilmiş, NUL ile sonlanan
-    // local `Vec<u16>`'lar; çağrı süresince scope'ta yaşıyor. `MessageBoxW`
-    // PCWSTR'leri yalnızca embedded NUL'a kadar okur ve senkron döner;
-    // `HWND::default()` (NULL parent) MSDN'de top-level dialog için geçerli.
+    // SAFETY: `MessageBoxW`
+    // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-messageboxw)
+    // - `msg_w` and `title_w` are local `Vec<u16>`s built by `to_wide`,
+    //   NUL-terminated, alive for the whole synchronous call (dropped at
+    //   end of scope after `MessageBoxW` returns).
+    // - `PCWSTR(msg_w.as_ptr())`/`PCWSTR(title_w.as_ptr())` are read at
+    //   most up to the embedded NUL.
+    // - `HWND::default()` (NULL parent) is documented as valid; the box
+    //   becomes a top-level dialog. `MB_SYSTEMMODAL` is set so OS owns
+    //   focus serialisation.
+    // - Return is the user's button choice (`MESSAGEBOX_RESULT`),
+    //   inspected below; no pointer escapes.
     let result = unsafe {
         MessageBoxW(
             Some(HWND::default()),
@@ -570,10 +578,16 @@ pub(crate) fn fatal_error_dialog(title: &str, body: &str) {
         let body_w = to_wide(body);
         let title_w = to_wide(title);
         // Startup path'te — thread spawn etmeden main thread'de blokla.
-        // SAFETY: `body_w` ve `title_w` `to_wide` ile üretilmiş NUL-terminated
-        // local `Vec<u16>`'lar; senkron `MessageBoxW` çağrısı süresince
-        // canlı. PCWSTR'ler yalnızca NUL'a kadar okunur, parent HWND NULL
-        // (top-level) MSDN'de geçerli; dönüş değerini umursamıyoruz.
+        // SAFETY: `MessageBoxW`
+        // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-messageboxw)
+        // - `body_w` and `title_w` are local NUL-terminated `Vec<u16>`s
+        //   alive for the synchronous `MessageBoxW` call (dropped at end
+        //   of scope after return).
+        // - PCWSTR pointers are read at most up to the NUL.
+        // - NULL parent HWND (`HWND::default()`) is documented valid for
+        //   top-level dialogs.
+        // - Return value (button id) is intentionally discarded — caller
+        //   only cares that the user has been informed.
         unsafe {
             MessageBoxW(
                 Some(HWND::default()),
@@ -633,11 +647,19 @@ pub(crate) fn show_info(title: &str, body: &str) {
                 };
                 let body_w = to_wide(&body);
                 let title_w = to_wide(&title);
-                // SAFETY: `body_w` ve `title_w` `to_wide` ile üretilmiş NUL-
-                // terminated `Vec<u16>`'lar; bu spawn edilmiş thread'in
-                // closure'u ile sahiplenildikleri için senkron `MessageBoxW`
-                // dönene kadar canlı. PCWSTR'ler yalnızca NUL'a kadar okunur,
-                // NULL parent HWND top-level dialog için MSDN'de geçerli.
+                // SAFETY: `MessageBoxW`
+                // (MSDN: learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-messageboxw)
+                // - `body_w` and `title_w` are local NUL-terminated
+                //   `Vec<u16>`s owned by THIS spawned thread's closure;
+                //   they live until the synchronous `MessageBoxW` returns
+                //   (closure scope outlasts the call).
+                // - PCWSTR pointers are read at most up to the NUL.
+                // - NULL parent HWND is documented valid for top-level
+                //   dialogs.
+                // - Each `show_info` call spawns a fresh thread, so each
+                //   buffer pair is owned uniquely; no cross-thread
+                //   aliasing.
+                // - Return value discarded (fire-and-forget semantics).
                 unsafe {
                     MessageBoxW(
                         Some(HWND::default()),
