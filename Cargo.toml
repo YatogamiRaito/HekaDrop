@@ -115,6 +115,12 @@ map_flatten = "warn"                    # 0 hit; `.map(...).flatten()` → `.fla
 needless_continue = "warn"              # 3 hit manuel fix: match arm sonu `=> continue` → `=> {}` (sanitize.rs + settings.rs ×2); döngünün doğal akışı zaten devam ediyor.
 manual_assert = "warn"                  # 0 hit; `if !cond { panic!(...) }` → `assert!(cond, ...)`; idiomatic.
 range_minus_one = "warn"                # 0 hit; `0..(n-1)` → `0..=(n-2)`; inclusive range netliği.
+# pedantic batch 5 — cast / option / iterator / import idiom temizliği (PR: chore/lint-pedantic-batch-5)
+# 1 hit manuel fix + 0 allow; cast_lossless zaten yukarıda enforce (numerik güvenlik bloğunda).
+option_option = "warn"                  # 0 hit; `Option<Option<T>>` antipattern — tristate için custom enum tercih.
+naive_bytecount = "warn"                # 0 hit; `bytes.iter().filter(|&&b| b == X).count()` → `bytecount` crate (high-volume scan); ekstra dep gerekmiyor (0 hit).
+needless_collect = "warn"               # 1 hit manuel fix: tests/folder_sender_send.rs `dirs: Vec<_> = ...collect(); dirs.len()` → `.count()`; ara Vec allocation gereksiz.
+wildcard_imports = "warn"               # 0 hit; `use foo::*;` → explicit import; namespace netliği. (Test modüllerinde `use super::*;` zaten test-allow setine girer.)
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

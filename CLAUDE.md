@@ -244,5 +244,11 @@ Enforce edilenler (sweep history):
   - `clippy::needless_continue` (3 hit manuel fix) — `crates/hekadrop-core/src/folder/sanitize.rs` (1) + `crates/hekadrop-core/src/settings.rs` (2 site: `backup_corrupt_file` retry loop + `atomic_write_mode` tmp open loop). Match arm sonu `=> continue` → `=> {}`; loop akışı zaten devam ediyor.
   - `clippy::manual_assert` (0 hit) — `if !cond { panic!(...) }` → `assert!(cond, ...)`; idiomatic.
   - `clippy::range_minus_one` (0 hit) — `0..(n-1)` → `0..=(n-2)`; inclusive range netliği.
+- **pedantic batch 5** (PR `chore/lint-pedantic-batch-5`: 5 lint, 1 hit manuel fix + 0 allow; cast / option / iterator / import idiom temizliği. `cast_lossless` zaten v0.7.x numerik güvenlik bloğunda enforce edili — batch 5 "konsept set" üyesi sayılır, lint config'e ikinci kez eklenmedi):
+  - `clippy::cast_lossless` (zaten enforce, 0 hit) — `i32 as i64` → `i64::from(x)`; sıfır-maliyet, intent netliği.
+  - `clippy::option_option` (0 hit) — `Option<Option<T>>` antipattern; tristate için custom enum tercih.
+  - `clippy::naive_bytecount` (0 hit) — `bytes.iter().filter(|&&b| b == X).count()` → `bytecount` crate; ekstra dep gerekmedi (0 hit, yüksek-volüm byte tarama yok).
+  - `clippy::needless_collect` (1 hit manuel fix) — `crates/hekadrop-app/tests/folder_sender_send.rs` `let dirs: Vec<_> = ...filter(...).collect(); dirs.len()` → `let dir_count = ...filter(...).count()`; ara Vec allocation gereksiz.
+  - `clippy::wildcard_imports` (0 hit) — `use foo::*;` → explicit import. Test modüllerindeki `use super::*;` ve `pub use ...::*` re-export pattern'ları clippy default exempt.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.

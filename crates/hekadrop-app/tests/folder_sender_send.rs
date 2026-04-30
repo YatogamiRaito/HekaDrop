@@ -284,14 +284,14 @@ fn send_folder_bundle_capability_inactive_falls_back_to_flatten() {
         .iter()
         .filter(|e| e.kind == EntryKind::File)
         .collect();
-    let dirs: Vec<_> = entries
+    let dir_count = entries
         .iter()
         .filter(|e| e.kind == EntryKind::Directory)
-        .collect();
+        .count();
 
     // 2 file (top.txt + subdir1/inner.txt), 2 directory (subdir1, subdir2_empty).
     assert_eq!(files.len(), 2, "file count flatten için sayılır");
-    assert_eq!(dirs.len(), 2, "directory entries manifest'te kalır");
+    assert_eq!(dir_count, 2, "directory entries manifest'te kalır");
 
     // bundle_total_size dir entries için 0 byte sayar — sadece file size'ları
     // toplanır.
