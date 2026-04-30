@@ -268,5 +268,11 @@ Enforce edilenler (sweep history):
   - `clippy::or_fun_call` (0 hit) — `.unwrap_or(expensive())` → `.unwrap_or_else(|| ...)`; pahalı default lazy hesaplanır.
   - `clippy::derive_partial_eq_without_eq` (6 hit, hepsi prost-üretilmiş `OUT_DIR` modüllerinde — `securegcm.rs:705`, `sharing.nearby.rs:424/647/747`) — `crates/hekadrop-proto/src/lib.rs` her generated `pub mod` allow listesine eklendi (PROTO istisnası, I-2). El yazımı kod 0 hit; gelecekte `PartialEq` derive eden yeni source tip `Eq` da derive etmeli (float field yoksa).
   - `clippy::ref_binding_to_reference` (0 hit) — `if let Some(ref x) = &y` → `if let Some(x) = &y`; `&y` üzerinde `ref` redundant.
+- **pedantic batch 9** (PR `chore/lint-pedantic-batch-9`: 5 lint, 14 hit auto-fix + 4 zero-hit lint enable + 0 allow; iterator / literal / option / block / docs idiom temizliği):
+  - `clippy::filter_map_next` (0 hit) — `.filter(p).next()` → `.find(p)`; intent netliği + tek pass.
+  - `clippy::char_lit_as_u8` (0 hit) — `'a' as u8` → `b'a'`; byte literal idiom.
+  - `clippy::manual_ok_or` (0 hit) — `match x { Some(v) => Ok(v), None => Err(e) }` → `x.ok_or(e)`; idiomatic.
+  - `clippy::semicolon_outside_block` (14 hit auto-fix) — `{ stmt; }` tek-statement bloklar `{ stmt; };` formuna alındı (block expression + outer `;`). Etki alanı: `crates/hekadrop-app/src/main.rs` (2 cfg-gated `eprintln!` blokları), `crates/hekadrop-app/tests/resume_e2e.rs` (7 scope-drop / set_var / sync_all bloku), `crates/hekadrop-app/tests/folder_chunk_hmac_resume.rs` (2), `crates/hekadrop-app/tests/resume_meta_persist.rs` (1), `crates/hekadrop-core/src/connection.rs` (1 test setup), `crates/hekadrop-core/src/payload.rs` (1 borrow scope). NOT: bu lint `clippy::semicolon_if_nothing_returned` (batch 3) ile etkileşir — auto-fix önce `{ stmt; }` → `{ stmt };` çevirir, sonra inner statement'a tekrar `;` ekler; final form `{ stmt; };` her iki lint'i de tatmin eder.
+  - `clippy::doc_link_with_quotes` (0 hit) — rustdoc link içinde gereksiz `"..."` quotes — direkt `[name]` referans.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.

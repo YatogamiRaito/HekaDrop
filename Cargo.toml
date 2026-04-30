@@ -150,6 +150,13 @@ manual_is_variant_and = "warn"              # 0 hit; `.map_or(false, |x| x.foo()
 or_fun_call = "warn"                        # 0 hit; `.unwrap_or(expensive())` → `.unwrap_or_else(|| ...)`; pahalı default lazy hesaplanır.
 derive_partial_eq_without_eq = "warn"       # 6 hit yalnız prost-generated kodda (proto crate `lib.rs` allow listesinde); el yazımı kod 0 hit. Yeni `PartialEq` derive eden tip `Eq` da derive etmeli (float field yoksa).
 ref_binding_to_reference = "warn"           # 0 hit; `if let Some(ref x) = &y` → `if let Some(x) = &y`; `&y` üzerinde `ref` redundant.
+# pedantic batch 9 — iterator / literal / option / block / docs idiom temizliği (PR: chore/lint-pedantic-batch-9)
+# 14 hit auto-fix (semicolon_outside_block) + 4 zero-hit lint enable; davranış-koruyucu formatting / micro-temizlik.
+filter_map_next = "warn"                    # 0 hit; `.filter(p).next()` → `.find(p)`; intent netliği + tek pass.
+char_lit_as_u8 = "warn"                     # 0 hit; `'a' as u8` → `b'a'`; byte literal idiom.
+manual_ok_or = "warn"                       # 0 hit; `match x { Some(v) => Ok(v), None => Err(e) }` → `x.ok_or(e)`; idiomatic.
+semicolon_outside_block = "warn"            # 14 hit auto-fix (`cargo clippy --fix`): `{ stmt; }` → `{ stmt };`; tek-statement bloklar için tutarlı formatting (app/main.rs cfg-gated `eprintln!` blokları + tests/resume_e2e.rs scope-drop blokları + connection.rs/payload.rs scope drop'ları).
+doc_link_with_quotes = "warn"               # 0 hit; rustdoc link içinde gereksiz `"..."` quotes — direkt `[name]` referans.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

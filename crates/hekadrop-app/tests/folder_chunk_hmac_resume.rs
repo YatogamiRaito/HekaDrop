@@ -115,7 +115,7 @@ impl TempHome {
         // SAFETY: test sequenced via HOME_LOCK; tek thread bu noktada HOME yazar.
         unsafe {
             std::env::set_var(key, &dir);
-        }
+        };
         Self {
             dir,
             saved,
@@ -675,7 +675,7 @@ async fn bundle_resume_with_chunk_hmac_full_pipeline() {
             dest_path: bundle_path.to_string_lossy().into_owned(),
         };
         meta.store_atomic(&dir).unwrap();
-    }
+    };
 
     // Session 2: tek son chunk'ı ekle.
     let dir = partial_dir().unwrap();
