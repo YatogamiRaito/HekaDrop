@@ -222,7 +222,7 @@ fn main() {
                     config_backup_path = Some(backup.clone());
                     #[expect(
                         clippy::print_stderr,
-                        reason = "HUMAN: tracing subscriber henüz kurulmadı; bkz. yukarı."
+                        reason = "HUMAN: tracing subscriber bu noktada henüz kurulmamış (config load corrupt path startup'ın çok erken aşaması); kullanıcıya görünür uyarı için doğrudan stderr şart."
                     )]
                     {
                         eprintln!(
@@ -235,7 +235,7 @@ fn main() {
                     config_backup_failed = true;
                     #[expect(
                         clippy::print_stderr,
-                        reason = "HUMAN: tracing subscriber henüz kurulmadı; bkz. yukarı."
+                        reason = "HUMAN: tracing subscriber bu noktada henüz kurulmamış (config load corrupt path startup'ın çok erken aşaması); kullanıcıya görünür uyarı için doğrudan stderr şart."
                     )]
                     {
                         eprintln!(
@@ -553,7 +553,10 @@ fn run_app() -> ! {
                 "HekaDrop başlatılamıyor",
                 "GTK pencere kabı (vbox) alınamadı. GTK3 + WebKit2GTK kurulu olduğundan emin olun.",
             );
-            #[expect(clippy::exit, reason = "API: Fatal startup; bkz. yukarı.")]
+            #[expect(
+                clippy::exit,
+                reason = "API: Fatal startup hatası — runtime/event loop kurulmadan önce process'i temiz çıkışla sonlandır (panic yerine kullanıcıya anlamlı exit code)"
+            )]
             std::process::exit(1);
         };
         match builder.build_gtk(vbox) {
@@ -563,7 +566,10 @@ fn run_app() -> ! {
                     "HekaDrop başlatılamıyor",
                     &format!("webview oluşturulamadı: {e}"),
                 );
-                #[expect(clippy::exit, reason = "API: Fatal startup; bkz. yukarı.")]
+                #[expect(
+                    clippy::exit,
+                    reason = "API: Fatal startup hatası — runtime/event loop kurulmadan önce process'i temiz çıkışla sonlandır (panic yerine kullanıcıya anlamlı exit code)"
+                )]
                 std::process::exit(1);
             }
         }
@@ -576,7 +582,10 @@ fn run_app() -> ! {
                 "HekaDrop başlatılamıyor",
                 &format!("webview oluşturulamadı: {e}"),
             );
-            #[expect(clippy::exit, reason = "API: Fatal startup; bkz. yukarı.")]
+            #[expect(
+                clippy::exit,
+                reason = "API: Fatal startup hatası — runtime/event loop kurulmadan önce process'i temiz çıkışla sonlandır (panic yerine kullanıcıya anlamlı exit code)"
+            )]
             std::process::exit(1);
         }
     };
@@ -2133,13 +2142,14 @@ fn toggle_login_item() {
     // Yoksa ekle — current_exe path'ini tırnak içine al.
     // path.display() UTF-8 olmayan byte'ları lossy dönüştürebilir; OsStr'in
     // wide encoding'ini kullanarak lossless UTF-16 üretiyoruz.
-    #[expect(
-        clippy::manual_let_else,
-        clippy::single_match_else,
-        reason = "API: Err binding'i `e` format!'da kullanılıyor — `let-else` formunda Err \
-                  değişkenine ulaşılamaz; bu match form bilinçli tutuluyor. clippy refactor \
-                  önerir ama burada error context detayını koruma tercihi."
-    )]
+    //
+    // API: Err binding'i `e` format!'da kullanılıyor — `let-else` formunda Err
+    // değişkenine ulaşılamaz; bu match form bilinçli. clippy refactor önerir
+    // ama error context detayını koruma tercihi. NOT: `#[allow]` (değil
+    // `#[expect]`) çünkü clippy `manual_let_else`/`single_match_else` lint
+    // davranışı platform-version'a göre değişiyor (macOS clippy tetikler,
+    // Linux/Windows tetiklemez); platform-stable allow.
+    #[allow(clippy::manual_let_else, clippy::single_match_else)]
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
@@ -2250,13 +2260,12 @@ fn toggle_login_item() {
         return;
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        clippy::single_match_else,
-        reason = "API: Err binding'i `e` format!'da kullanılıyor — `let-else` formunda Err \
-                  değişkenine ulaşılamaz; bu match form bilinçli tutuluyor. clippy refactor \
-                  önerir ama burada error context detayını koruma tercihi."
-    )]
+    // API: Err binding'i `e` format!'da kullanılıyor — `let-else` formunda
+    // Err değişkenine ulaşılamaz; match form bilinçli. NOT: `#[allow]` (değil
+    // `#[expect]`) — clippy `manual_let_else`/`single_match_else` davranışı
+    // platform-version'a göre değişir (macOS tetikler, Linux/Windows etmez);
+    // platform-stable allow.
+    #[allow(clippy::manual_let_else, clippy::single_match_else)]
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(e) => {
