@@ -572,11 +572,7 @@ async fn finalize_received_payload(
                         "INVARIANT: total_size >= 0 (payload ingest_file rejects negative)",
                     );
                     s.record_received(remote_name, total_u);
-                    if keep {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
+                    keep.then(|| s.clone())
                 };
                 if let Some(snap) = snap_opt {
                     state.try_save_stats(snap);
@@ -711,11 +707,7 @@ fn finalize_received_file(
             let total_size_u = u64::try_from(total_size)
                 .expect("INVARIANT: total_size >= 0 (payload ingest_file rejects negative)");
             s.record_received(remote_name, total_size_u);
-            if keep {
-                Some(s.clone())
-            } else {
-                None
-            }
+            keep.then(|| s.clone())
         };
         if let Some(snap) = snap_opt {
             // PR #93 + #109: spawn_blocking + persistence_blocked guard
@@ -1278,11 +1270,7 @@ async fn handle_sharing_frame(
                 // bit aktive olunca devreye girer.
                 let resume_active =
                     active_capabilities.has(crate::capabilities::features::RESUME_V1);
-                let session_id = if resume_active {
-                    Some(crate::resume::session_id_i64(auth_key))
-                } else {
-                    None
-                };
+                let session_id = resume_active.then(|| crate::resume::session_id_i64(auth_key));
                 // PR #133 medium: `partial_dir()` her dosya için ayrı çağrılıyordu
                 // (`resolve_resume_path` + `handle_resume_for_file`). Loop ÖNCESİ
                 // tek sefer hesapla — N dosya için 2N→1 dizin ensure I/O. None →

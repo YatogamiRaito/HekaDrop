@@ -689,11 +689,10 @@ async fn e2e_resume_old_peer_no_capability_no_resume() {
     // Bu build resume code path'ine girmemeli — caller (connection.rs)
     // `active_capabilities.has(RESUME_V1)` gate'inden döner. Test bu davranışı
     // doğrudan ActiveCapabilities query API üstünden pin'ler.
-    let session_id_used: Option<i64> = if outcome.active.has(features::RESUME_V1) {
-        Some(session_id_i64(&[0u8; 32]))
-    } else {
-        None
-    };
+    let session_id_used: Option<i64> = outcome
+        .active
+        .has(features::RESUME_V1)
+        .then(|| session_id_i64(&[0u8; 32]));
     assert!(
         session_id_used.is_none(),
         "RESUME_V1 inaktif → session_id türetilmez, .meta/hint emit edilmez"

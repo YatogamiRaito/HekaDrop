@@ -157,6 +157,14 @@ char_lit_as_u8 = "warn"                     # 0 hit; `'a' as u8` → `b'a'`; byt
 manual_ok_or = "warn"                       # 0 hit; `match x { Some(v) => Ok(v), None => Err(e) }` → `x.ok_or(e)`; idiomatic.
 semicolon_outside_block = "warn"            # 14 hit auto-fix (`cargo clippy --fix`): `{ stmt; }` → `{ stmt };`; tek-statement bloklar için tutarlı formatting (app/main.rs cfg-gated `eprintln!` blokları + tests/resume_e2e.rs scope-drop blokları + connection.rs/payload.rs scope drop'ları).
 doc_link_with_quotes = "warn"               # 0 hit; rustdoc link içinde gereksiz `"..."` quotes — direkt `[name]` referans.
+# pedantic batch 10 — bool / late-init / hasher / duplicate-cond / ptr-cast idiom temizliği (PR: chore/lint-pedantic-batch-10)
+# 6 hit auto-fix (`if_then_some_else_none`: `if c { Some(x) } else { None }` → `c.then(|| x)`) +
+# 1 hit manuel fix (`implicit_hasher`: `cleanup_sweep` `&HashSet<(i64,i64)>` → generic `S: BuildHasher`) + 3 zero-hit lint enable.
+if_then_some_else_none = "warn"             # 6 hit auto-fix (`cargo clippy --fix`): `if cond { Some(x) } else { None }` → `cond.then(|| x)` (lazy — equivalent semantics). Etki alanı: `crates/hekadrop-core/src/connection.rs` (3 site: stats snapshot keep gate + RESUME_V1 session_id gate), `crates/hekadrop-core/src/sender.rs` (2 site: send/send_text stats snapshot keep gate), `crates/hekadrop-app/tests/resume_e2e.rs` (1 site: RESUME_V1 capability test).
+useless_let_if_seq = "warn"                 # 0 hit; `let x = a; if cond { x = b }` → `let x = if cond { b } else { a }`; declaration-time init.
+implicit_hasher = "warn"                    # 1 hit manuel fix: `crates/hekadrop-core/src/resume.rs::cleanup_sweep` `&HashSet<(i64, i64)>` parametresi `<S: BuildHasher>` generic'e alındı. Tüm caller `HashSet::new()` (default RandomState) kullandığı için backward-compatible (S inferred); custom hasher passing artık mümkün.
+same_functions_in_if_condition = "warn"     # 0 hit; `if foo() && foo()` aynı pure fn iki defa çağrılır — değer cache'lenmeli; davranış-kritik.
+transmute_ptr_to_ptr = "warn"               # 0 hit; `transmute::<*const T, *const U>(p)` → `p.cast::<U>()`; safe pointer cast idiom.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

@@ -475,11 +475,11 @@ pub struct CleanupReport {
 /// Corrupted `.meta` dosyaları (parse hatası) da silinir — yoksa süresiz
 /// disk kalır + budget hesabını bozar. Eşleşen `.part` mevcut değilse
 /// `.meta` tek başına silinir (yetim meta).
-pub fn cleanup_sweep(
+pub fn cleanup_sweep<S: ::std::hash::BuildHasher>(
     dir: &Path,
     ttl_days: i64,
     budget_bytes: u64,
-    in_use: &HashSet<(i64, i64)>,
+    in_use: &HashSet<(i64, i64), S>,
 ) -> CleanupReport {
     let mut report = CleanupReport::default();
 

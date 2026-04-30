@@ -654,11 +654,7 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                                         .expect("INVARIANT: max(0) sonrası i64 ≥ 0");
                                     s.record_sent(&peer_label, size_u);
                                 }
-                                if keep {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
+                                keep.then(|| s.clone())
                             };
                             if let Some(snap) = snap_opt {
                                 // PR #93 + #109: try_save_stats = spawn_blocking +
@@ -969,11 +965,7 @@ pub async fn send_text(
                                 let total_bytes_u = u64::try_from(total_bytes.max(0))
                                     .expect("INVARIANT: max(0) sonrası i64 ≥ 0");
                                 s.record_sent(&peer_label, total_bytes_u);
-                                if keep {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
+                                keep.then(|| s.clone())
                             };
                             if let Some(snap) = snap_opt {
                                 // Bkz. yukarı: try_save_stats helper.
