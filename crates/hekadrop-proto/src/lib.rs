@@ -22,7 +22,10 @@
 //!   (proto comment'lardaki `<...>` benzeri token'lar), `dead_code`
 //!   (test'lerde kullanılmayan tipler için), `clippy::must_use_candidate`
 //!   (prost-generated `as_str_name` / `from_str_name` enum helper'ları —
-//!   workspace-wide enforce'a dahil edildi, generated kod düzeltilemez).
+//!   workspace-wide enforce'a dahil edildi, generated kod düzeltilemez),
+//!   `clippy::derive_partial_eq_without_eq` (prost `PartialEq` türetir ama
+//!   `Eq` türetmez — float field'lı message'larda `Eq` zaten geçersiz olur,
+//!   prost tek-tip strateji uygular; pedantic batch 8'de enforce edildi).
 //!
 //! Daha iyi olası iyileştirme (yapılmadı, GH issue'da takip edilmeli):
 //! `prost-build` config'inde `.message_attribute()` ile generated kod'a
@@ -39,6 +42,7 @@
     clippy::all,
     clippy::doc_markdown,
     clippy::must_use_candidate,
+    clippy::derive_partial_eq_without_eq,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -60,6 +64,7 @@ pub mod securegcm {
     clippy::all,
     clippy::doc_markdown,
     clippy::must_use_candidate,
+    clippy::derive_partial_eq_without_eq,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -81,6 +86,7 @@ pub mod securemessage {
     clippy::all,
     clippy::doc_markdown,
     clippy::must_use_candidate,
+    clippy::derive_partial_eq_without_eq,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -114,6 +120,7 @@ pub mod location {
     clippy::all,
     clippy::doc_markdown,
     clippy::must_use_candidate,
+    clippy::derive_partial_eq_without_eq,
     non_snake_case,
     non_camel_case_types,
     dead_code,
@@ -147,6 +154,7 @@ pub mod sharing {
     clippy::all,
     clippy::doc_markdown,
     clippy::must_use_candidate,
+    clippy::derive_partial_eq_without_eq,
     non_snake_case,
     non_camel_case_types,
     dead_code,

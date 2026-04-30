@@ -142,6 +142,14 @@ needless_pass_by_ref_mut = "warn"           # 0 hit; `&mut T` argüman gerçekte
 ref_as_ptr = "warn"                         # 0 hit; `&x as *const T` → `std::ptr::from_ref(&x)`; pointer cast idiom (Rust 1.76+).
 no_effect_underscore_binding = "warn"       # 1 hit manuel fix: `crates/hekadrop-core/src/settings.rs::v06_reject_path_legacy_upgrade_yapmaz` test'inde `let _peer_hash = [0xCC; 6];` no-op binding (eski kodun ne yaptığını dökümante etmek için). Yorum bloğuna dönüştürüldü; `0xCC` literal aşağıdaki assertion'da zaten var.
 needless_raw_string_hashes = "warn"         # 0 hit; `r#"..."#` raw string'de gereksiz `#` (string'de `"` yoksa); idiomatic.
+# pedantic batch 8 — iterator / variant / call / derive / binding idiom temizliği (PR: chore/lint-pedantic-batch-8)
+# 4 zero-hit lint enable + 1 generated-only (`derive_partial_eq_without_eq` — 6 hit prost-üretilmiş kodda;
+# `crates/hekadrop-proto/src/lib.rs` her generated `pub mod` allow listesine eklendi, el yazımı kod 0 hit).
+iter_without_into_iter = "warn"             # 0 hit; type `iter()` metoduna sahip ama `IntoIterator` impl etmemiş — for-loop ergonomi tutarsızlığı.
+manual_is_variant_and = "warn"              # 0 hit; `.map_or(false, |x| x.foo())` → `.is_some_and(|x| x.foo())`; intent netliği.
+or_fun_call = "warn"                        # 0 hit; `.unwrap_or(expensive())` → `.unwrap_or_else(|| ...)`; pahalı default lazy hesaplanır.
+derive_partial_eq_without_eq = "warn"       # 6 hit yalnız prost-generated kodda (proto crate `lib.rs` allow listesinde); el yazımı kod 0 hit. Yeni `PartialEq` derive eden tip `Eq` da derive etmeli (float field yoksa).
+ref_binding_to_reference = "warn"           # 0 hit; `if let Some(ref x) = &y` → `if let Some(x) = &y`; `&y` üzerinde `ref` redundant.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

@@ -262,5 +262,11 @@ Enforce edilenler (sweep history):
   - `clippy::no_effect_underscore_binding` (1 hit manuel fix) — `crates/hekadrop-core/src/settings.rs::v06_reject_path_legacy_upgrade_yapmaz` test'inde `let _peer_hash = [0xCC; 6];` no-op binding (eski kodun ne yaptığını dökümante etmek için). Yorum bloğuna dönüştürüldü; `0xCC` literal aşağıdaki assertion'da zaten var (`is_trusted_by_hash(&[0xCC; 6])`).
   - `clippy::needless_raw_string_hashes` (0 hit) — `r#"..."#` raw string'de gereksiz `#` (string'de `"` yoksa); idiomatic.
   - `clippy::redundant_pub_crate` (58 hit, **KAPSAM-DIŞI**) — `hekadrop-app` `lib.rs + main.rs` hibrit crate; `i18n/paths/platform/state/ui/ui_adapter` modülleri yalnız `main.rs`'in private modül ağacında ve `pub(crate)` kullanıyor. Auto-fix `pub`'a çevirmek istiyor — fakat workspace zaten `unreachable_pub = "warn"` enforce ediyor; bu lint aynı item'ları tam tersi yönde (`pub` → `pub(crate)`) raporlar. İki lint **uzlaşmaz**: `redundant_pub_crate` enforce etmek için `unreachable_pub` invariant'ını gevşetmek gerekir. RFC-0001 sonrası `app` crate yeniden yapılandırılırken (örn. salt-binary `bin/`) yeniden değerlendirilecek.
+- **pedantic batch 8** (PR `chore/lint-pedantic-batch-8`: 5 lint, 4 zero-hit el yazımı kod + 1 generated-only allow; iterator / variant / call / derive / binding idiom temizliği):
+  - `clippy::iter_without_into_iter` (0 hit) — type `iter()` metoduna sahip ama `IntoIterator` impl etmemiş; for-loop ergonomi tutarsızlığı.
+  - `clippy::manual_is_variant_and` (0 hit) — `.map_or(false, |x| x.foo())` → `.is_some_and(|x| x.foo())`; intent netliği.
+  - `clippy::or_fun_call` (0 hit) — `.unwrap_or(expensive())` → `.unwrap_or_else(|| ...)`; pahalı default lazy hesaplanır.
+  - `clippy::derive_partial_eq_without_eq` (6 hit, hepsi prost-üretilmiş `OUT_DIR` modüllerinde — `securegcm.rs:705`, `sharing.nearby.rs:424/647/747`) — `crates/hekadrop-proto/src/lib.rs` her generated `pub mod` allow listesine eklendi (PROTO istisnası, I-2). El yazımı kod 0 hit; gelecekte `PartialEq` derive eden yeni source tip `Eq` da derive etmeli (float field yoksa).
+  - `clippy::ref_binding_to_reference` (0 hit) — `if let Some(ref x) = &y` → `if let Some(x) = &y`; `&y` üzerinde `ref` redundant.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.
