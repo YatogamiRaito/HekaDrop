@@ -470,8 +470,13 @@ pub(crate) mod win {
         //   (MSDN: learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-cotaskmemfree)
         //   on every path that took ownership; no dangling reference
         //   escapes the block (the `OsString` owns a copy).
-        // - Thread-safe: `SHGetKnownFolderPath` is callable from any
-        //   thread without prior COM init for `KF_FLAG_DEFAULT`.
+        // - Thread-safety: MSDN `SHGetKnownFolderPath` UI thread dışından
+        //   çağrıldığında COM init şart koşar (`CoInitialize`/`CoInitializeEx`).
+        //   `KF_FLAG_DEFAULT` bu gereksinimi düşürmez. Defensive: çağrı öncesi
+        //   `ensure_com_init()` (per-thread idempotent ref-count). PR #156
+        //   medium yorumu (Gemini) ile güçlendirildi; eski "without prior COM
+        //   init" iddiası teknik olarak hatalıydı.
+        ensure_com_init();
         unsafe {
             // windows-rs 0.60: flag enum doğrudan geçilir (eski sürümlerde u32).
             let pwstr: PWSTR = SHGetKnownFolderPath(folder, KF_FLAG_DEFAULT, None).ok()?;
