@@ -454,6 +454,10 @@ pub(crate) mod win {
     /// `SHGetKnownFolderPath` → `PathBuf`. Çıktı bellek `CoTaskMemFree` ile serbest
     /// bırakılır (aksi halde leak). Bellek tahsisi başarısızsa `None`.
     pub(super) fn known_folder(folder: &GUID) -> Option<PathBuf> {
+        // MSDN `SHGetKnownFolderPath` UI thread dışından çağrıldığında COM
+        // init şart koşar; `KF_FLAG_DEFAULT` bu gereksinimi düşürmez.
+        // Defensive: unsafe block öncesi idempotent per-thread ref-count.
+        ensure_com_init();
         // SAFETY: `SHGetKnownFolderPath`
         // (MSDN: learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath)
         // - `folder` is a `&GUID` from the caller; only read, no aliasing.
@@ -470,13 +474,8 @@ pub(crate) mod win {
         //   (MSDN: learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-cotaskmemfree)
         //   on every path that took ownership; no dangling reference
         //   escapes the block (the `OsString` owns a copy).
-        // - Thread-safety: MSDN `SHGetKnownFolderPath` UI thread dışından
-        //   çağrıldığında COM init şart koşar (`CoInitialize`/`CoInitializeEx`).
-        //   `KF_FLAG_DEFAULT` bu gereksinimi düşürmez. Defensive: çağrı öncesi
-        //   `ensure_com_init()` (per-thread idempotent ref-count). PR #156
-        //   medium yorumu (Gemini) ile güçlendirildi; eski "without prior COM
-        //   init" iddiası teknik olarak hatalıydı.
-        ensure_com_init();
+        // - Thread-safety: COM init `ensure_com_init()` çağrısı (yukarıda)
+        //   ile garanti altında; her thread per-call idempotent.
         unsafe {
             // windows-rs 0.60: flag enum doğrudan geçilir (eski sürümlerde u32).
             let pwstr: PWSTR = SHGetKnownFolderPath(folder, KF_FLAG_DEFAULT, None).ok()?;
