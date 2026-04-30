@@ -52,7 +52,6 @@ pub enum ProgressState {
 #[derive(Clone, Debug)]
 pub struct HistoryItem {
     pub file_name: String,
-    #[allow(dead_code)]
     pub path: PathBuf,
     pub size: i64,
     pub device: String,

@@ -32,7 +32,6 @@ pub struct DerivedKeys {
     pub encrypt_key: [u8; 32],
     /// Receiver tarafı: HMAC imzalama (sunucudan giden)
     pub send_hmac_key: [u8; 32],
-    #[allow(dead_code)]
     pub auth_key: [u8; 32],
     pub pin_code: String,
     /// UKEY2 derive `next_secret` — `SecureMessage` D2D anahtarlarının türetildiği

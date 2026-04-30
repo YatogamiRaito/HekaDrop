@@ -20,7 +20,6 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-#[allow(dead_code)]
 pub enum HekaError {
     // ---- Transport / çerçeve ----
     /// I/O hatası (TCP reset, EOF, slow-loris timeout'u jeneriğe düşerse).

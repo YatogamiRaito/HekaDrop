@@ -651,7 +651,10 @@ pub(crate) fn show_info(title: &str, body: &str) {
 }
 
 /// `choose file` dialog → seçilen dosyanın tam yolu veya None (tek dosya).
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "single-file API helper; UI'da çoklu seçim default, single-pick gelecek toggle için reservoir"
+)]
 pub(crate) async fn choose_file() -> Option<std::path::PathBuf> {
     choose_files().await.and_then(|mut v| v.pop())
 }
@@ -1085,7 +1088,10 @@ fn choose_device_blocking(labels: &[String]) -> Option<String> {
 
 /// Dosya keşif sırasında basit bir ilerleme/bildirim dialog'u olmadığı için
 /// notify kullanıyoruz.
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "send-side progress notification; sender flow şu an UI port üzerinden, helper future use için tutuldu"
+)]
 pub(crate) fn send_progress_notify(device: &str, file: &str) {
     notify("HekaDrop", &format!("Gönderiliyor: {file} → {device}"));
 }
