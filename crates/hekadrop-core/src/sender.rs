@@ -103,12 +103,12 @@ struct PlannedFile {
 /// - capability inactive ise `flatten_folder_to_files` ile individual file
 ///   plan'larına çevrilir (mevcut multi-file akış)
 struct PlannedFolder {
-    /// Sender disk root path (folder kökü). Şu anda sadece debug log'da
-    /// kullanılıyor; ileride retry/resume yolunda walk-yenileme için
-    /// gerekecek (PR-D sonrası).
+    /// Sender disk root path (folder kökü). Gelecekteki retry/resume
+    /// yolunda walk-yenileme için tutulur (manifest yeniden hesabı +
+    /// disk state ile karşılaştırma).
     #[expect(
         dead_code,
-        reason = "PR-C scope: log + future use; field plan-level (PR-D sonrası kullanılacak)"
+        reason = "Gelecekteki retry/resume özellikleri için planlanan ancak şu an okunmayan alan"
     )]
     root_path: std::path::PathBuf,
     /// Manifest validate edilmiş + JSON-serialize için hazır.

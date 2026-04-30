@@ -11,10 +11,7 @@
 
 // hekadrop-core + hekadrop-net path-dep olarak çekilse de v0.7 stub'ında
 // hiçbir sembol kullanılmıyor — `cargo machete` false-pozitif önlenmiş
-// (ignore listesi `Cargo.toml`'da). v0.10.0'da `use hekadrop_core::*` gibi
-// import'lar geldiğinde `unused_imports` lint'i kendini hatırlatır.
-// (PR #152/#153 sweep'inden sonra `#![allow(unused_imports)]` kaldırıldı —
-// stub'ta hiç `use` yok, allow stale-iydi.)
+// (ignore listesi `Cargo.toml`'da). v0.10.0'da kaldırılacak.
 
 // CLI binary stdout output legitimate use case; workspace-wide
 // `clippy::print_stdout = "warn"` (PR #87 Tier 1) UI/library kodu için

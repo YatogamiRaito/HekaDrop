@@ -67,9 +67,7 @@ pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
 // alıyordu — Adım 3 öncesi yüzeyi korumak için aynı seviyede yeniden export.
 pub use hekadrop_core::{process_client_init, validate_server_init, DerivedKeys};
 
-// NOT: `mod platform;` lib build'de **deklare edilmez** — binary `main.rs`
-// kendi `mod platform;` deklarasyonunu yapar (Cargo lib+bin hibrit:
-// modül ağaçları bağımsız). Lib build'de redundant; aksi halde 10
-// `pub(crate) fn` lib build'inde "dead_code" warning üretirdi. Bu sayede
-// crate-level `#![allow(dead_code)]` ihtiyacı ortadan kalkar (PR #152
-// sweep + bu PR ile birlikte).
+// NOT: `platform` modülü sadece binary (`main.rs`) tarafından kullanılır.
+// Cargo lib+bin hibrit yapısında modül ağaçları bağımsız olduğu için,
+// kütüphane tarafında deklare edilmesi gereksiz `dead_code` uyarılarına
+// yol açar — bu nedenle `mod platform;` lib build'de yok.
