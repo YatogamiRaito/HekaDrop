@@ -101,6 +101,13 @@ cloned_instead_of_copied = "warn"            # 0 hit; `.cloned()` Copy type üze
 manual_string_new = "warn"                   # 0 hit; `String::from("")` → `String::new()`; idiomatic.
 unnested_or_patterns = "warn"                # 1 hit auto-fix: `Foo(_) | Bar(_)` → `Foo(_) | Bar(_)` nested form.
 flat_map_option = "warn"                     # 0 hit; `.flat_map(Option)` → `.filter_map`; intent netliği.
+# pedantic batch 3 — düşük-risk auto-fix mikro-temizlik (PR: chore/lint-pedantic-batch-3)
+# 5 hit auto-fix + 0 allow; davranış-koruyucu, formatting/idiom düzeyi.
+semicolon_if_nothing_returned = "warn"  # 5 hit auto-fix (criterion bench `b.iter(|| ...)` trailing): fn body son statement `;` ile sonlanmalı, return-değeri olmayan call'lar tutarlılık için.
+stable_sort_primitive = "warn"          # 0 hit; primitive slice `.sort()` → `.sort_unstable()`; perf.
+checked_conversions = "warn"            # 0 hit; `i32 as u32` overflow-aware checked alternatif (`u32::try_from`).
+ptr_as_ptr = "warn"                     # 0 hit; `*const T as *const U` → `.cast()`; pointer cast idiom.
+ref_option_ref = "warn"                 # 0 hit; `&Option<&T>` redundant indirection — direkt `Option<&T>`.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

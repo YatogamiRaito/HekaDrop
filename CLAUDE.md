@@ -232,5 +232,11 @@ Enforce edilenler (sweep history):
   - `clippy::manual_string_new` (0 hit) — `String::from("")` → `String::new()`.
   - `clippy::unnested_or_patterns` (1 hit auto-fix) — `Err(A) | Err(B)` → `Err(A | B)` (`folder/sanitize.rs`).
   - `clippy::flat_map_option` (0 hit) — `.flat_map(Option)` → `.filter_map`.
+- **pedantic batch 3** (PR `chore/lint-pedantic-batch-3`: 5 lint, 5 hit `cargo clippy --fix` auto-fix; 0 allow; düşük-risk auto-fix mikro temizlik):
+  - `clippy::semicolon_if_nothing_returned` (5 hit auto-fix) — `crates/hekadrop-app/benches/crypto.rs` criterion `b.iter(|| ...)` trailing satırlarına `;` eklendi; fn `()` döndüğünde son statement `;` ile sonlanır.
+  - `clippy::stable_sort_primitive` (0 hit) — primitive slice `.sort()` → `.sort_unstable()`.
+  - `clippy::checked_conversions` (0 hit) — `i32 as u32` overflow-aware `try_from` alternatif.
+  - `clippy::ptr_as_ptr` (0 hit) — `*const T as *const U` → `.cast()`.
+  - `clippy::ref_option_ref` (0 hit) — `&Option<&T>` redundant indirection.
 
 Refactor (RFC-0001) bittikten sonra strictness sweep'lere dön.
