@@ -20,6 +20,12 @@ pub use hekadrop_core::discovery_types::DiscoveredDevice;
 
 /// Belirtilen süre boyunca mDNS tarar, bulunan tüm Quick Share cihazlarını döner.
 /// Kendi yayın yaptığımız servisi (aynı hostname + port) filtreler.
+///
+/// # Errors
+///
+/// Returns `Err` if:
+/// - `mdns-sd` `ServiceDaemon` başlatılamadı (socket bind / OS resource hatası)
+/// - Browse subscription kurulamadı (daemon kapalı / kanal hatası)
 pub async fn scan(duration: Duration, own_port: u16) -> Result<Vec<DiscoveredDevice>> {
     let daemon = ServiceDaemon::new()?;
     let service_type = config::service_type();

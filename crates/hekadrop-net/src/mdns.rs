@@ -21,6 +21,14 @@ impl Drop for MdnsHandle {
 /// devam eder (Ayarlar/Geçmiş görüntülenebilir), sadece yeni cihazlar
 /// keşfedilemez. Bu davranış kasıtlı: ağ kablosu çıkıkken uygulamayı açıp
 /// kapatmak gerekmesin.
+///
+/// # Errors
+///
+/// Returns `Err` if:
+/// - `if_addrs::get_if_addrs()` ağ arayüzü listesi alamadı (OS hatası)
+/// - `ServiceInfo::new` instance/host/property metadata'sını doğrulayamadı
+/// - `ServiceDaemon::new` socket bind / thread spawn başarısız oldu
+/// - `daemon.register` mDNS multicast kayıt yayınını gönderemedi
 pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
     let service_type = config::service_type();
     let endpoint_id = config::random_endpoint_id();
