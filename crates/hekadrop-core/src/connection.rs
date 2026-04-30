@@ -61,6 +61,18 @@ pub trait PlatformOps: Send + Sync {
     fn copy_to_clipboard(&self, text: &str);
 }
 
+/// Bir gelen TCP bağlantısını `ConnectionRequest` → UKEY2 → secure loop boyunca
+/// orchestrate et.
+///
+/// # Errors
+///
+/// Returns `Err` if:
+/// - Frame I/O fail (timeout, peer disconnect, slow-loris guard)
+/// - `ConnectionRequest` / `OfflineFrame` protobuf decode fail
+/// - UKEY2 handshake fail (cipher downgrade, commitment mismatch)
+/// - PIN hash mismatch (`PairedKeyEncryption`) veya kullanıcı reddi
+/// - Diske yazım fail (payload assembly, finalize, stats persist)
+/// - Capability negotiation veya secure loop policy violation
 pub async fn handle(
     mut socket: TcpStream,
     peer: SocketAddr,

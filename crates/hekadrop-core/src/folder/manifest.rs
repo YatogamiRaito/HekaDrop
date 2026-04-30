@@ -104,6 +104,16 @@ impl BundleManifest {
     /// 3. `root_name` sanitize OK
     /// 4. her entry path sanitize OK + duplicate path yok
     /// 5. file entry'lerin `sha256` field'ı 64-char hex
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifestError`] variant'ları:
+    /// - `UnsupportedVersion` — version != `MANIFEST_VERSION`
+    /// - `EntryCountMismatch` — `total_entries` ≠ `entries.len()`
+    /// - `EntryCountExceeded` — `total_entries > MAX_ENTRIES`
+    /// - `Sha256HexFormat` — file entry sha256 64-char lowercase hex değil
+    /// - `DuplicatePath` — iki entry aynı path
+    /// - `Path` — `root_name` veya entry path sanitize fail (`PathError`)
     pub fn validate(&self) -> Result<(), ManifestError> {
         if self.version != MANIFEST_VERSION {
             return Err(ManifestError::UnsupportedVersion(self.version));
@@ -160,6 +170,12 @@ impl BundleManifest {
     ///
     /// Canonical encoding: `serde_json::to_vec` — field sırası struct
     /// declaration sırasına göre. JSON whitespace yok (compact form).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`serde_json::Error`] if canonical JSON serialize fail.
+    /// `BundleManifest`'in alanları primitive + Vec/String/Option olduğundan
+    /// pratikte tetiklenmez; imza API güvenliği için tutuluyor.
     pub fn manifest_sha256(&self) -> Result<[u8; 32], serde_json::Error> {
         let bytes = serde_json::to_vec(self)?;
         Ok(Self::sha256_of_bytes(&bytes))
@@ -179,6 +195,10 @@ impl BundleManifest {
     ///
     /// `i64::from_be_bytes(manifest_sha256[0..8])` —
     /// `docs/protocol/folder-payload.md` §4.1.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`serde_json::Error`] propagated from [`Self::manifest_sha256`].
     pub fn attachment_hash_i64(&self) -> Result<i64, serde_json::Error> {
         let digest = self.manifest_sha256()?;
         // INVARIANT: digest sabit 32 byte; [0..8] slice her zaman 8 byte.

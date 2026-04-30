@@ -51,6 +51,12 @@ impl Stats {
     /// Strict load — `NotFound` → `Ok(default)`, parse error
     /// → `Err(LoadError::Corrupt)`, diğer I/O → `Err(LoadError::Io)`.
     /// Bkz. [`crate::settings::LoadError`] — aynı semantic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::settings::LoadError::Corrupt`] if JSON parse fail,
+    /// [`crate::settings::LoadError::Io`] if I/O hatası (`NotFound` hariç —
+    /// o `Ok(default)` döner).
     pub fn load(path: &Path) -> std::result::Result<Self, crate::settings::LoadError> {
         match std::fs::read_to_string(path) {
             Ok(s) => serde_json::from_str::<Self>(&s).map_err(|source| {
@@ -76,6 +82,12 @@ impl Stats {
         }
     }
 
+    /// `stats.json`'ı atomic tmp+rename ile diske yaz.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if JSON serialize fail veya disk I/O hatası
+    /// (parent dizin oluşturma + atomic write).
     pub fn save(&self, path: &Path) -> Result<()> {
         // Process-wide disk serialization `crate::settings::atomic_write` →
         // `atomic_write_mode` içindeki `SETTINGS_DISK_LOCK` ile zaten yapılıyor;

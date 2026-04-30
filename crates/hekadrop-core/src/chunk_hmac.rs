@@ -105,8 +105,11 @@ fn encode_hmac_prefix(
 ///
 /// Sender/receiver hot path'inde chunk başına 1 alloc + 1 büyük memcpy elimine.
 ///
-/// Hata: `body.len() > u32::MAX` (4 GiB) → [`ChunkBuildError::BodyTooLarge`].
-/// Quick Share chunk pratiği 512 KiB olduğu için normal akışta tetiklenmez.
+/// # Errors
+///
+/// Returns [`ChunkBuildError::BodyTooLarge`] if `body.len() > u32::MAX`
+/// (4 GiB). Quick Share chunk pratiği 512 KiB olduğu için normal akışta
+/// tetiklenmez.
 pub fn compute_tag(
     chunk_hmac_key: &[u8; 32],
     payload_id: i64,
@@ -142,6 +145,13 @@ pub fn compute_tag(
 ///
 /// Length check'in constant-time karşılaştırmadan ÖNCE yapılması bir timing
 /// side-channel açmaz: tag uzunluğu peer'dan gelir, secret değildir.
+///
+/// # Errors
+///
+/// Returns [`VerifyError`]:
+/// - [`VerifyError::WrongTagLength`] — `expected.tag.len() != 32`
+/// - [`VerifyError::BodyLenMismatch`] — `expected.body_len` ≠ local body uzunluğu
+/// - [`VerifyError::TagMismatch`] — HMAC compute eşleşmedi (tampering veya storage corruption)
 pub fn verify_tag(
     chunk_hmac_key: &[u8; 32],
     expected: &ChunkIntegrity,
@@ -198,9 +208,11 @@ pub fn verify_tag(
 /// mesajına paketle. `crate::frame::wrap_hekadrop_frame` ile magic prefix
 /// eklenir, sonra `SecureCtx::encrypt`'e beslenir.
 ///
-/// Hata: `body_len > u32::MAX` (4 GiB) → [`ChunkBuildError::BodyTooLarge`].
-/// Önceki saturating cast (`unwrap_or(u32::MAX)`) silent corruption riskiydi
-/// (PR #104 Copilot review).
+/// # Errors
+///
+/// Returns [`ChunkBuildError::BodyTooLarge`] if `body_len > u32::MAX`
+/// (4 GiB). Önceki saturating cast (`unwrap_or(u32::MAX)`) silent corruption
+/// riskiydi (PR #104 Copilot review).
 pub fn build_chunk_integrity(
     payload_id: i64,
     chunk_index: i64,

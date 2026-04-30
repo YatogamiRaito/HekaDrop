@@ -47,6 +47,15 @@ pub struct DerivedKeys {
 ///
 /// Döndürülen `DerivedKeys` **client perspektifinde** doldurulur:
 ///   `encrypt/send_hmac` = client_* (bizden peer'a), `decrypt/recv_hmac` = server_* (peer'den bize)
+///
+/// # Errors
+///
+/// Returns `Err` if:
+/// - Socket I/O fail (frame read/write, timeout)
+/// - `ServerInit` protobuf decode fail veya commitment mismatch
+/// - `ServerInit` cipher / version downgrade ([`validate_server_init`])
+/// - Peer ECDH public key parse fail veya invalid curve point
+/// - HKDF derivation hatası (length cap)
 pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     use sha2::{Digest, Sha512};
 
@@ -225,6 +234,12 @@ fn to_signed_bytes(v: &[u8]) -> Vec<u8> {
 /// olması için saf fonksiyona ayrıldı (mutation survivor #10 — research-v2
 /// raporundaki "`ServerInit` cipher downgrade" kontrolü artık unit test ile
 /// kapatılıyor).
+///
+/// # Errors
+///
+/// Returns `Err` if:
+/// - `handshake_cipher != P256_SHA512` (`HekaError::Ukey2CipherDowngrade`)
+/// - `version != Some(1)` (`HekaError::Ukey2VersionDowngrade`)
 pub fn validate_server_init(s: &Ukey2ServerInit) -> Result<()> {
     if s.handshake_cipher != Some(Ukey2HandshakeCipher::P256Sha512 as i32) {
         return Err(HekaError::Ukey2CipherDowngrade(format!("{:?}", s.handshake_cipher)).into());
@@ -243,6 +258,15 @@ pub struct ServerInitResult {
 }
 
 /// `Ukey2ClientInit` mesajını doğrular, `Ukey2ServerInit` üretir ve handshake state'i döner.
+///
+/// # Errors
+///
+/// Returns `Err` if:
+/// - `Ukey2Message` / `Ukey2ClientInit` protobuf decode fail
+/// - Mesaj tipi `CLIENT_INIT` değil
+/// - `version` ≠ 1, `random` 32 byte değil veya `cipher_commitments` boş
+/// - `next_protocol` desteklenmiyor (`AES_256_CBC-HMAC_SHA256` bekleniyor)
+/// - HKDF / SHA-512 / ECDH key generation hatası
 pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult> {
     use rand::RngCore;
 
@@ -360,6 +384,14 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
 }
 
 /// İstemciden gelen `Ukey2ClientFinished`'i doğrular, ECDH + HKDF ile anahtarları türetir.
+///
+/// # Errors
+///
+/// Returns `Err` if:
+/// - `Ukey2Message` decode fail veya tip `CLIENT_FINISHED` değil (peer Alert dahil)
+/// - Cipher commitment hash mismatch (peer farklı public key gönderdi)
+/// - Peer P-256 public key parse fail veya invalid curve point
+/// - HKDF derivation hatası
 pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Result<DerivedKeys> {
     use sha2::{Digest, Sha512};
 

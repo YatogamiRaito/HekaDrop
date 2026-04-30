@@ -85,13 +85,15 @@ pub fn session_id_i64(auth_key: &[u8]) -> i64 {
 
 /// Stream SHA-256 over `path[0..offset]` in 1 MiB chunks.
 ///
-/// Errors:
-/// - `InvalidInput` if the file is shorter than `offset` (caller must not
+/// Memory: O(1) — fixed [`HASH_BUF_SIZE`] buffer. Does not mmap.
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if:
+/// - `InvalidInput` — file shorter than requested `offset` (caller must not
 ///   request a hash of bytes that do not exist on disk; partial truncation
 ///   detection is the caller's responsibility).
-/// - I/O errors from `File::open` / `BufReader::read` propagate as-is.
-///
-/// Memory: O(1) — fixed [`HASH_BUF_SIZE`] buffer. Does not mmap.
+/// - Other I/O errors from `File::open` / `BufReader::read_exact` propagate as-is.
 pub fn partial_hash_streaming(path: &Path, offset: u64) -> io::Result<[u8; 32]> {
     let file = File::open(path)?;
     let metadata = file.metadata()?;
@@ -138,6 +140,13 @@ pub fn partial_hash_streaming(path: &Path, offset: u64) -> io::Result<[u8; 32]> 
 ///
 /// I-1 compliance: uses `std::env::var("HOME")` / `USERPROFILE` directly
 /// rather than `crate::paths::*` (app-only) or `dirs` (extra dep).
+///
+/// # Errors
+///
+/// Returns [`io::Error`] if:
+/// - `NotFound` — `HOME` / `USERPROFILE` unset
+/// - `create_dir_all` fail (permission, disk full)
+/// - POSIX `chmod 0700` fail (permission)
 pub fn partial_dir() -> io::Result<PathBuf> {
     let home = home_dir().ok_or_else(|| {
         io::Error::new(
@@ -265,6 +274,13 @@ impl PartialMeta {
     ///
     /// Caller convention: any `Err` → silent skip + restart from offset 0
     /// (do not surface to user; resume is best-effort).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::Error`] if:
+    /// - JSON parse fail (`InvalidData`)
+    /// - Schema validate fail (`InvalidData`)
+    /// - Other I/O (permission, etc.); `NotFound` mapped to `Ok(None)` instead.
     pub fn load(dir: &Path, session_id: i64, payload_id: i64) -> io::Result<Option<Self>> {
         let path = dir.join(meta_filename(session_id, payload_id));
         let file = match File::open(&path) {
@@ -293,6 +309,13 @@ impl PartialMeta {
     ///
     /// Caller convention: I/O error → caller skip (warn + continue);
     /// `Ok(None)` → `NotFound`; parse fail → `Err(InvalidData)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::Error`] if JSON parse fail (`InvalidData`) veya
+    /// `NotFound` dışı I/O (permission vs). `NotFound` → `Ok(None)`.
+    /// **Schema validate yapılmaz** — caller cleanup yolunda invalid
+    /// `.meta`'yı silebilmek için bu varyantı kullanır.
     pub fn load_unchecked(path: &Path) -> io::Result<Option<Self>> {
         let file = match File::open(path) {
             Ok(f) => f,
@@ -315,6 +338,15 @@ impl PartialMeta {
     /// fails if the target exists, so we explicitly remove first — narrow
     /// race window vs `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` accepted for
     /// receiver-local resume state (sender does not race the receiver here).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::Error`] if:
+    /// - Schema validate fail (`InvalidData`)
+    /// - `session_id_hex` parse fail (`InvalidData`)
+    /// - JSON serialize fail (`Other`)
+    /// - tmp open / write / `sync_all` fail (I/O)
+    /// - Final rename fail (Windows: pre-rename remove fail)
     pub fn store_atomic(&self, dir: &Path) -> io::Result<()> {
         self.validate()
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, e.to_string()))?;

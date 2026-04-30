@@ -560,6 +560,11 @@ pub enum LoadError {
 impl Settings {
     /// Strict load — `NotFound` → `Ok(Self::default())`, parse error
     /// → `Err(LoadError::Corrupt)`, diğer I/O → `Err(LoadError::Io)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError::Corrupt`] if JSON parse fail,
+    /// [`LoadError::Io`] if I/O hatası (`NotFound` hariç — o `Ok(default)` döner).
     pub fn load(path: &Path) -> std::result::Result<Self, LoadError> {
         match std::fs::read_to_string(path) {
             Ok(s) => serde_json::from_str::<Self>(&s).map_err(|source| LoadError::Corrupt {
@@ -585,6 +590,15 @@ impl Settings {
         }
     }
 
+    /// `config.json`'ı pre-flight + atomic tmp+rename ile diske yaz.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - `download_dir` set ise [`validate_download_dir`] fail
+    ///   (dizin yok / değil / yazılabilir değil)
+    /// - JSON serialize fail
+    /// - Atomic write fail (tmp open, write, rename — permission, disk full)
     pub fn save(&self, path: &Path) -> Result<()> {
         // Pre-flight: kullanıcı explicit bir `download_dir` seçmişse dizinin
         // hâlâ var olduğundan ve yazılabilir olduğundan emin ol. Aksi halde
@@ -684,6 +698,13 @@ static DEBOUNCE_TASK: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>> =
 ///
 /// Public API: `main.rs::handle_settings_save` doğrudan da çağırabilir
 /// (`Settings::save` zaten kullanıyor, ikinci doğrulama idempotent).
+///
+/// # Errors
+///
+/// Returns `HekaError::DownloadDirInvalid` if:
+/// - `path` stat okunamadı (yok / permission)
+/// - `path` bir dizin değil
+/// - Yazma probe (create + delete) başarısız (read-only, full, permission)
 pub fn validate_download_dir(path: &Path) -> Result<()> {
     let meta = std::fs::metadata(path).map_err(|e| HekaError::DownloadDirInvalid {
         path: path.display().to_string(),
@@ -834,6 +855,13 @@ pub(crate) fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Resu
 /// politikayı (örn. `AppState.persistence_blocked`) caller uygular.
 /// PR #109 (Copilot doc accuracy): önceki yorum "garanti" iddia ediyordu;
 /// gerçek garanti caller-side flag ile sağlanır.
+///
+/// # Errors
+///
+/// Returns [`std::io::Error`] if:
+/// - 16 retry attempt'ten sonra `AlreadyExists` (suffix collision quota)
+/// - `rename` herhangi bir non-`AlreadyExists` I/O fail (permission,
+///   cross-device, `NotFound`)
 pub fn backup_corrupt_file(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

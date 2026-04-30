@@ -31,6 +31,15 @@
 /// guard. PR-D'de extract pipeline her segment'i ayrıca
 /// `sanitize_received_name` zinciriyle filtre eder; o katman karakter
 /// kontrolünü yapar.
+///
+/// # Errors
+///
+/// Returns [`PathError`] variant'ları:
+/// - `BackslashSeparator` — `\` karakter
+/// - `NullByte` — `\0` byte
+/// - `Traversal` — `..` segment
+/// - `DepthExceeded` — segment sayısı > `MAX_DEPTH`
+/// - `Empty` — sanitize sonrası segment kalmadı
 pub fn sanitize_received_relative_path(raw: &str) -> Result<Vec<String>, PathError> {
     if raw.contains('\\') {
         return Err(PathError::BackslashSeparator);
@@ -63,6 +72,14 @@ pub fn sanitize_received_relative_path(raw: &str) -> Result<Vec<String>, PathErr
 /// `BundleManifest.root_name` receiver'ın UI'da göreceği klasör ismi
 /// (`~/Downloads/<root_name>/`). Slash ya da backslash içermesi sender bug'ı
 /// veya hostile input'tur — reject.
+///
+/// # Errors
+///
+/// Returns [`PathError`] variant'ları:
+/// - `Empty` — boş string
+/// - `BackslashSeparator` — `/` veya `\` karakter
+/// - `NullByte` — `\0` byte
+/// - `Traversal` — `.` veya `..` exact match
 pub fn sanitize_root_name(raw: &str) -> Result<String, PathError> {
     if raw.is_empty() {
         return Err(PathError::Empty);

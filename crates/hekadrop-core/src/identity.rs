@@ -48,6 +48,14 @@ impl DeviceIdentity {
     /// RFC-0001 §5 Adım 4: `crate::platform::*` çağırılmaması için path
     /// injection — caller (app) `paths::identity_path()` ile production
     /// yolu sağlar; tests kendi tmp path'ini geçer.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - Parent dizin oluşturulamadı (I/O)
+    /// - Mevcut `identity.key` okunamadı (I/O)
+    /// - Mevcut dosya bozuk (boyut ≠ 32 byte)
+    /// - Yeni key dosyaya atomic yazılamadı (I/O / permission)
     pub fn load_or_create_at(path: &std::path::Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {

@@ -74,6 +74,15 @@ impl BundleHeader {
     /// 4. `manifest_len ≤ MAX_MANIFEST_LEN` (denial-of-service guard)
     /// 5. `manifest_len > 0` (en az `version` + `root_name` + `total_entries`
     ///    + `entries`)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BundleError`] variant'ları:
+    /// - `HeaderTooShort` — `bytes.len() < HEADER_LEN`
+    /// - `MagicMismatch` — ilk 8 byte `HEKABUND` değil
+    /// - `UnsupportedVersion` — version field'ı `HEKABUND_VERSION` değil
+    /// - `ManifestLenZero` — `manifest_len == 0`
+    /// - `ManifestLenExceeded` — `manifest_len > MAX_MANIFEST_LEN`
     pub fn decode(bytes: &[u8]) -> Result<Self, BundleError> {
         if bytes.len() < HEADER_LEN {
             return Err(BundleError::HeaderTooShort {
@@ -153,11 +162,12 @@ impl BundleWriter {
     /// Yeni writer — header üret, header + `manifest_json` hash chain'e
     /// commit.
     ///
-    /// Hatalar:
-    /// - `manifest_json` boş → `ManifestLenZero`
-    /// - `manifest_json.len() > MAX_MANIFEST_LEN` → `ManifestLenExceeded`
-    /// - `manifest_json.len() > u32::MAX` (32-bit hedef): bu fonksiyon
-    ///   doğrudan check eder, panic yok.
+    /// # Errors
+    ///
+    /// Returns [`BundleError`] variant'ları:
+    /// - `ManifestLenZero` — `manifest_json` boş
+    /// - `ManifestLenExceeded` — `manifest_json.len() > MAX_MANIFEST_LEN`
+    ///   veya `> u32::MAX` (32-bit hedef defansif guard, panic değil)
     pub fn new(manifest_json: &[u8]) -> Result<Self, BundleError> {
         if manifest_json.is_empty() {
             return Err(BundleError::ManifestLenZero);
@@ -263,6 +273,15 @@ pub struct BundleReader {
 
 impl BundleReader {
     /// Bundle file'ını aç + header / manifest / trailer parse + verify.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BundleError`] if:
+    /// - I/O fail (`Io`) — open/read/seek
+    /// - `BundleTooShort` — `bundle_len` < HEADER + TRAILER
+    /// - Header decode fail (`HeaderTooShort` / `MagicMismatch` / vs)
+    /// - `ManifestOverflowsBundle` — manifest end > trailer start
+    /// - `TrailerMismatch` — SHA-256 trailer verify fail
     pub fn open(path: &std::path::Path) -> Result<Self, BundleError> {
         let mut file = File::open(path)?;
         let bundle_len = file.metadata()?.len();

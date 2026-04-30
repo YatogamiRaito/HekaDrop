@@ -40,6 +40,12 @@ impl SecureCtx {
         }
     }
 
+    /// Plaintext'i `SecureMessage` (AES-256-CBC + HMAC-SHA256) wire formatına çevir.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if outgoing sequence counter `i32::MAX` üstüne taşacaksa
+    /// (`HekaError::SeqOverflow`). Pratikte 2^31 mesaj gerekir; defensive guard.
     pub fn encrypt(&mut self, inner_plaintext: &[u8]) -> Result<Vec<u8>> {
         // SECURITY: `i32` sequence counter overflow — release build'de wrap
         // (negatif sayı → peer reject), debug'da panic. Pratikte 2^31 mesaj
@@ -102,6 +108,18 @@ impl SecureCtx {
         }
     }
 
+    /// `SecureMessage` wire bytes'ını çöz + HMAC verify + sequence consistency.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if:
+    /// - Protobuf decode fail (`SecureMessage`/`HeaderAndBody`/`DeviceToDeviceMessage`)
+    /// - HMAC tag uzunluğu 32 byte değil (`HekaError::HmacTagLength`)
+    /// - HMAC verify fail (`HekaError::HmacMismatch`)
+    /// - IV missing veya 16 byte değil (`HekaError::Protocol`)
+    /// - AES decrypt fail (corrupted ciphertext / wrong key)
+    /// - Incoming sequence overflow veya beklenenle eşleşmiyor
+    ///   (`HekaError::SeqOverflow` / `HekaError::SeqMismatch`)
     pub fn decrypt(&mut self, frame_bytes: &[u8]) -> Result<Bytes> {
         let smsg = SecureMessage::decode(frame_bytes)?;
         // SECURITY: HMAC-SHA256 tag'i tam olarak 32 bayt olmalı. Peer kısa (örn.

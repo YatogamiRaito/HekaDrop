@@ -117,6 +117,13 @@ pub fn aes256_cbc_encrypt(key: &[u8; 32], iv: &[u8; 16], plaintext: &[u8]) -> Ve
     Aes256CbcEnc::new(key.into(), iv.into()).encrypt_padded_vec_mut::<Pkcs7>(plaintext)
 }
 
+/// AES-256-CBC çözümü + PKCS#7 unpadding.
+///
+/// # Errors
+///
+/// Returns [`cipher::block_padding::UnpadError`] if PKCS#7 padding bayt'ları
+/// geçersizse (ciphertext bozuk veya yanlış key/IV) ya da ciphertext uzunluğu
+/// 16-byte block hizalamasında değilse.
 pub fn aes256_cbc_decrypt(
     key: &[u8; 32],
     iv: &[u8; 16],
