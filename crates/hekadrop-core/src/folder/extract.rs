@@ -195,6 +195,8 @@ pub fn extract_bundle(
     }
 }
 
+/// `extract_bundle`'ın panic-koruyucu sarmalı altındaki gerçek implementasyon.
+/// Bundle aç → manifest doğrula → staging'e dosyaları yaz → atomic rename.
 fn extract_bundle_inner(
     bundle_path: &Path,
     expected_manifest_sha256_prefix: i64,
@@ -432,6 +434,8 @@ fn apply_mode_best_effort(path: &Path, mode: Option<u32>) {
     }
 }
 
+/// `apply_mode_best_effort` no-op variant (Windows): NTFS ACL modeli POSIX
+/// mode bit'lerini temsil etmez.
 #[cfg(not(unix))]
 fn apply_mode_best_effort(_path: &Path, _mode: Option<u32>) {
     // No-op: NTFS ACL modeli POSIX mode bit'lerini temsil etmez.
@@ -447,11 +451,14 @@ fn apply_mode_best_effort_via_handle(file: &fs::File, mode: Option<u32>) {
     }
 }
 
+/// `apply_mode_best_effort_via_handle` no-op variant (Windows): file handle
+/// üzerinden permission set'i POSIX-only API.
 #[cfg(not(unix))]
 fn apply_mode_best_effort_via_handle(_file: &fs::File, _mode: Option<u32>) {
     // No-op (Windows).
 }
 
+/// Bayt dizisini lowercase hex string'e çevir; alloc-once.
 fn hex_lower(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -521,16 +528,21 @@ fn unique_extract_target(downloads_dir: &Path, safe_root: &str) -> Result<PathBu
     )))
 }
 
+/// I/O hatası EXDEV (cross-device link) mı? — atomic rename fail için
+/// recursive copy fallback gerek olduğunu söyler.
 #[cfg(unix)]
 fn is_cross_device(e: &io::Error) -> bool {
     e.raw_os_error() == Some(libc_exdev())
 }
 
+/// Non-Unix platformlar — Windows `MoveFileEx` farklı volume'ları
+/// transparan kopyalar; ek fallback gerekmez.
 #[cfg(not(unix))]
 fn is_cross_device(_e: &io::Error) -> bool {
     false
 }
 
+/// EXDEV errno değeri — POSIX 18, libc dep eklemekten kaçınmak için sabit.
 #[cfg(unix)]
 const fn libc_exdev() -> i32 {
     // EXDEV — cross-device link not permitted. POSIX value 18.
@@ -562,20 +574,26 @@ fn recursive_copy_dir(src: &Path, dst: &Path) -> Result<(), ExtractError> {
 /// RAII cleanup guard — `Drop`'ta staging dir + bundle file silinir.
 /// Success path'inde `disarm_*` ile devre dışı bırakılır.
 struct ExtractCleanup {
+    /// Drop anında silinecek bundle dosyası; `disarm_bundle()` sonrası `None`.
     bundle_path: Option<PathBuf>,
+    /// Drop anında recursive silinecek staging dizini;
+    /// `disarm_staging()` sonrası `None`.
     staging_dir: Option<PathBuf>,
 }
 
 impl ExtractCleanup {
+    /// Hem bundle hem staging silmek üzere armed yeni guard.
     fn new(bundle_path: PathBuf, staging_dir: PathBuf) -> Self {
         Self {
             bundle_path: Some(bundle_path),
             staging_dir: Some(staging_dir),
         }
     }
+    /// Bundle silmeyi devre dışı bırak — örn. başarılı extract sonrası.
     fn disarm_bundle(&mut self) {
         self.bundle_path = None;
     }
+    /// Staging silmeyi devre dışı bırak — final rename başarılı.
     fn disarm_staging(&mut self) {
         self.staging_dir = None;
     }

@@ -35,6 +35,9 @@ use std::path::PathBuf;
 /// Yalnızca `long_term_key` disk'e yazılır; `secret_id_hash()` ve (v0.7'de
 /// gelecek) `signing_key()` bu key'den türetilen child-key'lerdir.
 pub struct DeviceIdentity {
+    /// 32 baytlık uzun-süreli kimlik anahtarı — ilk bootstrap'ta üretilir,
+    /// `identity.key` dosyasına 0o600 izniyle yazılır. Diğer key'ler bundan
+    /// HKDF ile türetilir.
     long_term_key: [u8; 32],
 }
 

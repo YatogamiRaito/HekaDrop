@@ -157,7 +157,9 @@ impl BundleHeader {
 /// state machine'in işi).
 #[derive(Debug)]
 pub struct BundleWriter {
+    /// Header + manifest + tüm body bayt'larının streaming SHA-256 hasher'ı.
     hasher: Sha256,
+    /// Hesaplanmış sabit başlık bayt'ları — sender bunları wire'a yazar.
     header_bytes: [u8; HEADER_LEN],
     /// Hash chain için tutulan stat (header + manifest + body toplamı).
     /// İleri PR'larda progress raporlama için public accessor düşünülebilir.
@@ -270,8 +272,11 @@ impl BundleWriter {
 /// `into_extractor()` API'si entries iterate eder.
 #[derive(Debug)]
 pub struct BundleReader {
+    /// Bundle dosyasının açık `File` kulpu — body extraction için seek edilir.
     file: File,
+    /// Parse edilmiş HEKABUND başlığı (versions + lengths).
     header: BundleHeader,
+    /// Manifest bayt'larının ham JSON kopyası — extractor'a aktarılır.
     manifest_json: Vec<u8>,
     /// Toplam bundle boyutu (header + manifest + body + trailer).
     bundle_len: u64,

@@ -4,6 +4,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+/// Tek bir wire frame için izin verilen maksimum byte boyutu (16 MiB).
+/// `read_frame` bu sınırı aşan length prefix'ini reddeder — `DoS` koruması.
 const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 /// Handshake fazında (`ConnectionRequest`, UKEY2) slow-loris saldırılarına karşı

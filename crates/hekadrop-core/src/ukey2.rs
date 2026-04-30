@@ -197,6 +197,8 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     })
 }
 
+/// `v`'yi tam 32 baytlık `Vec<u8>`'e normalize et — uzunsa kuyruğu, kısaysa
+/// sıfır-padli olanı döndürür. ECDH X9.62 koordinat hizalaması için.
 fn normalize_32(v: &[u8]) -> Vec<u8> {
     if v.len() > 32 {
         v[v.len() - 32..].to_vec()

@@ -46,7 +46,14 @@
 // CI `-D warnings` ile birlikte fiili enforce sağlar. CLAUDE.md I-2: crate-
 // level `#![warn]` `#![allow]` yasağına girmez (stricter check, lint
 // relaxasyonu değil).
-#![warn(clippy::missing_errors_doc, clippy::missing_panics_doc)]
+// `clippy::missing_docs_in_private_items` v0.8.0 release prep — internal API
+// surface tam dokümante. Workspace-wide skip; `pedantic` umbrella'da olduğu
+// için yalnız core scope (app/net/cli/proto kapsam dışı).
+#![warn(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::missing_docs_in_private_items
+)]
 
 pub mod capabilities;
 pub mod chunk_hmac;

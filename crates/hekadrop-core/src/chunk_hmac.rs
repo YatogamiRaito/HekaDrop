@@ -23,6 +23,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
+/// HMAC-SHA256 instance type — chunk integrity tag hesaplamasında kullanılır.
 type HmacSha256 = Hmac<Sha256>;
 
 /// HKDF info label — wire kontrat kilidi. Değiştirmek `chunk_hmac_v2` bumpı

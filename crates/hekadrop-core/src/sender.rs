@@ -82,10 +82,16 @@ pub struct SendCtx {
     pub text_summary: String,
 }
 
+/// `send()` planlama aşamasında her dosya için biriktirilen kayıt;
+/// introduction frame + chunk loop'u bu listeden okur.
 struct PlannedFile {
+    /// Dosyanın disk üstündeki tam yolu.
     path: std::path::PathBuf,
+    /// Wire'a yazılacak dosya adı (path'in son segmenti).
     name: String,
+    /// Dosya boyutu (bayt) — introduction `FileMetadata.size`'a yazılır.
     size: i64,
+    /// Bu dosyaya rastgele atanmış `payload_id`.
     payload_id: i64,
 }
 
@@ -1095,6 +1101,8 @@ async fn send_text_bytes(
     Ok(())
 }
 
+/// BYTES payload chunk'ını `OfflineFrame::PayloadTransfer` `SharingFrame`
+/// içinde paketle — caller secure ctx ile şifreleyip wire'a yazar.
 fn wrap_bytes_payload_transfer(
     id: i64,
     total_size: i64,
@@ -1128,6 +1136,8 @@ fn wrap_bytes_payload_transfer(
     }
 }
 
+/// Tek text payload için `SharingFrame::Introduction` üret — tek `TextMetadata`
+/// entry'siyle.
 fn build_introduction_text(
     payload_id: i64,
     kind: i32,
@@ -1157,6 +1167,9 @@ fn build_introduction_text(
     clippy::too_many_arguments,
     reason = "send pipeline helper — file/ctx/state/resume context; struct refactor v0.9'a defer"
 )]
+/// Bir dosyayı `CHUNK_SIZE` bloklar hâlinde streaming oku, secure ctx ile
+/// şifreleyip wire'a yaz; chunk-HMAC capability aktifse her chunk sonrası
+/// `ChunkIntegrity` frame ekle. Resume aktif iken sidecar `.meta` güncellenir.
 async fn send_file_chunks(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
@@ -1599,6 +1612,8 @@ async fn wait_peer_disconnect(socket: &mut TcpStream, ctx: &mut SecureCtx) -> Re
     }
 }
 
+/// FILE chunk body'sini `OfflineFrame::PayloadTransfer` içinde paketle —
+/// `Bytes` zero-copy gönderim için. Caller secure ctx ile şifreler.
 fn wrap_payload_transfer(
     id: i64,
     total_size: i64,
@@ -1913,6 +1928,8 @@ async fn send_bundle_chunk(
     Ok(())
 }
 
+/// Çoklu dosya gönderimi için `SharingFrame::Introduction` üret — her plan
+/// `FileMetadata` entry'sine dönüşür; mime type basit uzantı tahminiyle.
 fn build_introduction_multi(plans: &[PlannedFile]) -> SharingFrame {
     let files: Vec<FileMetadata> = plans
         .iter()
@@ -1938,6 +1955,8 @@ fn build_introduction_multi(plans: &[PlannedFile]) -> SharingFrame {
     }
 }
 
+/// Dosya adındaki uzantıdan kaba MIME tipi tahmin et — eşleşme yoksa
+/// `application/octet-stream`.
 fn guess_mime(name: &str) -> &'static str {
     let lower = name.to_lowercase();
     let ext = lower.rsplit('.').next().unwrap_or("");
@@ -1985,6 +2004,8 @@ fn compute_percent(bytes_before: i64, offset: i64, total: i64) -> Option<u8> {
     Some(percent)
 }
 
+/// İlk handshake `ConnectionRequest` frame'i üret — endpoint id (random) +
+/// endpoint info (cihaz adı) ile.
 fn build_connection_request(our_name: &str) -> OfflineFrame {
     let endpoint_id = config::random_endpoint_id();
     let endpoint_info = config::endpoint_info(our_name);

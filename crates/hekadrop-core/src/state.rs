@@ -24,6 +24,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio_util::sync::CancellationToken;
 
+/// `AppState::history` için maksimum girişti sayısı; FIFO eviction.
 const HISTORY_CAP: usize = 10;
 
 /// Completed state'ini otomatik olarak Idle'a döndürmek için varsayılan gecikme.
@@ -421,8 +422,11 @@ impl AppState {
 /// lookup'ı yapmadan kendi state referansı üzerinden temizler. Bu sayede
 /// guard core crate'inde de kullanılabilir (no `state::get()`).
 pub struct TransferGuard {
+    /// Guard'ın bağlı olduğu app-state — `Drop`'ta unregister için tutulur.
     state: Arc<AppState>,
+    /// Transfer kaydı için unique ID (sender/receiver task ayrımı).
     id: String,
+    /// Bu transfer'i iptal etmek için kullanılan child token.
     pub token: CancellationToken,
 }
 
@@ -457,11 +461,15 @@ impl Drop for TransferGuard {
 /// `Settings::is_trusted()` kontrol eder; trusted ise `check_and_record` hiç
 /// çağrılmaz.
 pub struct RateLimiter {
+    /// Peer IP başına son `WINDOW` içindeki bağlantı zamanlarını tutan
+    /// sliding-window kuyrukları.
     windows: RwLock<HashMap<IpAddr, VecDeque<Instant>>>,
 }
 
 impl RateLimiter {
+    /// Sliding window süresi (60 sn) — bu süreden eski timestamp'ler düşer.
     const WINDOW: Duration = Duration::from_secs(60);
+    /// Tek bir IP'den bir `WINDOW` içinde izin verilen maksimum bağlantı sayısı.
     const MAX_PER_WINDOW: usize = 10;
 
     #[must_use]

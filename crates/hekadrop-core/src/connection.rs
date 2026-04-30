@@ -815,8 +815,12 @@ fn drain_pending(
 }
 
 #[derive(PartialEq, Eq)]
+/// `handle_sharing_frame` dönüş kontrol akışı — frame işlendi loop devam mi
+/// yoksa bağlantı kapatılsın mı.
 enum FlowOutcome {
+    /// Frame işlendi; receive loop bir sonraki frame'e geç.
     Continue,
+    /// Bağlantıyı kapat (RESPONSE reject/cancel/protocol fail).
     Disconnect,
 }
 
@@ -827,6 +831,9 @@ enum FlowOutcome {
     clippy::too_many_arguments,
     reason = "RFC-0001 §5 — handler call-graph (15 arg: socket/ctx/assembler/ui/state/...); HandlerCtx struct refactor v0.9'a defer"
 )]
+/// `SharingFrame` dispatcher — Introduction / Response / Cancel /
+/// `PairedKeyResult` gibi alt frame tiplerini ilgili helper'lara yönlendir;
+/// `FlowOutcome` ile receive loop'una devam/bitir sinyali döner.
 async fn handle_sharing_frame(
     peer: &SocketAddr,
     socket: &mut TcpStream,
@@ -1430,6 +1437,8 @@ async fn handle_sharing_frame(
     Ok(FlowOutcome::Continue)
 }
 
+/// Tamamlanmış BYTES text payload'ını (URL / clipboard / not) UI'a duyur ve
+/// uygun platform aksiyonunu (clipboard yaz / browser aç) tetikle.
 fn handle_text_payload(
     peer: &SocketAddr,
     kind: TextType,
@@ -1492,6 +1501,8 @@ fn handle_text_payload(
     }
 }
 
+/// Char-count tabanlı kısaltma — `max`'tan uzun string'i `…` ile sonlandır.
+/// UTF-8 surrogate güvenli (kod noktası bazlı kesim).
 fn preview(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -1501,6 +1512,8 @@ fn preview(s: &str, max: usize) -> String {
     }
 }
 
+/// Şifreli `OfflineFrame::Disconnection` gönder — kibar bağlantı kapatma
+/// sinyali; peer dinliyorsa graceful shutdown başlar.
 pub(crate) async fn send_disconnection(socket: &mut TcpStream, ctx: &mut SecureCtx) -> Result<()> {
     let f = OfflineFrame {
         version: Some(1),
@@ -1515,6 +1528,8 @@ pub(crate) async fn send_disconnection(socket: &mut TcpStream, ctx: &mut SecureC
     Ok(())
 }
 
+/// Bayt sayısını insan-okur formata çevir ("12.3 MB"). Log gösterimi —
+/// TB üstü mantissa hassasiyeti tolere edilir.
 fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     #[expect(
@@ -1992,6 +2007,9 @@ async fn handle_hekadrop_frame(
     }
 }
 
+/// İndirilecek dosya için collision-free downloads yolu rezerve et — TOCTOU
+/// güvenli (`O_EXCL` / `CREATE_NEW`); aynı isim varsa `name (1).ext`,
+/// `name (2).ext` ... şekliyle artar.
 fn unique_downloads_path(name: &str, state: &AppState) -> Result<PathBuf> {
     // SECURITY/TOCTOU: Önceki sürüm `Path::exists()` + sonra `File::create`
     // kullanıyordu. İki paralel alıcı (server.rs `MAX_CONCURRENT_CONNECTIONS=32`)
@@ -2156,6 +2174,8 @@ fn is_safe_url_scheme(url: &str) -> bool {
     starts("http://") || starts("https://")
 }
 
+/// Dosya adını `(stem, ext)` ikilisine ayır — son `.` ayraç. Uzantı yoksa
+/// `(name, "")`.
 fn split_name(name: &str) -> (&str, &str) {
     match name.rfind('.') {
         Some(idx) if idx > 0 && idx < name.len() - 1 => (&name[..idx], &name[idx + 1..]),
@@ -2163,12 +2183,16 @@ fn split_name(name: &str) -> (&str, &str) {
     }
 }
 
+/// `n` baytlık kriptografik rastgele dizi üret — handshake nonce / dummy
+/// `signed_data` için.
 fn random_bytes(n: usize) -> Vec<u8> {
     let mut v = vec![0u8; n];
     rand::thread_rng().fill_bytes(&mut v);
     v
 }
 
+/// `PairedKeyEncryption` frame'i üret — `secret_id_hash` (cihaz-kalıcı
+/// HKDF türevi) + opsiyonel imza alanı. Quick Share pairing handshake'i.
 pub(crate) fn build_paired_key_encryption(state: &AppState) -> SharingFrame {
     // Issue #17: `secret_id_hash` artık random değil — cihaz-kalıcı
     // `DeviceIdentity.long_term_key` üzerinden HKDF-SHA256 ile türetilir.
@@ -2196,6 +2220,8 @@ pub(crate) fn build_paired_key_encryption(state: &AppState) -> SharingFrame {
     }
 }
 
+/// `PairedKeyResult` frame'i `Unable` status ile üret — peer ile pairing
+/// kurulmadığı sinyali.
 pub(crate) fn build_paired_key_result() -> SharingFrame {
     SharingFrame {
         version: Some(ShVersion::V1 as i32),
@@ -2210,14 +2236,17 @@ pub(crate) fn build_paired_key_result() -> SharingFrame {
     }
 }
 
+/// Kullanıcı kabulü → `Response(Accept)` frame.
 fn build_consent_accept() -> SharingFrame {
     build_consent(ConsentStatus::Accept)
 }
 
+/// Kullanıcı reddi → `Response(Reject)` frame.
 fn build_consent_reject() -> SharingFrame {
     build_consent(ConsentStatus::Reject)
 }
 
+/// `SharingFrame::Cancel` üret — kullanıcı/timeout iptali sinyali.
 pub(crate) fn build_sharing_cancel() -> SharingFrame {
     SharingFrame {
         version: Some(ShVersion::V1 as i32),
@@ -2228,6 +2257,7 @@ pub(crate) fn build_sharing_cancel() -> SharingFrame {
     }
 }
 
+/// `SharingFrame::Response` builder — `accept`/`reject` ortak yapı.
 fn build_consent(status: ConsentStatus) -> SharingFrame {
     SharingFrame {
         version: Some(ShVersion::V1 as i32),
@@ -2242,6 +2272,9 @@ fn build_consent(status: ConsentStatus) -> SharingFrame {
     }
 }
 
+/// `SharingFrame`'i `OfflineFrame::PayloadTransfer` BYTES kapsülünde
+/// şifreleyip wire'a yaz — control-plane mesajları (Introduction/Response/
+/// Cancel/PairedKey*) için ortak gönderici.
 pub(crate) async fn send_sharing_frame(
     socket: &mut TcpStream,
     ctx: &mut SecureCtx,
@@ -2272,6 +2305,8 @@ pub(crate) async fn send_sharing_frame(
     Ok(())
 }
 
+/// BYTES kind `PayloadTransfer` frame'ini paketle — receiver tarafında
+/// `SharingFrame` zarflama için.
 fn wrap_payload_transfer(
     id: i64,
     total_size: i64,
@@ -2305,6 +2340,8 @@ fn wrap_payload_transfer(
     }
 }
 
+/// `OfflineFrame::ConnectionResponse(Accept)` — handshake'in son aşamasında
+/// peer'a ACK; `os_info` Apple olarak tag'lenir (Quick Share Apple/iOS uyumu).
 pub(crate) fn build_connection_response_accept() -> OfflineFrame {
     OfflineFrame {
         version: Some(1),
@@ -2376,6 +2413,8 @@ fn classify_handshake_error(e: &anyhow::Error) -> &'static str {
     "err.pin_mismatch"
 }
 
+/// `endpoint_info` ham bayt'larından peer cihaz adını UTF-8 olarak çıkar.
+/// Yerleşim: bitmap(1) + random(16) + `name_len`(1) + name bayt'ları.
 fn parse_remote_name(endpoint_info: &[u8]) -> Option<String> {
     if endpoint_info.len() < 18 {
         return None;

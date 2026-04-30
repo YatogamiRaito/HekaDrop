@@ -3,6 +3,8 @@ use base64::Engine;
 use rand::Rng;
 use sha2::{Digest, Sha256};
 
+/// Quick Share servis tipi türetiminde kullanılan sabit marker — SHA-256
+/// hash'inin ilk 6 bayt'ı `_<hex>._tcp.local.` mDNS service type'ına dönüşür.
 const NEARBY_SHARING_MARKER: &[u8] = b"NearbySharing";
 
 /// `_<hex>._tcp.local.` — Quick Share mDNS servis tipi.
@@ -44,6 +46,8 @@ pub const DEVICE_TYPE_COMPUTER: u8 = 3;
 /// UTF-8 olarak en fazla 255 bayt olabilir. mDNS yayınımız `n=<base64>`
 /// formatında olduğundan key (`n=` = 2 bayt) + base64 değer ≤ 255 olmalı.
 const MAX_TXT_STRING_LEN: usize = 255;
+/// `n=` TXT record key prefix uzunluğu — `MAX_TXT_STRING_LEN` bütçesinden
+/// düşülür.
 const N_KEY_PREFIX_LEN: usize = 2; // "n="
 
 /// `endpoint_info` ham byte yerleşimi sabit prefix'i: bitmap(1) + random(16) +
