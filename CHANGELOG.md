@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-01
+
+**"Workspace + protocol" release — RFC-0001 Foundation refactor + 3 yeni protocol RFC.**
+
+HekaDrop v0.8.0, iki büyük dalga: (1) Cargo workspace'e geçiş ile 5-crate
+mimari (`hekadrop-{proto,core,net,cli,app}`); core artık UI/i18n/global-state
+bağımsız, headless CLI yolu açıldı. (2) Wire format negotiation üzerinden
+3 yeni protocol özelliği: chunk-HMAC integrity, transfer resume, folder
+bundle streaming — hepsi capability-gated, eski peer'larla geriye-dönük
+uyumlu. v0.7.0 internal version'da kaldı (release tag çıkarılmadı); v0.8.0
+hem workspace refactor hem protocol feature setini kapsar.
+
 ### Added — v0.8.0 protocol features (RFC-0003 + RFC-0004 + RFC-0005)
 - **feat(rfc-0005): folder bundle support** — `FOLDER_STREAM_V1` capability
   (`0x0000_0004`) `ALL_SUPPORTED`'a eklendi (PR-F). Sender tarafı `enumerate_folder`
@@ -45,6 +57,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `undocumented_unsafe_blocks`, `redundant_clone` vb. 23 lint warn/deny.
   Mevcut codebase 0 violation; yeni kod CI ile bloklanır.
 - **CLAUDE.md kuruluş prensipleri** + pre-commit kontrol listesi (PR #91 sonrası).
+
+### Added — Lint discipline (53 pedantic + doc enforce)
+- **Clippy pedantic batch 1-11** (PR'lar `chore/lint-pedantic-batch-{1..11}`):
+  53 lint workspace.lints'e `warn` olarak eklendi; 47 zero-hit + 6 toplam
+  manuel/auto fix. CI `-D warnings` ile fiili enforce. Davranış-koruyucu
+  mikro temizlik (closure → method ref, format string inline, string-builder
+  alloc eliminate, semicolon idiom, struct ergonomics).
+- **`clippy::missing_errors_doc` + `missing_panics_doc`** scope-limited
+  (`hekadrop-{core,net,app}` lib.rs `#![warn(...)]`): 56 unique pub fn'e
+  `# Errors` + 8 fn'e `# Panics` doc bloğu eklendi (PR #171/#172/#173/#174).
+- **`clippy::missing_docs_in_private_items`** scope-limited
+  (`hekadrop-{core,net,app}` `#![warn(...)]`): 199 unique private item
+  (struct field, fn, const, type alias, enum variant) 1-3 satır pratik
+  Türkçe doc ile dokümante (PR #175/#176/#177). Internal API surface
+  v0.8.0 release için tertemiz; yeni private item eklendiğinde CI bloklar.
 
 ### Added — v0.7 öncesi
 - **24 aylık yol haritası**: `docs/ROADMAP.md`, `docs/MILESTONES.md` — v1.0.0 hedef

@@ -23,7 +23,7 @@ publish = false
 
 [dependencies]
 # Workspace path-deps (proto bindings)
-hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
+hekadrop-proto = { path = "../hekadrop-proto", version = "=0.8.0" }
 
 # Async runtime — frame.rs (TcpStream, AsyncRead/Write, tokio::time::timeout),
 # ukey2.rs (TcpStream), settings.rs `save_debounced` (Handle::spawn). `rt`

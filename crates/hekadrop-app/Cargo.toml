@@ -18,9 +18,9 @@ categories = ["network-programming", "command-line-utilities"]
 # kuralı için workspace path-dep version belirtmesi şart.
 # RFC-0001 §5 Adım 2: hekadrop-proto. Adım 3: hekadrop-core (kripto, frame,
 # UKEY2, secure, error, log_redact, file_size_guard, config taşındı).
-hekadrop-core = { path = "../hekadrop-core", version = "=0.7.0" }
-hekadrop-net = { path = "../hekadrop-net", version = "=0.7.0" }
-hekadrop-proto = { path = "../hekadrop-proto", version = "=0.7.0" }
+hekadrop-core = { path = "../hekadrop-core", version = "=0.8.0" }
+hekadrop-net = { path = "../hekadrop-net", version = "=0.8.0" }
+hekadrop-proto = { path = "../hekadrop-proto", version = "=0.8.0" }
 
 # RFC-0001 §5 Adım 5b — `ui_adapter::UiAdapter` core'un `UiPort` trait'ini
 # implemente eder; `#[async_trait]` makro app crate'inde de gerekiyor.

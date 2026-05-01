@@ -1491,7 +1491,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hekadrop"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aes",
  "anyhow",
@@ -1532,7 +1532,7 @@ dependencies = [
 
 [[package]]
 name = "hekadrop-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "hekadrop-core",
  "hekadrop-net",
@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "hekadrop-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aes",
  "anyhow",
@@ -1573,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "hekadrop-net"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -1586,7 +1586,7 @@ dependencies = [
 
 [[package]]
 name = "hekadrop-proto"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "prost",
