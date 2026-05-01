@@ -16,7 +16,7 @@ publish = false
 
 [dependencies]
 # Workspace internal — domain tipleri ve config (Adım 4'te core'a taşındı).
-hekadrop-core = { path = "../hekadrop-core", version = "=0.7.0" }
+hekadrop-core = { path = "../hekadrop-core", version = "=0.8.0" }
 
 # Async runtime — yalnız `tokio::task::spawn_blocking` (discovery.rs:39)
 # kullanılıyor; başka tokio API'sı yok. `rt` feature spawn için yeterli.

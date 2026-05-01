@@ -22,8 +22,8 @@ name = "hekadrop-cli"
 path = "src/main.rs"
 
 [dependencies]
-hekadrop-core = { path = "../hekadrop-core", version = "=0.7.0" }
-hekadrop-net = { path = "../hekadrop-net", version = "=0.7.0" }
+hekadrop-core = { path = "../hekadrop-core", version = "=0.8.0" }
+hekadrop-net = { path = "../hekadrop-net", version = "=0.8.0" }
 
 [lints]
 workspace = true
