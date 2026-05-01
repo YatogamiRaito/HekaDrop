@@ -148,6 +148,16 @@ ve gelecekteki tüm cross-cutting lint enforce PR'larında **beklenmelidir**;
   → fix önerisini patch olarak çıkar, lokal apply
 - VEYA cross-compile container kur (Docker/devcontainer)
 
+### Bilinen gap: lokal rustc CI'dan eski olabilir (lint davranış farkı)
+
+CI `dtolnay/rust-toolchain@stable` kullanır → her ay yeni stable.
+Lokal `rustup` her zaman güncellenmez; pedantic lint (örn.
+`missing_docs_in_private_items`) yeni rustc'de cfg-gated item'ları daha
+agresif tarar (ör. 1.95: cross-platform private fn'leri görür, 1.92'de
+yalnız host platform). Pre-commit grep + lokal clippy yeşil olsa bile
+CI fail edebilir. **Pre-push:** `rustup update stable` + `cargo +stable
+clippy --workspace --all-targets --all-features -- -D warnings` koş.
+
 ## Pre-push adversarial review (önerilir)
 
 `git push` ÖNCESİ adversarial review agent çağır — özellikle non-trivial PR'larda:
