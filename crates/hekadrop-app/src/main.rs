@@ -1002,7 +1002,7 @@ fn handle_settings_save(json: &str) {
         /// Otomatik kabul switch'i (geri uyumluluk için zorunlu).
         auto_accept: bool,
         #[serde(default)]
-        /// mDNS advertise switch'i (None → mevcut korunur).
+        /// mDNS advertise switch'i (`None` → mevcut korunur).
         advertise: Option<bool>,
         #[serde(default)]
         /// Log seviyesi string'i (`trace` / `debug` / `info` / `warn` / `error`).

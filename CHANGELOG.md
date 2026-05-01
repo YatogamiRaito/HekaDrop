@@ -60,10 +60,11 @@ hem workspace refactor hem protocol feature setini kapsar.
 
 ### Added — Lint discipline (53 pedantic + doc enforce)
 - **Clippy pedantic batch 1-11** (PR'lar `chore/lint-pedantic-batch-{1..11}`):
-  53 lint workspace.lints'e `warn` olarak eklendi; 47 zero-hit + 6 toplam
-  manuel/auto fix. CI `-D warnings` ile fiili enforce. Davranış-koruyucu
-  mikro temizlik (closure → method ref, format string inline, string-builder
-  alloc eliminate, semicolon idiom, struct ergonomics).
+  53 lint workspace.lints'e `warn` olarak eklendi (43 zero-hit, 10 lint
+  toplam ~49 site auto-fix + manuel düzeltme). CI `-D warnings` ile fiili
+  enforce. Davranış-koruyucu mikro temizlik (closure → method ref, format
+  string inline, string-builder alloc eliminate, semicolon idiom, struct
+  ergonomics).
 - **`clippy::missing_errors_doc` + `missing_panics_doc`** scope-limited
   (`hekadrop-{core,net,app}` lib.rs `#![warn(...)]`): 56 unique pub fn'e
   `# Errors` + 8 fn'e `# Panics` doc bloğu eklendi (PR #171/#172/#173/#174).

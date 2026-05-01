@@ -290,7 +290,7 @@ fn prompt_accept_blocking(
 }
 
 /// Linux sürümü — `zenity` veya `kdialog` ile 3-buton accept prompt; her
-/// ikisi de yoksa `notify-rust` ile bilgilendirip reddet.
+/// ikisi de yoksa log ile bilgilendirip reddet.
 #[cfg(target_os = "linux")]
 fn prompt_accept_blocking(
     device: &str,
@@ -1168,7 +1168,6 @@ fn escape_applescript(s: &str) -> String {
 /// zenity `--extra-button` flag'ini destekliyor mu? Versiyon 3.0+'da var.
 /// `zenity --version` çıktısı "3.44.0" gibi tek satır; major sayı ≥3 ise
 /// true. Hata durumunda (zenity açılmıyor vb.) false — iki-adım fallback.
-/// Linux sürümü — `zenity` argümanları için minimal escape (newline strip).
 #[cfg(target_os = "linux")]
 fn zenity_supports_extra_button() -> bool {
     let out = match Command::new("zenity")
@@ -1198,7 +1197,6 @@ fn zenity_supports_extra_button() -> bool {
 /// olsun diye `bin` içinde shell-special char görürsek direkt `false`
 /// dönüyoruz; helper ileride yanlışlıkla dış input ile çağrılırsa da
 /// güvenli kalıyor.
-/// Linux sürümü — `kdialog` argümanları için minimal escape.
 #[cfg(target_os = "linux")]
 fn have(bin: &str) -> bool {
     if bin
