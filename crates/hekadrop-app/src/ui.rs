@@ -1214,6 +1214,8 @@ fn have(bin: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// Bayt sayısını okunur birime (B/KB/MB/GB/TB) çevirir; <1 KB için tam sayı,
+/// üzerinde tek ondalık.
 fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     #[expect(
