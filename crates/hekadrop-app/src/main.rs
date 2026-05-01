@@ -1,3 +1,9 @@
+//! `HekaDrop` binary entry point — tao/wry tabanlı tray + `WebView` UI ve
+//! orchestration. Modül ağacı: `i18n` / `paths` / `platform` / `state` /
+//! `ui` / `ui_adapter` (private bin-internal). Core protocol + transfer
+//! engine için `hekadrop_core::*` shim'i, ağ keşfi için `hekadrop_net`,
+//! protobuf wire tipleri için `hekadrop_proto` kullanılır.
+
 // Bin'in inline `#[cfg(test)] mod tests` blokları için test-mode allow seti.
 // Detay için bkz. `lib.rs` aynı attribute.
 #![cfg_attr(
@@ -26,8 +32,14 @@
 // ayrı olduğu için aynı `#![warn]` burada da gerekli — main.rs içindeki
 // modüller (`mod i18n;` vb.) private, pub-reachable yüzey yok denecek kadar az;
 // 0 hit ile direkt enforce. Yeni `pub fn` eklenirse `# Errors` / `# Panics`
-// doc bloğu zorunlu (CI `-D warnings` ile blok).
-#![warn(clippy::missing_errors_doc, clippy::missing_panics_doc)]
+// doc bloğu zorunlu (CI `-D warnings` ile blok). `missing_docs_in_private_items`
+// PR `chore/lint-missing-docs-private-app` ile aktif: bin'in private modül
+// ağacı (helper fn / struct / const / static) artık doc zorunlu.
+#![warn(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::missing_docs_in_private_items
+)]
 
 use anyhow::Result;
 use std::fmt::Write as _;
@@ -92,6 +104,8 @@ mod state;
 mod ui;
 mod ui_adapter;
 
+/// Tokio runtime handle'ının process-ömürlü cache'i; UI thread'inden async
+/// göreve `block_on` / `spawn` için kullanılır.
 static RUNTIME: OnceLock<Handle> = OnceLock::new();
 
 // RFC-0001 §5 Adım 2: protobuf bindings `hekadrop-proto` crate'inden
@@ -103,8 +117,11 @@ pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
 
 // Workspace refactor (v0.7 Step 1): resources/ workspace root'ta kaldı; app
 // crate'i crates/hekadrop-app/ altına taşındı → relative path iki seviye yukarı.
+/// `WebView`'e yüklenen statik HTML içeriği — derleme zamanında embed.
 const WINDOW_HTML: &str = include_str!("../../../resources/window.html");
 
+/// Async ana akış: identity load + settings + listener + mDNS advertise +
+/// UI loop kurulumu. `run_app` içinden runtime'da `block_on` ile çalışır.
 async fn async_main() -> Result<()> {
     let device_name = state::get()
         .settings
@@ -396,6 +413,8 @@ fn setup_logging(log_level: settings::LogLevel) {
         .init();
 }
 
+/// `keep_days` günden eski log dosyalarını siler; mtime threshold'u sistem
+/// saatine güveniyorsa hatalı atlamalar olabilir, kayıt önemli değil.
 fn cleanup_old_logs(dir: &std::path::Path, keep_days: u64) {
     let threshold =
         std::time::SystemTime::now().checked_sub(Duration::from_secs(keep_days * 86400));
@@ -427,6 +446,8 @@ fn truncate_oversized_logs(dir: &std::path::Path, max_bytes: u64) {
     }
 }
 
+/// Process'in canlı kalan UI ana döngüsü — tao event loop'unu başlatır ve
+/// asla geri dönmez (`!`).
 fn run_app() -> ! {
     #[cfg(target_os = "macos")]
     let mut event_loop = EventLoopBuilder::new().build();
@@ -755,6 +776,8 @@ fn run_app() -> ! {
     });
 }
 
+/// `WebView` IPC mesaj handler'ı — `cmd` `verb::payload` formatında prefix'lere
+/// göre dispatch eder (`send_text::`, `settings_save::` vb).
 fn handle_ipc(cmd: &str) {
     // PRIVACY: Metin gönderim komutları kullanıcı verisi içerir; log'a düşmesin.
     // `send_text::` prefix'i yalnız başlangıç kısmıyla logla, geri kalanı redact.
@@ -961,6 +984,8 @@ fn graceful_quit() -> ! {
     std::process::exit(0);
 }
 
+/// `settings_save::<json>` IPC payload'ını parse eder ve mevcut ayarlara
+/// partial update uygular; bilinmeyen alanlar yok sayılır.
 fn handle_settings_save(json: &str) {
     // H#4: JSON payload'ına 4 yeni privacy alanı eklendi. Privacy alanları
     // Option ile tanımlı — UI eski sürümse ya da alanı göndermezse mevcut
@@ -970,16 +995,23 @@ fn handle_settings_save(json: &str) {
     // ile güvenli parse edilir (bilinmeyen input Info'ya düşer, reject yok).
     #[derive(serde::Deserialize, Debug)]
     struct Incoming {
+        /// Cihaz adı override (boş `None` → mevcut korunur).
         device_name: Option<String>,
+        /// İndirme klasörü override.
         download_dir: Option<String>,
+        /// Otomatik kabul switch'i (geri uyumluluk için zorunlu).
         auto_accept: bool,
         #[serde(default)]
+        /// mDNS advertise switch'i (None → mevcut korunur).
         advertise: Option<bool>,
         #[serde(default)]
+        /// Log seviyesi string'i (`trace` / `debug` / `info` / `warn` / `error`).
         log_level: Option<String>,
         #[serde(default)]
+        /// `stats.json` yazma izni.
         keep_stats: Option<bool>,
         #[serde(default)]
+        /// Update kontrol opt-out switch'i.
         disable_update_check: Option<bool>,
     }
     let parsed: Incoming = match serde_json::from_str(json) {
@@ -1197,6 +1229,7 @@ fn maybe_push_onboarding() {
     state::enqueue_js(js);
 }
 
+/// Mevcut ayarları UI tarafına `applySettings(...)` JS çağrısıyla aktarır.
 fn push_settings_to_ui() {
     let st = state::get();
     let s = st.settings.read();
@@ -1225,6 +1258,7 @@ fn push_settings_to_ui() {
     state::enqueue_js(js);
 }
 
+/// Toplam aktarım istatistiklerini UI tarafına aktarır (`applyStats`).
 fn push_stats_to_ui() {
     let st = state::get();
     let s = st.stats.read().clone();
@@ -1281,6 +1315,7 @@ fn push_stats_to_ui() {
     ));
 }
 
+/// `Settings::resolved_device_name` kısa-yolu — UI tarafı için cihaz adı.
 fn st_settings_resolved_name() -> String {
     state::get()
         .settings
@@ -1288,6 +1323,7 @@ fn st_settings_resolved_name() -> String {
         .resolved_device_name(crate::platform::device_name)
 }
 
+/// Trusted-device listesini UI'a aktarır; her kayıt `TTL`/`has_hash` bilgisi içerir.
 fn push_trusted_to_ui() {
     let st = state::get();
     // Issue #17: `applyTrusted` JS artık zengin nesne dizisi kabul eder —
@@ -1323,6 +1359,7 @@ fn push_trusted_to_ui() {
     state::enqueue_js(js);
 }
 
+/// Geçmiş aktarım kayıtlarını UI'a aktarır (`applyHistory`).
 fn push_history_to_ui() {
     let items = state::read_history();
     let now = std::time::SystemTime::now();
@@ -1349,10 +1386,12 @@ fn push_history_to_ui() {
     state::enqueue_js(js);
 }
 
+/// Verilen path'i platform native dosya yöneticisinde "reveal" eder.
 fn reveal_in_finder(path: &str) {
     platform::reveal_path(std::path::Path::new(path));
 }
 
+/// İndirme klasörünü platform dosya yöneticisinde açar.
 fn open_downloads_folder() {
     let dl = state::get()
         .settings
@@ -1361,6 +1400,8 @@ fn open_downloads_folder() {
     platform::open_path(&dl);
 }
 
+/// `config.json` dosyasını platform dosya yöneticisinde açar; yoksa
+/// mevcut snapshot'ı yazıp sonra reveal eder.
 fn open_config_file() {
     let path = paths::config_path();
     if !path.exists() {
@@ -1381,6 +1422,8 @@ fn open_config_file() {
     platform::reveal_path(&path);
 }
 
+/// `ProgressState`'in dedupe için kullanılacak deterministik string imzası;
+/// UI push'unu gereksiz yere tekrarlamamak için karşılaştırılır.
 fn progress_signature(p: &state::ProgressState) -> String {
     match p {
         state::ProgressState::Idle => "idle".into(),
@@ -1458,6 +1501,8 @@ fn js_safe_json(v: &serde_json::Value) -> String {
         .replace('\u{2029}', "\\u2029")
 }
 
+/// Verilen `ProgressState`'e karşılık gelen JS snippet'ini `WebView`'e
+/// `evaluate_script` ile uygular (idle / receiving / completed).
 fn push_progress_to_ui(webview: &wry::WebView, p: &state::ProgressState) {
     let js = match p {
         state::ProgressState::Idle => {
@@ -1480,6 +1525,7 @@ fn push_progress_to_ui(webview: &wry::WebView, p: &state::ProgressState) {
     let _ = webview.evaluate_script(&js);
 }
 
+/// `ProgressState` için tray menüsünde gösterilecek i18n metnini üretir.
 fn progress_label(p: &state::ProgressState) -> String {
     match p {
         state::ProgressState::Idle => i18n::t("tray.status.ready").to_string(),
@@ -1495,6 +1541,7 @@ fn progress_label(p: &state::ProgressState) -> String {
     }
 }
 
+/// "Dosya gönder" akışı — kullanıcıya dosya seçim dialog'u gösterir.
 async fn initiate_send_flow() {
     let Some(files) = ui::choose_files().await else {
         return;
@@ -1502,6 +1549,8 @@ async fn initiate_send_flow() {
     initiate_send_flow_with(files).await;
 }
 
+/// Hazır path listesiyle gönderim akışını başlatır (drag-drop ve dosya
+/// seçim dialog'u ortak entry-point'i).
 async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
     if files.is_empty() {
         return;
@@ -1573,6 +1622,7 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
     }
 }
 
+/// Metin gönderim akışı — boş/whitespace ise kısa toast ile bilgilendir.
 async fn initiate_text_send_flow(text: String) {
     let text = text.trim_end_matches(['\r', '\n']).to_string();
     if text.is_empty() {
@@ -1646,6 +1696,8 @@ async fn initiate_text_send_flow(text: String) {
     }
 }
 
+/// Geçmiş kayıtlarını basit `show_info` dialog'unda listeler (modal pencere
+/// olmadığında fallback erişim).
 fn show_history() {
     let items = state::read_history();
     if items.is_empty() {
@@ -1685,11 +1737,22 @@ fn show_history() {
 /// exit code yeterli ipucu veriyor; gövde parse denemesi yan etkisiz).
 #[derive(Debug)]
 enum UpdateCheckOutcome {
+    /// Update kontrolü kullanıcı/env tarafından kapatılmış.
     Disabled,
+    /// Mevcut sürüm en son sürüm.
     Current,
-    Available { tag: String, url: String },
+    /// Yeni sürüm var; UI'a tag + indirme URL'i sun.
+    Available {
+        /// Yeni sürümün GitHub release tag'i (`vX.Y.Z`).
+        tag: String,
+        /// `html_url` — release sayfasının açılacağı URL.
+        url: String,
+    },
+    /// Ağ hatası (DNS / TCP / TLS); kullanıcı offline veya proxy sorunu.
     NetworkError,
+    /// GitHub API rate-limit (anonim kotanın aşımı).
     RateLimited,
+    /// Diğer API hatası — message gövdesi inline taşınır.
     ApiError(String),
 }
 
@@ -1704,6 +1767,8 @@ fn push_update_status(msg: &str, kind: &str) {
     ));
 }
 
+/// Update kontrolünü asenkron yürütür — env/settings ile devre dışıysa skip;
+/// GitHub releases endpoint'inden son tag çekip `UpdateCheckOutcome` üretir.
 async fn check_update_async() {
     // H#4 privacy control: iki opt-out yolu OR'lanır.
     //   - `HEKADROP_NO_UPDATE_CHECK` env var (CI / dev / deterministic test)
@@ -1817,6 +1882,7 @@ async fn check_update_async() {
     render_update_outcome(outcome);
 }
 
+/// `UpdateCheckOutcome` varyantına göre UI'a status push + i18n mesaj.
 fn render_update_outcome(outcome: UpdateCheckOutcome) {
     // Hard-coded TR string'ler → i18n key'leri. Mesaj içerikleri src/i18n.rs'te
     // `update.error.*` / `update.status.*` altında tanımlı; burada yalnızca
@@ -1913,6 +1979,8 @@ fn expand_folder_drops(dropped: Vec<std::path::PathBuf>) -> Vec<std::path::PathB
     out
 }
 
+/// `secs` saniyelik aralığı `1 dk önce` / `2 saat önce` formatında i18n
+/// üzerinden çevirir.
 fn relative_time(secs: u64) -> String {
     let (key, val) = if secs < 60 {
         ("time.seconds_ago", secs)
@@ -1926,6 +1994,8 @@ fn relative_time(secs: u64) -> String {
     i18n::tf(key, &[&val.to_string()])
 }
 
+/// Bayt sayısını B/KB/MB/GB/TB birimlerine, en uygun ölçek + 1 ondalık
+/// hassasiyetle çevirir.
 fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     #[expect(
@@ -1946,6 +2016,8 @@ fn human_size(bytes: i64) -> String {
 }
 
 #[cfg(target_os = "macos")]
+/// macOS sürümü — `~/Library/LaunchAgents` plist'ini ekleyip/silip launchd'ye
+/// load/unload eder.
 fn toggle_login_item() {
     let Ok(home) = std::env::var("HOME") else {
         ui::notify("HekaDrop", "HOME bulunamadı");

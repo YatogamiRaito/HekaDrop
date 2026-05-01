@@ -26,6 +26,7 @@ use hekadrop_core::ui_port::{
 pub(crate) struct PlatformAdapter;
 
 impl PlatformAdapter {
+    /// Boş bir `PlatformAdapter` üretir; state taşımayan zero-sized type.
     pub(crate) fn new() -> Self {
         Self
     }
@@ -47,9 +48,13 @@ impl hekadrop_core::connection::PlatformOps for PlatformAdapter {
     }
 }
 
+/// `UiPort` trait'inin app-side concrete impl'i — core'dan gelen
+/// `UiNotification` enum'ını `crate::i18n` ile çevirip `crate::ui` toast/dialog
+/// fn'lerine delege eder.
 pub(crate) struct UiAdapter;
 
 impl UiAdapter {
+    /// Boş bir `UiAdapter` üretir; state taşımayan zero-sized type.
     pub(crate) fn new() -> Self {
         Self
     }

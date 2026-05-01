@@ -23,6 +23,10 @@ fn home_dir() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from)
 }
 
+/// Kullanıcı home dizini (Windows).
+///
+/// Önce `FOLDERID_Profile` shell folder, ardından `%USERPROFILE%`,
+/// son çare olarak `C:\Users\Default`.
 #[cfg(target_os = "windows")]
 fn home_dir() -> PathBuf {
     win::known_folder(&windows::Win32::UI::Shell::FOLDERID_Profile)
@@ -415,6 +419,8 @@ pub(crate) fn copy_to_clipboard(text: &str) {
 // ---------------------------------------------------------------------------
 // Windows helpers (windows-rs ile native API)
 // ---------------------------------------------------------------------------
+/// Win32 native API sarmalayıcıları (`windows-rs`); shell folder, login item,
+/// notification ve clipboard helper'ları burada.
 #[cfg(target_os = "windows")]
 pub(crate) mod win {
     // Win32 sub-modülü çok sayıda parent symbol kullanır (PathBuf, Path,

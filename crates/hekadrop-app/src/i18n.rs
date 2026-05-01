@@ -26,12 +26,17 @@
 
 use std::sync::OnceLock;
 
+/// Desteklenen UI dilleri.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Lang {
+    /// Türkçe — varsayılan.
     Tr,
+    /// İngilizce.
     En,
 }
 
+/// Detect edilmiş dilin process-ömürlü cache'i; ilk `current()` çağrısında
+/// `detect()` ile doldurulur.
 static LANG: OnceLock<Lang> = OnceLock::new();
 
 /// Uygulamanın kullanacağı dili döner. İlk çağrıda detect edilir ve cache'lenir.
@@ -39,6 +44,8 @@ pub(crate) fn current() -> Lang {
     *LANG.get_or_init(detect)
 }
 
+/// `HEKADROP_LANG` ve POSIX `LC_*` / `LANG` env'lerinden dili tespit eder;
+/// bilinmeyen değerlerde Türkçe'ye düşer.
 fn detect() -> Lang {
     if let Ok(v) = std::env::var("HEKADROP_LANG") {
         if let Some(lang) = parse_lang(&v) {
@@ -55,6 +62,8 @@ fn detect() -> Lang {
     Lang::Tr
 }
 
+/// `tr_TR.UTF-8` / `en-US` gibi locale string'lerinden dil prefix'ini çıkarır;
+/// `tr` veya `en` değilse `None`.
 fn parse_lang(raw: &str) -> Option<Lang> {
     let s = raw.to_lowercase();
     let prefix = s.split(['.', '-', '_']).next()?;
@@ -141,6 +150,7 @@ pub(crate) fn apply_args(template: &str, args: &[&str]) -> String {
               anlamını yok eder. PR #87 deferred listesinden match_same_arms enforce \
               edilirken bu fn istisna."
 )]
+/// Türkçe çeviri tablosu — bilinmeyen key için `None`.
 fn lookup_tr(key: &str) -> Option<&'static str> {
     Some(match key {
         // Tray / menü
@@ -358,6 +368,7 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
     clippy::match_same_arms,
     reason = "API: Bkz. lookup_tr — i18n table'da farklı key'lerin aynı çeviriye düşmesi doğal."
 )]
+/// English translation table — `None` for unknown keys.
 fn lookup_en(key: &str) -> Option<&'static str> {
     Some(match key {
         // Tray / menu
