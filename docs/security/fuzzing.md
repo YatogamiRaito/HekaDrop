@@ -40,10 +40,11 @@ parse katmanındaki herhangi bir `unwrap()` / aritmetik taşma /
 | `fuzz_folder_manifest_parse` | `Manifest::decode` + `Bundle::decode` | RFC-0005 HEKABUND format |
 | `fuzz_resume_hint_wire` | `ResumeHint` wire round-trip + `PartialMeta` load | Tempfile-backed harness |
 
-### oss-fuzz (Q3 hedef)
+### oss-fuzz
 
-- `projects/hekadrop/project.yaml` + `Dockerfile` + `build.sh` PR'ı.
-- ClusterFuzz job'ı her harness için günlük çalışır.
+- PR gönderildi: https://github.com/google/oss-fuzz/pull/15514
+- Entegrasyon dosyaları: `oss-fuzz/` (Dockerfile + build.sh + project.yaml).
+- Kabul sonrası ClusterFuzz job'ı her harness için günlük çalışır.
 - Bulunan bug'lar 90 günlük embargo sonrası public açılır (Google standardı).
 - Disclosure contact: `destek@sourvice.com`.
 
