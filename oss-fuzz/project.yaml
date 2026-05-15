@@ -1,0 +1,13 @@
+homepage: "https://github.com/YatogamiRaito/HekaDrop"
+language: rust
+primary_contact: "destek@sourvice.com"
+auto_ccs:
+  - "destek@sourvice.com"
+fuzzing_engines:
+  - libfuzzer
+  - afl
+  - honggfuzz
+sanitizers:
+  - address
+  - memory
+  - undefined
