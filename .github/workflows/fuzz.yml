@@ -1,12 +1,11 @@
-# Fuzz CI — Q1 scaffold.
+# Fuzz CI — v0.9.0 altyapısı (10 harness).
 #
 # On-demand only: either manually via workflow_dispatch or by applying the
-# `fuzz` label on a pull request. NOT wired into main/push; we do not want to
-# gate unrelated PRs on fuzz runs while the corpus is still empty.
+# `fuzz` label on a pull request. NOT wired into main/push; we do not want
+# to gate unrelated PRs on fuzz runs while the corpus is still growing.
 #
-# continue-on-error is TRUE for the short-time runs — v0.7 baseline is
-# "green build" only. v0.8+ will flip this to required once we have a corpus
-# large enough to reliably detect regressions (tracked in ROADMAP Q2).
+# continue-on-error: TRUE — corpus henüz küçük; v0.9.x'te yeterli corpus
+# birikince `required` yapılacak (ROADMAP Q2 deliverable).
 name: fuzz
 
 on:
@@ -16,8 +15,8 @@ on:
 
 jobs:
   fuzz:
-    # PR tetikleyicisini yalnız `fuzz` etiketi varsa çalıştır; diğer PR'larda
-    # no-op. workflow_dispatch her zaman geçer.
+    # PR tetikleyicisini yalnız `fuzz` etiketi varsa çalıştır; workflow_dispatch
+    # her zaman geçer.
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'fuzz')
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -25,10 +24,16 @@ jobs:
       fail-fast: false
       matrix:
         target:
+          - fuzz_ukey2_client_init
+          - fuzz_ukey2_client_finish
           - fuzz_frame_decode
-          - fuzz_payload_header
-          - fuzz_ukey2_handshake_init
           - fuzz_secure_decrypt
+          - fuzz_payload_header
+          - fuzz_payload_assembler
+          - fuzz_chunk_hmac
+          - fuzz_resume_meta
+          - fuzz_protobuf_frames
+          - fuzz_endpoint_info
     steps:
       - uses: actions/checkout@v6
 
@@ -41,7 +46,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: fuzz-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'crates/hekadrop-app/fuzz/Cargo.toml') }}
+          key: fuzz-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.toml') }}
           restore-keys: |
             fuzz-cargo-${{ runner.os }}-
 
@@ -50,7 +55,7 @@ jobs:
         with:
           path: |
             target
-            crates/hekadrop-app/fuzz/target
+            fuzz/target
           key: fuzz-target-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             fuzz-target-${{ runner.os }}-${{ matrix.target }}-
@@ -60,18 +65,16 @@ jobs:
         run: cargo install cargo-fuzz --locked
 
       - name: Build all harnesses
-        working-directory: crates/hekadrop-app
         run: cargo +nightly fuzz build
 
       - name: Run ${{ matrix.target }} (300s cap)
-        working-directory: crates/hekadrop-app
         run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=300
 
       - name: Upload artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v8
         with:
           name: fuzz-artifacts-${{ matrix.target }}
-          path: crates/hekadrop-app/fuzz/artifacts/
+          path: fuzz/artifacts/
           if-no-files-found: ignore
           retention-days: 14

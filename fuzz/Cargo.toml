@@ -1,0 +1,96 @@
+[package]
+name = "hekadrop-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone crate — workspace root'un bir parçası değil. cargo fuzz bu tabloyu
+# gerektirir; aksi halde parent workspace'e dahil edilmeye çalışılır.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+hekadrop-core = { path = "../crates/hekadrop-core" }
+hekadrop-proto = { path = "../crates/hekadrop-proto" }
+hekadrop-net = { path = "../crates/hekadrop-net" }
+prost = "0.14"
+bytes = "1"
+p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
+tokio = { version = "1", features = ["rt"] }
+
+[profile.release]
+debug = true
+opt-level = 3
+
+[[bin]]
+name = "fuzz_ukey2_client_init"
+path = "fuzz_targets/fuzz_ukey2_client_init.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ukey2_client_finish"
+path = "fuzz_targets/fuzz_ukey2_client_finish.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_frame_decode"
+path = "fuzz_targets/fuzz_frame_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_secure_decrypt"
+path = "fuzz_targets/fuzz_secure_decrypt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_payload_header"
+path = "fuzz_targets/fuzz_payload_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_payload_assembler"
+path = "fuzz_targets/fuzz_payload_assembler.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_chunk_hmac"
+path = "fuzz_targets/fuzz_chunk_hmac.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_resume_meta"
+path = "fuzz_targets/fuzz_resume_meta.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_protobuf_frames"
+path = "fuzz_targets/fuzz_protobuf_frames.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_endpoint_info"
+path = "fuzz_targets/fuzz_endpoint_info.rs"
+test = false
+doc = false
+bench = false

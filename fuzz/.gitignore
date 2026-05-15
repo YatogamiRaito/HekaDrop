@@ -1,0 +1,8 @@
+# cargo-fuzz çalışma artefaktları
+target/
+artifacts/
+
+# Fuzzer'in otomatik ürettiği corpus dosyaları (SHA-256 hash adlı).
+# Manuel seed dosyaları (ör. seed_minimal, seed_ukey2_hello) commit edilir;
+# otomatik üretilen hash-adlı dosyalar commit edilmez — repo şişmesini önler.
+corpus/*/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*
