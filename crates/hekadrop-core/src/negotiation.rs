@@ -27,7 +27,7 @@ use prost::Message;
 
 /// Capabilities exchange için varsayılan timeout — `docs/protocol/capabilities.md`
 /// §5.1 spec değeri (2 sn).
-pub const DEFAULT_CAPABILITIES_TIMEOUT: Duration = Duration::from_millis(2000);
+pub const DEFAULT_CAPABILITIES_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Capabilities exchange sonucu — caller'ın state machine'i için.
 ///
@@ -360,7 +360,7 @@ mod tests {
     /// §5.1 spec değerini sabitler (regression guard).
     #[test]
     fn default_timeout_matches_spec() {
-        assert_eq!(DEFAULT_CAPABILITIES_TIMEOUT, Duration::from_millis(2000));
+        assert_eq!(DEFAULT_CAPABILITIES_TIMEOUT, Duration::from_secs(2));
     }
 
     /// Envelope version helper'ın gönderdiği frame'de doğru — protokol

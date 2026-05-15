@@ -172,6 +172,12 @@ wildcard_dependencies = "warn"                          # 0 hit; `Cargo.toml` `v
 case_sensitive_file_extension_comparisons = "warn"      # 0 hit; `path.ends_with(".png")` → `Path::extension() + eq_ignore_ascii_case`; case mismatch bug. (Mevcut `OsStr::to_string_lossy().ends_with(".tmp")` Cow<str> üzerinde olduğu için lint kapsamı dışı.)
 doc_lazy_continuation = "warn"                          # 0 hit; markdown list item continuation indentation tutarsızlığı.
 should_panic_without_expect = "warn"                    # 0 hit; `#[should_panic]` payload eksik → `#[should_panic(expected = "...")]`; testin doğru paniği yakaladığını garanti eder.
+# pedantic batch 12 — bool/duration/async/binding idiom temizliği (bu PR)
+# 6 hit bool_to_int auto-fix + 4 hit duration auto-fix + 2 hit sender.rs rename + async kaldırma (ingest_file, verify_chunk_tag).
+bool_to_int_with_if = "warn"            # 6 hit auto-fix: `if b { 1 } else { 0 }` → `u8::from(b)`; idiomatic.
+duration_suboptimal_units = "warn"      # 4 hit auto-fix: `Duration::from_millis(2000)` → `Duration::from_secs(2)`; okunabilirlik.
+used_underscore_binding = "warn"        # 2 hit manuel fix: `sender.rs` `_guard` → `guard` (Drop guard, token alındıktan sonra da yaşıyor — underscore prefix yanıltıcı).
+unused_async = "warn"                   # 2 hit manuel fix: `payload.rs::ingest_file` + `verify_chunk_tag` async fn ama `.await` yok — sync'e dönüştürüldü; tüm caller'lar güncellendi.
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

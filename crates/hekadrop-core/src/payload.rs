@@ -575,7 +575,7 @@ impl PayloadAssembler {
     /// - File sink yaratım veya disk write fail (I/O)
     /// - `register_file_destination` ile pre-onaylanmamış payload (`UnknownPayloadId`)
     /// - Chunk-HMAC verify fail (capability aktifse)
-    pub async fn ingest(&mut self, f: &PayloadTransferFrame) -> Result<Option<CompletedPayload>> {
+    pub fn ingest(&mut self, f: &PayloadTransferFrame) -> Result<Option<CompletedPayload>> {
         // Her chunk'ta cheap GC: dolu map yoksa zaten hiçbir şey yapmaz.
         self.gc(ASSEMBLER_GC_TIMEOUT);
 
@@ -601,7 +601,7 @@ impl PayloadAssembler {
 
         match PayloadType::try_from(ptype).unwrap_or(PayloadType::UnknownPayloadType) {
             PayloadType::Bytes => self.ingest_bytes(id, &body, last_chunk),
-            PayloadType::File => self.ingest_file(id, total_size, body, last_chunk).await,
+            PayloadType::File => self.ingest_file(id, total_size, body, last_chunk),
             other => Err(HekaError::ProtocolState(format!(
                 "desteklenmeyen payload tipi: {other:?}"
             ))
@@ -654,7 +654,7 @@ impl PayloadAssembler {
     /// FILE payload chunk'ını sink'e yaz; `last_chunk` true ise dosya finalize
     /// edilir, hash + path döndürülür. Chunk-HMAC capability aktif iken
     /// `pending_chunk` üzerinden iki-adımlı verify-then-write akışı çalışır.
-    async fn ingest_file(
+    fn ingest_file(
         &mut self,
         id: i64,
         total_size: i64,
@@ -1043,10 +1043,7 @@ impl PayloadAssembler {
     /// - `chunk_index` / `offset` / `body_len` beklenenle eşleşmiyor (protokol ihlali)
     /// - HMAC verify fail (`VerifyError::TagMismatch` vb.)
     /// - Diske body yazımı fail (I/O)
-    pub async fn verify_chunk_tag(
-        &mut self,
-        ci: &ChunkIntegrity,
-    ) -> Result<Option<CompletedPayload>> {
+    pub fn verify_chunk_tag(&mut self, ci: &ChunkIntegrity) -> Result<Option<CompletedPayload>> {
         let key = self.chunk_hmac_key.ok_or_else(|| {
             HekaError::ProtocolState(format!(
                 "ChunkIntegrity geldi ama chunk-HMAC capability aktif değil (payload_id={})",
@@ -1316,7 +1313,7 @@ mod tests {
                 last_modified_timestamp_millis: None,
             }),
             payload_chunk: Some(PayloadChunk {
-                flags: Some(if last { 1 } else { 0 }),
+                flags: Some(i32::from(last)),
                 offset: Some(0),
                 body: Some(body.to_vec().into()),
                 index: None,
@@ -1329,7 +1326,7 @@ mod tests {
     async fn bytes_single_chunk_completes() {
         let mut a = PayloadAssembler::new();
         let f = make_frame(42, PbPayloadType::Bytes, b"hello", true);
-        let out = a.ingest(&f).await.expect("ingest ok");
+        let out = a.ingest(&f).expect("ingest ok");
         match out {
             Some(CompletedPayload::Bytes { id, data }) => {
                 assert_eq!(id, 42);
@@ -1345,8 +1342,8 @@ mod tests {
         let mut a = PayloadAssembler::new();
         let f1 = make_frame(1, PbPayloadType::Bytes, b"foo", false);
         let f2 = make_frame(1, PbPayloadType::Bytes, b"bar", true);
-        assert!(a.ingest(&f1).await.unwrap().is_none());
-        let done = a.ingest(&f2).await.unwrap().expect("last chunk tamamlar");
+        assert!(a.ingest(&f1).unwrap().is_none());
+        let done = a.ingest(&f2).unwrap().expect("last chunk tamamlar");
         match done {
             CompletedPayload::Bytes { data, .. } => assert_eq!(data, b"foobar"),
             other => panic!("{other:?}"),
@@ -1358,7 +1355,7 @@ mod tests {
         let mut a = PayloadAssembler::new();
         // İlk chunk ingest et ama last=false, bu yüzden buffer kalsın.
         let f = make_frame(7, PbPayloadType::Bytes, b"abc", false);
-        a.ingest(&f).await.unwrap();
+        a.ingest(&f).unwrap();
         assert_eq!(a.partial_count(), 1);
 
         // 0 timeout ile GC → her şey eski sayılır ve silinir.
@@ -1376,7 +1373,7 @@ mod tests {
     async fn gc_preserves_fresh_entries() {
         let mut a = PayloadAssembler::new();
         let f = make_frame(9, PbPayloadType::Bytes, b"xyz", false);
-        a.ingest(&f).await.unwrap();
+        a.ingest(&f).unwrap();
         // timeout çok büyük → hiçbir giriş eski sayılmaz.
         let n = a.gc(Duration::from_secs(3600));
         assert_eq!(n, 0);
@@ -1394,7 +1391,7 @@ mod tests {
         a.register_file_destination(100, tmp.clone()).unwrap();
         // İlk (ve sadece) chunk: dosya açılır, disk'e yazılır, last=false.
         let f = make_frame(100, PbPayloadType::File, b"partial-data", false);
-        a.ingest(&f).await.unwrap();
+        a.ingest(&f).unwrap();
         assert!(tmp.exists(), "chunk sonrası dosya oluşmalı");
         assert_eq!(a.partial_count(), 1);
 
@@ -1431,15 +1428,15 @@ mod tests {
         // sadece ingest + manuel gc sırasının doğru çalıştığını doğrularız.
         let mut a = PayloadAssembler::new();
         let f_old = make_frame(1, PbPayloadType::Bytes, b"aa", false);
-        a.ingest(&f_old).await.unwrap();
+        a.ingest(&f_old).unwrap();
         let f_new = make_frame(2, PbPayloadType::Bytes, b"bb", false);
-        a.ingest(&f_new).await.unwrap();
+        a.ingest(&f_new).unwrap();
         assert_eq!(a.partial_count(), 2);
 
         std::thread::sleep(Duration::from_millis(15));
         // id=2'yi tazele:
         let f_touch = make_frame(2, PbPayloadType::Bytes, b"cc", false);
-        a.ingest(&f_touch).await.unwrap();
+        a.ingest(&f_touch).unwrap();
 
         let dropped = a.gc(Duration::from_millis(10));
         assert_eq!(dropped, 1, "sadece id=1 düşmeli");
@@ -1456,12 +1453,10 @@ mod tests {
 
         // bytes buffer
         a.ingest(&make_frame(1, PbPayloadType::Bytes, b"x", false))
-            .await
             .unwrap();
         // file sink (total_size=big enough for one-byte body)
         a.register_file_destination(2, tmp.clone()).unwrap();
         a.ingest(&make_frame_total(2, PbPayloadType::File, b"y", false, 10))
-            .await
             .unwrap();
         assert!(tmp.exists());
         // pending destination — review-18 MED: cancel artık placeholder'ı da silmeli.
@@ -1503,7 +1498,6 @@ mod tests {
         a.register_file_destination(42, link.clone()).unwrap();
         let err = a
             .ingest(&make_frame_total(42, PbPayloadType::File, b"y", false, 10))
-            .await
             .expect_err("symlink hedef reddedilmeli");
         assert!(
             err.to_string().contains("symlink"),
@@ -1534,7 +1528,6 @@ mod tests {
                 false,
                 absurd,
             ))
-            .await
             .expect_err("absurd total_size reddedilmeli");
         assert!(
             err.to_string().contains("absürt") || err.to_string().contains("1 TiB"),
@@ -1559,11 +1552,9 @@ mod tests {
             false,
             6,
         ))
-        .await
         .unwrap();
         let out = a
             .ingest(&make_frame_total(200, PbPayloadType::File, b"bar", true, 6))
-            .await
             .unwrap()
             .expect("son chunk tamamlar");
         match out {
@@ -1610,7 +1601,6 @@ mod tests {
         // panic edebilir. Kod bunu `checked_sub` ile korumalı.
         let mut a = PayloadAssembler::new();
         a.ingest(&make_frame(1, PbPayloadType::Bytes, b"a", false))
-            .await
             .unwrap();
         // 10 yıl gibi absürt timeout.
         let n = a.gc(Duration::from_secs(60 * 60 * 24 * 365 * 10));
@@ -1642,7 +1632,7 @@ mod tests {
         a.register_file_destination(1, tmp.clone()).unwrap();
         let bloat = vec![0xCDu8; 10];
         let f = make_frame_total(1, PbPayloadType::File, &bloat, false, 5);
-        let err = a.ingest(&f).await.expect_err("overrun red");
+        let err = a.ingest(&f).expect_err("overrun red");
         assert!(err.to_string().contains("overrun"));
         let _ = std::fs::remove_file(&tmp);
     }
@@ -1656,7 +1646,7 @@ mod tests {
         let mut a = PayloadAssembler::new();
         a.register_file_destination(7, tmp.clone()).unwrap();
         let f = make_frame_total(7, PbPayloadType::File, b"abc", true, 10);
-        let err = a.ingest(&f).await.expect_err("truncation red");
+        let err = a.ingest(&f).expect_err("truncation red");
         assert!(err.to_string().contains("truncated"));
         let _ = std::fs::remove_file(&tmp);
     }
@@ -1668,7 +1658,7 @@ mod tests {
         let mut a = PayloadAssembler::new();
         a.register_file_destination(9, tmp.clone()).unwrap();
         let f = make_frame_total(9, PbPayloadType::File, b"a", false, -1);
-        let err = a.ingest(&f).await.expect_err("negatif total red");
+        let err = a.ingest(&f).expect_err("negatif total red");
         assert!(err.to_string().contains("negatif"));
     }
 
@@ -1698,7 +1688,7 @@ mod tests {
                 last_modified_timestamp_millis: None,
             }),
             payload_chunk: Some(PayloadChunk {
-                flags: Some(if last { 1 } else { 0 }),
+                flags: Some(i32::from(last)),
                 offset: Some(offset),
                 body: Some(body.to_vec().into()),
                 index: None,
@@ -1724,7 +1714,7 @@ mod tests {
         let body0 = b"foo".to_vec();
         let f0 = make_frame_offset(7, PbPayloadType::File, &body0, false, total, 0);
         // body ingest pending'e düşer, henüz disk'te bir şey yok.
-        assert!(a.ingest(&f0).await.unwrap().is_none());
+        assert!(a.ingest(&f0).unwrap().is_none());
         // verify_chunk_tag çağrılmadan dosya boyutu hâlâ 0 olmalı (placeholder).
         let on_disk_after_body0 = std::fs::metadata(&tmp).map_or(0, |m| m.len());
         assert_eq!(
@@ -1734,19 +1724,18 @@ mod tests {
 
         let tag0 = compute_tag(&key, 7, 0, 0, &body0).unwrap();
         let ci0 = build_chunk_integrity(7, 0, 0, body0.len(), tag0).unwrap();
-        assert!(a.verify_chunk_tag(&ci0).await.unwrap().is_none());
+        assert!(a.verify_chunk_tag(&ci0).unwrap().is_none());
 
         // chunk 1: "bar" @ offset 3, last_chunk=true
         let body1 = b"bar".to_vec();
         let f1 = make_frame_offset(7, PbPayloadType::File, &body1, true, total, 3);
         // last_chunk olsa bile pending varsa Ok(None) döner — verify path'i
         // beklenir.
-        assert!(a.ingest(&f1).await.unwrap().is_none());
+        assert!(a.ingest(&f1).unwrap().is_none());
         let tag1 = compute_tag(&key, 7, 1, 3, &body1).unwrap();
         let ci1 = build_chunk_integrity(7, 1, 3, body1.len(), tag1).unwrap();
         let done = a
             .verify_chunk_tag(&ci1)
-            .await
             .unwrap()
             .expect("verify last_chunk → Completed");
         match done {
@@ -1793,14 +1782,13 @@ mod tests {
         let tampered = b"DIRTY-data".to_vec();
         let total = original.len() as i64;
         let f = make_frame_offset(11, PbPayloadType::File, &tampered, true, total, 0);
-        assert!(a.ingest(&f).await.unwrap().is_none());
+        assert!(a.ingest(&f).unwrap().is_none());
 
         // Tag orijinal body için hesaplanmış (sender bilseydi).
         let tag = compute_tag(&key, 11, 0, 0, &original).unwrap();
         let ci = build_chunk_integrity(11, 0, 0, original.len(), tag).unwrap();
         let err = a
             .verify_chunk_tag(&ci)
-            .await
             .expect_err("tampered body → mismatch");
         let s = err.to_string();
         assert!(
@@ -1830,7 +1818,6 @@ mod tests {
         };
         let err = a
             .verify_chunk_tag(&ci)
-            .await
             .expect_err("capability inactive iken tag → red");
         assert!(err.to_string().contains("capability aktif değil"));
     }
@@ -1848,15 +1835,12 @@ mod tests {
 
         let body0 = b"first".to_vec();
         let f0 = make_frame_offset(22, PbPayloadType::File, &body0, false, 10, 0);
-        assert!(a.ingest(&f0).await.unwrap().is_none());
+        assert!(a.ingest(&f0).unwrap().is_none());
 
         // Tag göndermeden ikinci body — protocol violation.
         let body1 = b"second".to_vec();
         let f1 = make_frame_offset(22, PbPayloadType::File, &body1, false, 10, 5);
-        let err = a
-            .ingest(&f1)
-            .await
-            .expect_err("body N+1, tag N gelmeden → red");
+        let err = a.ingest(&f1).expect_err("body N+1, tag N gelmeden → red");
         assert!(err.to_string().contains("ordering violation"));
         a.cancel(22);
     }

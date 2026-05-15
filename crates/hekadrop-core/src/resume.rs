@@ -64,7 +64,7 @@ pub const RESUME_BUDGET_BYTES_DEFAULT: u64 = 5 * 1024 * 1024 * 1024;
 /// 2 sn süresi var. Sender bu süre içinde frame görmezse `start_offset = 0`
 /// legacy fresh transfer'a düşer (silent fallback). Spec normative değer;
 /// PR-E sabitlerin tek noktasına taşıdı (sender duplicate'i kaldırıldı).
-pub const RESUME_HINT_TIMEOUT: Duration = Duration::from_millis(2000);
+pub const RESUME_HINT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Compute the 64-bit session identifier from the UKEY2 `auth_key`.
 ///

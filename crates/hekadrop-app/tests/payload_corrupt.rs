@@ -77,7 +77,7 @@ fn frame(
             last_modified_timestamp_millis: None,
         }),
         payload_chunk: Some(PayloadChunk {
-            flags: Some(if last { 1 } else { 0 }),
+            flags: Some(i32::from(last)),
             offset: Some(offset),
             body: Some(body.to_vec().into()),
             index: None,
@@ -126,7 +126,6 @@ async fn corrupted_chunk_sha_mismatch_reddedilir() {
     );
     let out = a
         .ingest(&f)
-        .await
         .expect("ingest ok (hash validasyonu üst katmanda)");
     let Some(CompletedPayload::File { sha256, .. }) = out else {
         panic!("File payload bekleniyordu");
@@ -187,12 +186,8 @@ async fn out_of_order_chunks_dogru_konuma_yazilir() {
     // sonra offset=0 (last=true). total_size her frame'de 6 deklare edilmeli.
     let first = frame(5, PbPayloadType::File, b"AAA", false, 6, 3);
     let second = frame(5, PbPayloadType::File, b"BBB", true, 6, 0);
-    assert!(a.ingest(&first).await.unwrap().is_none());
-    let done = a
-        .ingest(&second)
-        .await
-        .unwrap()
-        .expect("son chunk tamamlar");
+    assert!(a.ingest(&first).unwrap().is_none());
+    let done = a.ingest(&second).unwrap().expect("son chunk tamamlar");
     match done {
         CompletedPayload::File { path: p, .. } => {
             let content = std::fs::read(&p).expect("diskten oku");
@@ -224,11 +219,8 @@ async fn total_size_overrun_reddedilir() {
     let f1 = frame(9, PbPayloadType::File, &chunk1, false, 100, 0);
     let f2 = frame(9, PbPayloadType::File, &chunk2, false, 100, 80);
 
-    a.ingest(&f1).await.expect("ilk chunk sınır içinde");
-    let err = a
-        .ingest(&f2)
-        .await
-        .expect_err("kümülatif overrun reddedilmeli");
+    a.ingest(&f1).expect("ilk chunk sınır içinde");
+    let err = a.ingest(&f2).expect_err("kümülatif overrun reddedilmeli");
     let msg = err.to_string();
     assert!(
         msg.contains("overrun"),

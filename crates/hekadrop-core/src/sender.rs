@@ -372,8 +372,8 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     let mut chunk_hmac_key: Option<[u8; 32]> = None;
     let peer_label = req.device.name.clone();
     let transfer_id = format!("out:{}:{}", req.device.addr, req.device.port);
-    let _guard = state::TransferGuard::new(Arc::clone(&state), &transfer_id);
-    let cancel_token: CancellationToken = _guard.token.clone();
+    let guard = state::TransferGuard::new(Arc::clone(&state), &transfer_id);
+    let cancel_token: CancellationToken = guard.token.clone();
 
     loop {
         // `select!` ile cancel sinyali 60 sn'lik steady timeout'u beklemeden
@@ -407,7 +407,7 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                 let pt = v1
                     .payload_transfer
                     .ok_or_else(|| anyhow!("payload_transfer yok"))?;
-                let Some(done) = assembler.ingest(&pt).await? else {
+                let Some(done) = assembler.ingest(&pt)? else {
                     continue;
                 };
                 let CompletedPayload::Bytes { data, .. } = done else {
@@ -833,8 +833,8 @@ pub async fn send_text(
     // otomatik düşer.
     let peer_label = req.device.name.clone();
     let transfer_id = format!("out-text:{}:{}", req.device.addr, req.device.port);
-    let _guard = state::TransferGuard::new(Arc::clone(&state), &transfer_id);
-    let cancel_token: CancellationToken = _guard.token.clone();
+    let guard = state::TransferGuard::new(Arc::clone(&state), &transfer_id);
+    let cancel_token: CancellationToken = guard.token.clone();
 
     let addr = format!("{}:{}", req.device.addr, req.device.port);
     // Connect'i hem timeout hem cancel ile sarmala — erişilemez host ~75 sn
@@ -914,7 +914,7 @@ pub async fn send_text(
                 let pt = v1
                     .payload_transfer
                     .ok_or_else(|| anyhow!("payload_transfer yok"))?;
-                let Some(done) = assembler.ingest(&pt).await? else {
+                let Some(done) = assembler.ingest(&pt)? else {
                     continue;
                 };
                 let CompletedPayload::Bytes { data, .. } = done else {
@@ -1889,7 +1889,7 @@ async fn send_bundle_chunk(
     chunk_index: i64,
 ) -> Result<()> {
     let body_bytes = Bytes::copy_from_slice(body);
-    let flags = if last { 1 } else { 0 };
+    let flags = i32::from(last);
     let wrapped = wrap_payload_transfer(payload_id, total_size, offset, flags, body_bytes);
     let enc = ctx.encrypt(&wrapped.encode_to_vec())?;
     frame::write_frame(socket, &enc).await?;

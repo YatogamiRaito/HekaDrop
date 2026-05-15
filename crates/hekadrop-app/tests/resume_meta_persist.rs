@@ -134,7 +134,7 @@ fn make_frame_offset(
             last_modified_timestamp_millis: None,
         }),
         payload_chunk: Some(PayloadChunk {
-            flags: Some(if last { 1 } else { 0 }),
+            flags: Some(i32::from(last)),
             offset: Some(offset),
             body: Some(body.to_vec().into()),
             index: None,
@@ -150,7 +150,7 @@ fn meta_path_for(session_id: i64, payload_id: i64) -> std::path::PathBuf {
 }
 
 /// Helper — chunk-HMAC + resume aktif iken bir chunk ingest + verify et.
-async fn ingest_and_verify_chunk(
+fn ingest_and_verify_chunk(
     asm: &mut PayloadAssembler,
     key: &[u8; 32],
     pid: i64,
@@ -161,10 +161,10 @@ async fn ingest_and_verify_chunk(
     total: i64,
 ) {
     let f = make_frame_offset(pid, body, last, total, offset);
-    asm.ingest(&f).await.expect("ingest ok");
+    asm.ingest(&f).expect("ingest ok");
     let tag = compute_tag(key, pid, chunk_index, offset, body).expect("compute_tag");
     let ci = build_chunk_integrity(pid, chunk_index, offset, body.len(), tag).expect("build_ci");
-    asm.verify_chunk_tag(&ci).await.expect("verify ok");
+    asm.verify_chunk_tag(&ci).expect("verify ok");
 }
 
 #[tokio::test]
@@ -209,8 +209,8 @@ async fn meta_written_at_checkpoint_interval() {
             &chunk_body,
             last,
             total,
-        )
-        .await;
+        );
+
         offset += chunk_body.len() as i64;
 
         // Checkpoint sınırından *önce* `.meta` yazılmamalı (ilk 15 chunk'ta).
@@ -254,7 +254,7 @@ async fn meta_deleted_on_finalize() {
 
     let meta_path = meta_path_for(session_id, payload_id);
 
-    ingest_and_verify_chunk(&mut asm, &key, payload_id, 0, 0, &body, true, total).await;
+    ingest_and_verify_chunk(&mut asm, &key, payload_id, 0, 0, &body, true, total);
 
     assert!(
         !meta_path.exists(),
@@ -300,8 +300,8 @@ async fn meta_deleted_on_cancel() {
             &chunk_body,
             false,
             total,
-        )
-        .await;
+        );
+
         offset += chunk_body.len() as i64;
     }
     assert!(
@@ -364,8 +364,8 @@ async fn enable_resume_before_first_chunk_persists_after_ingest() {
             &chunk_body,
             false,
             total,
-        )
-        .await;
+        );
+
         offset += chunk_body.len() as i64;
     }
     assert!(

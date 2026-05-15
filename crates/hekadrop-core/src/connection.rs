@@ -393,7 +393,7 @@ pub async fn handle(
                     }
                 }
 
-                if let Some(done) = assembler.ingest(&pt).await? {
+                if let Some(done) = assembler.ingest(&pt)? {
                     match done {
                         CompletedPayload::Bytes { id, data } => {
                             // Metin/URL payload mı?
@@ -1939,7 +1939,7 @@ async fn handle_hekadrop_frame(
             );
             // PRIVACY (spec §10): ChunkIntegrity.tag içeriği log'a düşmez —
             // sadece kategori metadata. Hata durumunda da mesajda tag yok.
-            match assembler.verify_chunk_tag(&ci).await {
+            match assembler.verify_chunk_tag(&ci) {
                 Ok(None) => Ok(()),
                 Ok(Some(crate::payload::CompletedPayload::File {
                     id,
@@ -2590,7 +2590,7 @@ mod tests {
         if let Some(h) = chunk_frame.payload_header.as_mut() {
             h.r#type = Some(PayloadType::File as i32);
         }
-        asm.ingest(&chunk_frame).await.unwrap();
+        asm.ingest(&chunk_frame).unwrap();
 
         assert!(p.exists(), "assembler ilk chunk'ı diske yazmış olmalı");
 

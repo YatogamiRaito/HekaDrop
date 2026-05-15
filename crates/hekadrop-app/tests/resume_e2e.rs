@@ -196,7 +196,7 @@ fn make_chunk_frame(
             last_modified_timestamp_millis: None,
         }),
         payload_chunk: Some(PayloadChunk {
-            flags: Some(if last { 1 } else { 0 }),
+            flags: Some(i32::from(last)),
             offset: Some(offset),
             body: Some(body.to_vec().into()),
             index: None,
@@ -208,7 +208,7 @@ fn make_chunk_frame(
 /// Transfer'ı checkpoint'e kadar ingest et + cancel ile kes — receiver
 /// tarafında `.meta` ve partial dosya bırakır. RFC §9 test 1/2'nin
 /// "mid-transfer kill" koşulunu simüle eder.
-async fn ingest_partial_then_cancel(
+fn ingest_partial_then_cancel(
     asm: &mut PayloadAssembler,
     chunk_hmac_key: &[u8; 32],
     payload_id: i64,
@@ -219,12 +219,12 @@ async fn ingest_partial_then_cancel(
     let mut offset: i64 = 0;
     for i in 0..chunks_to_send as i64 {
         let f = make_chunk_frame(payload_id, chunk_body, false, total_size, offset);
-        asm.ingest(&f).await.expect("ingest chunk");
+        asm.ingest(&f).expect("ingest chunk");
         let tag =
             compute_tag(chunk_hmac_key, payload_id, i, offset, chunk_body).expect("compute_tag");
         let ci =
             build_chunk_integrity(payload_id, i, offset, chunk_body.len(), tag).expect("build_ci");
-        asm.verify_chunk_tag(&ci).await.expect("verify chunk tag");
+        asm.verify_chunk_tag(&ci).expect("verify chunk tag");
         offset += chunk_body.len() as i64;
     }
 }
@@ -337,8 +337,8 @@ async fn e2e_resume_happy_path_meta_lookup_and_hint_verify() {
             &chunk_body,
             half_chunks,
             total_size,
-        )
-        .await;
+        );
+
         // Cancel'siz scope drop — `BufWriter::drop` flush'u tetikler;
         // `.meta` checkpoint pass'inde zaten yazıldı + `cancel()` çağrılmadığı
         // için partial dosya + .meta diskte kalır (resume senaryosu için).
@@ -431,11 +431,11 @@ async fn e2e_resume_happy_path_meta_lookup_and_hint_verify() {
         for i in 0..total_chunks as i64 {
             let last = i == (total_chunks as i64 - 1);
             let f = make_chunk_frame(payload_id, &chunk_body, last, total_size, offset);
-            asm.ingest(&f).await.expect("ingest 2nd session");
+            asm.ingest(&f).expect("ingest 2nd session");
             let tag = compute_tag(&key, payload_id, i, offset, &chunk_body).expect("compute_tag");
             let ci = build_chunk_integrity(payload_id, i, offset, chunk_body.len(), tag)
                 .expect("build_ci");
-            asm.verify_chunk_tag(&ci).await.expect("verify ok");
+            asm.verify_chunk_tag(&ci).expect("verify ok");
             offset += chunk_body.len() as i64;
         }
     }
@@ -502,8 +502,8 @@ async fn e2e_resume_hash_mismatch_triggers_reject_and_fresh_restart() {
             &chunk_body,
             half_chunks,
             total_size,
-        )
-        .await;
+        );
+
         drop(asm); // scope drop → BufWriter::drop flush'ler; cancel() çağırma → .meta + partial korunur
     };
 
@@ -613,10 +613,10 @@ async fn e2e_resume_hash_mismatch_triggers_reject_and_fresh_restart() {
         for i in 0..total_chunks as i64 {
             let last = i == (total_chunks as i64 - 1);
             let f = make_chunk_frame(payload_id, &chunk_body, last, total_size, offset);
-            asm.ingest(&f).await.expect("ingest fresh");
+            asm.ingest(&f).expect("ingest fresh");
             let tag = compute_tag(&key, payload_id, i, offset, &chunk_body).unwrap();
             let ci = build_chunk_integrity(payload_id, i, offset, chunk_body.len(), tag).unwrap();
-            asm.verify_chunk_tag(&ci).await.unwrap();
+            asm.verify_chunk_tag(&ci).unwrap();
             offset += chunk_body.len() as i64;
         }
     }
@@ -699,7 +699,7 @@ async fn e2e_resume_old_peer_no_capability_no_resume() {
     );
 
     // RESUME_HINT_TIMEOUT spec §1 değerine sabit (fresh fallback budget).
-    assert_eq!(RESUME_HINT_TIMEOUT, Duration::from_millis(2000));
+    assert_eq!(RESUME_HINT_TIMEOUT, Duration::from_secs(2));
 }
 
 /// Test 4 — RFC §9 happy path için chunk-HMAC fast-path (`last_chunk_tag`).
@@ -746,8 +746,8 @@ async fn e2e_resume_chunk_hmac_fastpath_tag_persisted_in_meta() {
             &chunk_body,
             half_chunks,
             total_size,
-        )
-        .await;
+        );
+
         drop(asm); // scope drop → BufWriter::drop flush'ler; cancel() çağırma → .meta + partial korunur
     };
 
@@ -903,10 +903,10 @@ async fn e2e_pr_g_receiver_append_preserves_existing_part() {
         let mut offset: i64 = 0;
         for i in 0..2_i64 {
             let f = make_chunk_frame(payload_id, &fresh_chunk, false, total_size, offset);
-            asm.ingest(&f).await.unwrap();
+            asm.ingest(&f).unwrap();
             let tag = compute_tag(&key, payload_id, i, offset, &fresh_chunk).unwrap();
             let ci = build_chunk_integrity(payload_id, i, offset, fresh_chunk.len(), tag).unwrap();
-            asm.verify_chunk_tag(&ci).await.unwrap();
+            asm.verify_chunk_tag(&ci).unwrap();
             offset += chunk_len;
         }
         drop(asm); // BufWriter::drop → flush
@@ -946,10 +946,10 @@ async fn e2e_pr_g_receiver_append_preserves_existing_part() {
         for i in 2_i64..4_i64 {
             let last = i == 3;
             let f = make_chunk_frame(payload_id, &resume_chunk, last, total_size, offset);
-            asm.ingest(&f).await.unwrap();
+            asm.ingest(&f).unwrap();
             let tag = compute_tag(&key, payload_id, i, offset, &resume_chunk).unwrap();
             let ci = build_chunk_integrity(payload_id, i, offset, resume_chunk.len(), tag).unwrap();
-            asm.verify_chunk_tag(&ci).await.unwrap();
+            asm.verify_chunk_tag(&ci).unwrap();
             offset += chunk_len;
         }
     }
@@ -1015,10 +1015,10 @@ async fn e2e_pr_g_receiver_seek_to_received_bytes() {
         .unwrap();
         // Sender chunk_index = 1, offset = chunk_len.
         let f = make_chunk_frame(payload_id, &new_chunk, true, total_size, chunk_len);
-        asm.ingest(&f).await.unwrap();
+        asm.ingest(&f).unwrap();
         let tag = compute_tag(&key, payload_id, 1, chunk_len, &new_chunk).unwrap();
         let ci = build_chunk_integrity(payload_id, 1, chunk_len, new_chunk.len(), tag).unwrap();
-        let completed = asm.verify_chunk_tag(&ci).await.unwrap();
+        let completed = asm.verify_chunk_tag(&ci).unwrap();
         assert!(completed.is_some(), "last_chunk verify finalize etmeli");
     };
 
@@ -1093,12 +1093,11 @@ async fn e2e_pr_g_resume_full_sha256_matches_original() {
         .unwrap();
 
         let f = make_chunk_frame(payload_id, &second_half, true, total_size, chunk_len);
-        asm.ingest(&f).await.unwrap();
+        asm.ingest(&f).unwrap();
         let tag = compute_tag(&key, payload_id, 1, chunk_len, &second_half).unwrap();
         let ci = build_chunk_integrity(payload_id, 1, chunk_len, second_half.len(), tag).unwrap();
         let completed = asm
             .verify_chunk_tag(&ci)
-            .await
             .unwrap()
             .expect("last chunk verify finalize");
         match completed {

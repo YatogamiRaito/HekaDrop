@@ -219,7 +219,7 @@ fn make_file_frame(
             last_modified_timestamp_millis: None,
         }),
         payload_chunk: Some(PayloadChunk {
-            flags: Some(if last { 1 } else { 0 }),
+            flags: Some(i32::from(last)),
             offset: Some(offset),
             body: Some(body.to_vec().into()),
             index: None,
@@ -231,7 +231,7 @@ fn make_file_frame(
 /// Bundle stream'i chunk-HMAC pipeline'ında tek bir assembler ile baştan sona
 /// aktar. İlk `cutoff_chunks` chunk'tan sonra durdur (resume simülasyonu)
 /// ve son durumu döndür: `(written_bytes, last_chunk_index, last_tag_b64)`.
-async fn ingest_bundle_until_cutoff(
+fn ingest_bundle_until_cutoff(
     asm: &mut PayloadAssembler,
     key: &[u8; 32],
     payload_id: i64,
@@ -244,11 +244,11 @@ async fn ingest_bundle_until_cutoff(
     for (idx, (offset, body, last)) in chunks.iter().take(cutoff).enumerate() {
         let chunk_index = idx as i64;
         let frame = make_file_frame(payload_id, total_size, *offset, body, *last);
-        asm.ingest(&frame).await.expect("ingest ok");
+        asm.ingest(&frame).expect("ingest ok");
         let tag = compute_tag(key, payload_id, chunk_index, *offset, body).expect("compute_tag");
         last_tag_b64 = BASE64_STD.encode(tag);
         let ci = build_chunk_integrity(payload_id, chunk_index, *offset, body.len(), tag).unwrap();
-        let _ = asm.verify_chunk_tag(&ci).await.expect("verify ok");
+        let _ = asm.verify_chunk_tag(&ci).expect("verify ok");
         written += body.len() as i64;
     }
     let last_idx = (cutoff as i64).saturating_sub(1);
@@ -301,10 +301,10 @@ async fn bundle_chunk_hmac_per_chunk_verify_passes() {
     for (idx, (offset, body, last)) in chunks.iter().enumerate() {
         let chunk_index = idx as i64;
         let frame = make_file_frame(payload_id, total_size, *offset, body, *last);
-        let _ = asm.ingest(&frame).await.expect("ingest ok");
+        let _ = asm.ingest(&frame).expect("ingest ok");
         let tag = compute_tag(&key, payload_id, chunk_index, *offset, body).unwrap();
         let ci = build_chunk_integrity(payload_id, chunk_index, *offset, body.len(), tag).unwrap();
-        if let Some(done) = asm.verify_chunk_tag(&ci).await.unwrap() {
+        if let Some(done) = asm.verify_chunk_tag(&ci).unwrap() {
             completed = Some(done);
         }
     }
@@ -390,13 +390,12 @@ async fn bundle_chunk_hmac_tampered_chunk_rejects_bundle() {
             let mut tampered = body.clone();
             tampered[0] ^= 0xFF;
             let frame = make_file_frame(payload_id, total_size, *offset, &tampered, *last);
-            let _ = asm.ingest(&frame).await.expect("ingest ok (pending)");
+            let _ = asm.ingest(&frame).expect("ingest ok (pending)");
             let tag = compute_tag(&key, payload_id, chunk_index, *offset, body).unwrap();
             let ci =
                 build_chunk_integrity(payload_id, chunk_index, *offset, body.len(), tag).unwrap();
             let err = asm
                 .verify_chunk_tag(&ci)
-                .await
                 .expect_err("tampered body → mismatch");
             let s = err.to_string();
             assert!(
@@ -408,10 +407,10 @@ async fn bundle_chunk_hmac_tampered_chunk_rejects_bundle() {
             break;
         }
         let frame = make_file_frame(payload_id, total_size, *offset, body, *last);
-        let _ = asm.ingest(&frame).await.expect("ingest ok");
+        let _ = asm.ingest(&frame).expect("ingest ok");
         let tag = compute_tag(&key, payload_id, chunk_index, *offset, body).unwrap();
         let ci = build_chunk_integrity(payload_id, chunk_index, *offset, body.len(), tag).unwrap();
-        let _ = asm.verify_chunk_tag(&ci).await.expect("verify ok");
+        let _ = asm.verify_chunk_tag(&ci).expect("verify ok");
     }
 
     // Cancel sonrası bundle path silinmeli + bundle marker temizlenmeli.
@@ -480,8 +479,8 @@ async fn bundle_resume_after_mid_stream_disconnect_continues() {
         )
         .unwrap();
 
-        let r = ingest_bundle_until_cutoff(&mut asm, &key, payload_id, total_size, &chunks, cutoff)
-            .await;
+        let r = ingest_bundle_until_cutoff(&mut asm, &key, payload_id, total_size, &chunks, cutoff);
+
         // Disconnect simulation: assembler drop. .part dosyası diskte kalır,
         // .meta checkpoint ya yazılmıştır ya da yetersiz chunk varsa elle
         // yazalım (spec §3.3 caller best-effort persist).
@@ -560,10 +559,10 @@ async fn bundle_resume_after_mid_stream_disconnect_continues() {
     for (idx, (offset, body, last)) in chunks.iter().enumerate().skip(cutoff) {
         let chunk_index = idx as i64;
         let frame = make_file_frame(payload_id, total_size, *offset, body, *last);
-        let _ = asm2.ingest(&frame).await.expect("ingest ok (resumed)");
+        let _ = asm2.ingest(&frame).expect("ingest ok (resumed)");
         let tag = compute_tag(&key, payload_id, chunk_index, *offset, body).unwrap();
         let ci = build_chunk_integrity(payload_id, chunk_index, *offset, body.len(), tag).unwrap();
-        if let Some(done) = asm2.verify_chunk_tag(&ci).await.unwrap() {
+        if let Some(done) = asm2.verify_chunk_tag(&ci).unwrap() {
             completed = Some(done);
         }
     }
@@ -655,8 +654,8 @@ async fn bundle_resume_with_chunk_hmac_full_pipeline() {
         )
         .unwrap();
         let (written, _, last_tag) =
-            ingest_bundle_until_cutoff(&mut asm, &key, payload_id, total_size, &chunks, cutoff)
-                .await;
+            ingest_bundle_until_cutoff(&mut asm, &key, payload_id, total_size, &chunks, cutoff);
+
         // Manuel meta persist (test deterministik).
         let dir = partial_dir().unwrap();
         let now = Utc::now();
@@ -709,12 +708,11 @@ async fn bundle_resume_with_chunk_hmac_full_pipeline() {
     assert!(*last, "cutoff = chunks.len()-1 → last chunk olmalı");
     let chunk_index = cutoff as i64;
     let frame = make_file_frame(payload_id, total_size, *offset, body, *last);
-    let _ = asm2.ingest(&frame).await.expect("ingest ok");
+    let _ = asm2.ingest(&frame).expect("ingest ok");
     let tag = compute_tag(&key, payload_id, chunk_index, *offset, body).unwrap();
     let ci = build_chunk_integrity(payload_id, chunk_index, *offset, body.len(), tag).unwrap();
     let done = asm2
         .verify_chunk_tag(&ci)
-        .await
         .unwrap()
         .expect("son chunk verify → finalize");
     let CompletedPayload::File { path, .. } = done else {
