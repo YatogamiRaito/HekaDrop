@@ -499,10 +499,10 @@ mod tests {
     /// chunk-hmac.md §4.2 canonical encoding kontratı.
     #[test]
     fn hmac_input_canonical_layout() {
-        // payload_id = 0x12345678, chunk_index = 0x03, offset = 0x180000,
+        // payload_id = 0x1234_5678, chunk_index = 0x03, offset = 0x0018_0000,
         // body_len = 32 (chunk-hmac.md §3.1 örnek değerleri).
         let body = vec![0x41u8; 32]; // 'A' × 32
-        let input = build_hmac_input_for_test(0x12345678, 3, 0x180000, &body).unwrap();
+        let input = build_hmac_input_for_test(0x1234_5678, 3, 0x0018_0000, &body).unwrap();
 
         // Layout: 8B payload_id BE | 8B chunk_index BE | 8B offset BE | 4B body_len BE | body
         assert_eq!(input.len(), 28 + 32);
@@ -573,6 +573,9 @@ mod tests {
     /// kilidi: refactor sırasında prefix layout veya HMAC API değişirse anında
     /// kırılır.
     #[test]
+    // INVARIANT: 512 KiB test vektörü Quick Share pratik chunk boyutunu
+    // simüle eder; stack yerine static olarak saklanır. Lint kapsam-dışı.
+    #[allow(clippy::large_stack_arrays)]
     fn compute_tag_streaming_matches_buffered_baseline() {
         let key = derive_chunk_hmac_key(&[0x42u8; 32]);
         // Birkaç farklı body uzunluğu / parametre kombinasyonu ile karşılaştır

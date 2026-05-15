@@ -178,6 +178,8 @@ impl SecureCtx {
 mod tests {
     use super::SecureCtx;
 
+    // API: k_a_*/k_b_* isim yapısı iki taraflı kurulumu netleştirir (a=Alice, b=Bob).
+    #[allow(clippy::similar_names)]
     fn make_pair() -> (SecureCtx, SecureCtx) {
         // İki yönlü kurulum: A → B ve B → A simülasyonu.
         let k_a_enc = [11u8; 32];

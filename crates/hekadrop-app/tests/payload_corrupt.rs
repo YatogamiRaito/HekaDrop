@@ -198,7 +198,9 @@ async fn out_of_order_chunks_dogru_konuma_yazilir() {
                 "arrival-order append: offset alanı yazım pozisyonu için değil"
             );
         }
-        other => panic!("File bekleniyor, {other:?}"),
+        other @ hekadrop::payload::CompletedPayload::Bytes { .. } => {
+            panic!("File bekleniyor, {other:?}")
+        }
     }
     let _ = std::fs::remove_file(&path);
 }

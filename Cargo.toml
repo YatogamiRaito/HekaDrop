@@ -178,6 +178,12 @@ bool_to_int_with_if = "warn"            # 6 hit auto-fix: `if b { 1 } else { 0 }
 duration_suboptimal_units = "warn"      # 4 hit auto-fix: `Duration::from_millis(2000)` → `Duration::from_secs(2)`; okunabilirlik.
 used_underscore_binding = "warn"        # 2 hit manuel fix: `sender.rs` `_guard` → `guard` (Drop guard, token alındıktan sonra da yaşıyor — underscore prefix yanıltıcı).
 unused_async = "warn"                   # 2 hit manuel fix: `payload.rs::ingest_file` + `verify_chunk_tag` async fn ama `.await` yok — sync'e dönüştürüldü; tüm caller'lar güncellendi.
+# pedantic batch 13 — literal / wildcard / similar-names / stack-array idiom temizliği
+# 2 hit unreadable_literal auto-fix + 8 hit match_wildcard manuel fix + 4 hit similar_names scoped allow +
+# 1 hit large_stack_arrays heap-buf + 1 hit scoped allow.
+unreadable_literal = "warn"                     # 2 hit auto-fix (chunk_hmac.rs test): `0x12345678` → `0x1234_5678`; okunabilirlik.
+match_wildcard_for_single_variants = "warn"     # 8 hit manuel: frame.rs + payload.rs test'leri `other =>` → explicit variant binding veya scoped allow.
+large_stack_arrays = "warn"                     # 1 hit manuel: enumerate.rs `[0u8; 64*1024]` → `vec![]` (heap IO buf); 1 hit scoped allow (chunk_hmac test 512 KiB pratiği).
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

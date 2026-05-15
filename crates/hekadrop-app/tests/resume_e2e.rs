@@ -1104,7 +1104,9 @@ async fn e2e_pr_g_resume_full_sha256_matches_original() {
             hekadrop::payload::CompletedPayload::File { sha256, .. } => {
                 completed_sha = hex::encode(sha256);
             }
-            _ => panic!("File completion bekleniyor"),
+            hekadrop::payload::CompletedPayload::Bytes { .. } => {
+                panic!("File completion bekleniyor")
+            }
         }
     }
 

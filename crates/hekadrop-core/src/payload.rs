@@ -1346,7 +1346,7 @@ mod tests {
         let done = a.ingest(&f2).unwrap().expect("last chunk tamamlar");
         match done {
             CompletedPayload::Bytes { data, .. } => assert_eq!(data, b"foobar"),
-            other => panic!("{other:?}"),
+            other @ CompletedPayload::File { .. } => panic!("{other:?}"),
         }
     }
 
@@ -1581,7 +1581,7 @@ mod tests {
                 };
                 assert_eq!(sha256, expected);
             }
-            other => panic!("beklenen File, {other:?} geldi"),
+            other @ CompletedPayload::Bytes { .. } => panic!("beklenen File, {other:?} geldi"),
         }
         // Dosyayı oku ve içeriğini doğrula.
         let content = std::fs::read(&tmp).unwrap();
@@ -1757,7 +1757,7 @@ mod tests {
                 };
                 assert_eq!(sha256, expected);
             }
-            other => panic!("beklenen File, {other:?} geldi"),
+            other @ CompletedPayload::Bytes { .. } => panic!("beklenen File, {other:?} geldi"),
         }
         let content = std::fs::read(&tmp).unwrap();
         assert_eq!(content, b"foobar");

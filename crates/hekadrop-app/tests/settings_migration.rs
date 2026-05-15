@@ -196,7 +196,7 @@ fn v2_fresh_format_rich_only() {
             assert_eq!(*trusted_at, Some(100));
             assert_eq!(*last_seen, Some(200));
         }
-        _ => panic!("Rich beklenir"),
+        TrustedDeviceV2::Legacy(_) => panic!("Rich beklenir"),
     }
     // İkincisinde trusted_at/last_seen yoktu → None default
     match &s.trusted_devices[1] {
@@ -208,7 +208,7 @@ fn v2_fresh_format_rich_only() {
             assert_eq!(*trusted_at, None);
             assert_eq!(*last_seen, None);
         }
-        _ => panic!("Rich beklenir"),
+        TrustedDeviceV2::Legacy(_) => panic!("Rich beklenir"),
     }
 }
 

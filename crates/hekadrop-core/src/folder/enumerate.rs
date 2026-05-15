@@ -373,7 +373,7 @@ fn file_sha256_hex(path: &Path) -> std::io::Result<String> {
     let f = fs::File::open(path)?;
     let mut reader = BufReader::with_capacity(64 * 1024, f);
     let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
+    let mut buf = vec![0u8; 64 * 1024];
     loop {
         let n = reader.read(&mut buf)?;
         if n == 0 {

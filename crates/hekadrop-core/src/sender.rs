@@ -218,6 +218,8 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                 .into());
             }
             // SAFETY-CAST: total_u64 > i64::MAX kontrolü yukarıda; cast wrap yapamaz.
+            // API: `total_i64`/`total_u64` intentional pair — guard + wire-format cast.
+            #[allow(clippy::similar_names)]
             #[expect(
                 clippy::cast_possible_wrap,
                 reason = "total_u64 ≤ i64::MAX checked yukarıda — wrap imkansız"

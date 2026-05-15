@@ -153,7 +153,7 @@ mod dispatcher_tests {
         let body = [0x08u8, 0x05, 0x10, 0x42];
         match dispatch_frame_body(&body) {
             FrameKind::Offline { body: b } => assert_eq!(b, &body),
-            other => panic!("Offline beklendi, alındı: {other:?}"),
+            other @ FrameKind::HekaDrop { .. } => panic!("Offline beklendi, alındı: {other:?}"),
         }
     }
 
@@ -167,7 +167,7 @@ mod dispatcher_tests {
 
         match dispatch_frame_body(&body) {
             FrameKind::HekaDrop { inner: i } => assert_eq!(i, &inner),
-            other => panic!("HekaDrop beklendi, alındı: {other:?}"),
+            other @ FrameKind::Offline { .. } => panic!("HekaDrop beklendi, alındı: {other:?}"),
         }
     }
 
@@ -177,7 +177,9 @@ mod dispatcher_tests {
         let body = [0xA5u8, 0xDE, 0xB2];
         match dispatch_frame_body(&body) {
             FrameKind::Offline { body: b } => assert_eq!(b, &body),
-            other => panic!("Offline beklendi (kısa body), alındı: {other:?}"),
+            other @ FrameKind::HekaDrop { .. } => {
+                panic!("Offline beklendi (kısa body), alındı: {other:?}")
+            }
         }
     }
 
@@ -187,7 +189,9 @@ mod dispatcher_tests {
         let body = [0xA5u8, 0xDE, 0xB2, 0xFF, 0x08, 0x01];
         match dispatch_frame_body(&body) {
             FrameKind::Offline { body: b } => assert_eq!(b, &body),
-            other => panic!("Offline beklendi (4. byte fark), alındı: {other:?}"),
+            other @ FrameKind::HekaDrop { .. } => {
+                panic!("Offline beklendi (4. byte fark), alındı: {other:?}")
+            }
         }
     }
 
@@ -195,7 +199,9 @@ mod dispatcher_tests {
     fn dispatch_empty_body() {
         match dispatch_frame_body(&[]) {
             FrameKind::Offline { body } => assert!(body.is_empty()),
-            other => panic!("boş body Offline'a düşmeli, alındı: {other:?}"),
+            other @ FrameKind::HekaDrop { .. } => {
+                panic!("boş body Offline'a düşmeli, alındı: {other:?}")
+            }
         }
     }
 
@@ -215,7 +221,7 @@ mod dispatcher_tests {
         let wire = wrap_hekadrop_frame(&pb);
         match dispatch_frame_body(&wire) {
             FrameKind::HekaDrop { inner } => assert_eq!(inner, &pb),
-            other => panic!("roundtrip kırıldı: {other:?}"),
+            other @ FrameKind::Offline { .. } => panic!("roundtrip kırıldı: {other:?}"),
         }
     }
 
@@ -244,10 +250,14 @@ mod dispatcher_tests {
                         let active = ActiveCapabilities::negotiate(c.features, c.features);
                         assert!(active.is_legacy());
                     }
+                    // API: 4 kalan variant — hepsini listelemek bu test için gürültü.
+                    #[allow(clippy::match_wildcard_for_single_variants)]
                     other => panic!("capabilities slot beklendi: {other:?}"),
                 }
             }
-            other => panic!("magic eşleşmesi bekleniyor, alındı: {other:?}"),
+            other @ FrameKind::Offline { .. } => {
+                panic!("magic eşleşmesi bekleniyor, alındı: {other:?}")
+            }
         }
     }
 
@@ -281,7 +291,7 @@ mod dispatcher_tests {
                     panic!("capabilities oneof beklendi");
                 }
             }
-            other => panic!("magic eşleşmesi bekleniyor: {other:?}"),
+            other @ FrameKind::Offline { .. } => panic!("magic eşleşmesi bekleniyor: {other:?}"),
         }
     }
 }
