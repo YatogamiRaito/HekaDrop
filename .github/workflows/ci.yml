@@ -48,7 +48,9 @@ jobs:
         run: cargo test --all
 
       - name: Build (release)
-        run: cargo build --release
+        run: |
+          cargo install cargo-auditable --locked
+          cargo auditable build --release
 
       - name: Bundle .app
         run: ./scripts/bundle.sh
@@ -175,6 +177,11 @@ jobs:
 
       - name: typos (codebase typo check)
         run: typos
+
+      - name: cargo-vet (supply-chain audit)
+        run: |
+          cargo install cargo-vet --locked
+          cargo vet
 
   test-windows:
     name: Test + Build (Windows)
