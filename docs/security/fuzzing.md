@@ -40,12 +40,23 @@ parse katmanındaki herhangi bir `unwrap()` / aritmetik taşma /
 | `fuzz_folder_manifest_parse` | `Manifest::decode` + `Bundle::decode` | RFC-0005 HEKABUND format |
 | `fuzz_resume_hint_wire` | `ResumeHint` wire round-trip + `PartialMeta` load | Tempfile-backed harness |
 
-### oss-fuzz
+### ClusterFuzzLite (aktif plan)
 
-- PR gönderildi: https://github.com/google/oss-fuzz/pull/15514
-- Entegrasyon dosyaları: `oss-fuzz/` (Dockerfile + build.sh + project.yaml).
-- Kabul sonrası ClusterFuzz job'ı her harness için günlük çalışır.
-- Bulunan bug'lar 90 günlük embargo sonrası public açılır (Google standardı).
+OSS-Fuzz ile aynı libFuzzer/AFL altyapısı, GitHub Actions CI'da çalışır.
+Google onayı gerekmez — PR bazlı veya nightly schedule ile tetiklenir.
+
+- Entegrasyon: `.clusterfuzzlite/Dockerfile` + `build.sh` (mevcut
+  `oss-fuzz/` dosyalarından türetilecek).
+- Her PR'da 5 dakikalık kısa run; her gece tam run.
+- Crash artifact'ları GitHub Actions'ta saklanır.
+- Hedef: v0.9.0 — `fuzz.yml` workflow'una entegre.
+
+### oss-fuzz (ertelenmiş)
+
+- PR #15514 "proje henüz yeterince olgun değil" gerekçesiyle kapatıldı
+  (criticality score: 0.17 — OSS-Fuzz eşiği ~0.6+).
+- `oss-fuzz/` dosyaları depoda korunuyor — yeniden başvuru için hazır.
+- Yeniden başvuru: v0.11.0+ sonrası, daha yüksek star/contributor sayısıyla.
 - Disclosure contact: `destek@sourvice.com`.
 
 ## Corpus Politikası

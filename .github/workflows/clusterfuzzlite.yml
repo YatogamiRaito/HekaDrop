@@ -1,0 +1,47 @@
+# ClusterFuzzLite — OSS-Fuzz altyapısıyla self-hosted fuzzing.
+# PR bazlı kısa run + nightly tam run.
+name: ClusterFuzzLite
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 2 * * *"    # Her gece 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # SARIF upload için
+
+jobs:
+  fuzzing:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, undefined]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build fuzz targets
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: rust
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: ${{ matrix.sanitizer }}
+
+      - name: Run fuzz targets
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: ${{ github.event_name == 'pull_request' && '300' || '1800' }}
+          sanitizer: ${{ matrix.sanitizer }}
+          output-sarif: true
+
+      - name: Upload SARIF
+        if: always() && steps.run.outputs.sarif-path != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.run.outputs.sarif-path }}

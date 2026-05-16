@@ -193,7 +193,7 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
   - `fuzz_protobuf_wireshare_frame`
   - `fuzz_resume_hint_parse`
 - **Corpora:** gerçek Pixel/Samsung traffic capture'larından türetilmiş; `fuzz/corpus/` altında.
-- **oss-fuzz** entegrasyonu başvurusu (Google tarafından 7/24 fuzzing ücretsiz).
+- **ClusterFuzzLite** CI entegrasyonu: OSS-Fuzz ile aynı altyapı, GitHub Actions'ta self-hosted. OSS-Fuzz başvurusu proje olgunlaşınca (daha yüksek criticality skoru) yeniden yapılır.
 - **cargo-mutants** entegrasyonu; dead-code + gereksiz branch tespiti.
 - **afl.rs** alternatif fuzzer olarak CI'da haftada bir çalışır.
 - **Property-based testing (proptest)** kritik state machines için: UKEY2 state transitions, payload reassembly, rate limiter.
@@ -262,7 +262,7 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
 | Audit vendor fiyat $50k+ bütçeyi aşar | Yüksek | Yüksek | NLnet (€50k hibe) + GitHub Sponsors + Sovereign Tech Fund paralel başvuru |
 | Fuzzing UKEY2'de kritik bug bulur | Düşük-Orta | Orta-Yüksek | v0.9.1 hotfix pipeline hazır; coordinated disclosure 90 gün |
 | CLI Windows ConPTY / yarış koşulu | Orta | Düşük | WT/PowerShell 7 üzerinde test; `windows-rs` Console API |
-| oss-fuzz başvurusu reddedilir | Düşük | Düşük | Sadece self-hosted fuzzing ile devam |
+| OSS-Fuzz başvurusu reddedilir | Gerçekleşti | Düşük | ClusterFuzzLite ile devam (PR #15514 kapatıldı; yeniden başvuru v0.11+ sonrası) |
 
 ### Karar Kapısı Q2→Q3
 - **Go:** Audit vendor imzalı, fuzz clean, CLI 3 platformda smoke test pass.
