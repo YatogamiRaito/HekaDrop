@@ -93,6 +93,20 @@ typos
 
 ---
 
+## Sıradaki işler (öncelik sırasıyla)
+
+1. **NLnet başvurusu** — Ekim 2026 deadline; `docs/security/audit-scope.md` altyapı hazır.
+   Başvuru: https://nlnet.nl/propose/ (Privacy & Trust Enhancing Technologies programı).
+2. **ClusterFuzzLite doğrulama** — `.clusterfuzzlite/` eklendi; CI'da gerçekten çalışıyor mu
+   kontrol et (workflow tetikle, build + run yeşil mi).
+3. **v0.10.0 CLI binary** — `crates/hekadrop-cli` stub'ı; `hekadrop send/receive/list-peers`
+   komutları. `docs/ROADMAP.md` §v0.10.0 detaylı spec.
+4. **Pedantic batch 14** — `too_many_lines` (connection.rs, sender.rs büyük fn'ler) +
+   `large_futures` (async state machine boxing). Her ikisi yapısal refactor; bağımsız PR.
+5. **OSS-Fuzz yeniden başvuru** — v0.11.0+ sonrası, daha fazla star/contributor ile.
+
+---
+
 ## Tamamlanan RFC'ler
 
 | RFC | Konu | Durum |
