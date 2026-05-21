@@ -93,6 +93,12 @@ windows = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Dock görünürlüğü için NSApplication::setActivationPolicy çağrısı.
+# NSRunningApplication: NSApplicationActivationPolicy tipi için zorunlu.
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSRunningApplication"] }
+objc2 = "0.6"
+
 # NOT: `[build-dependencies]` ve `prost-build` RFC-0001 §5 Adım 2 ile
 # `hekadrop-proto` crate'ine taşındı; app crate'in kendi build.rs'i yok.
 

@@ -48,6 +48,10 @@ use std::time::Duration;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 #[cfg(target_os = "macos")]
+use objc2::MainThreadMarker;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+#[cfg(target_os = "macos")]
 use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 use tao::window::WindowBuilder;
 use tokio::runtime::Handle;
@@ -446,6 +450,20 @@ fn truncate_oversized_logs(dir: &std::path::Path, max_bytes: u64) {
     }
 }
 
+/// Dock simgesini gösterir veya gizler; pencere görünürlüğüyle senkronize edilir.
+#[cfg(target_os = "macos")]
+fn set_dock_visible(visible: bool) {
+    // SAFETY: tao event loop her zaman ana thread'de çalışır.
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let app = NSApplication::sharedApplication(mtm);
+    let policy = if visible {
+        NSApplicationActivationPolicy::Regular
+    } else {
+        NSApplicationActivationPolicy::Accessory
+    };
+    app.setActivationPolicy(policy);
+}
+
 /// Process'in canlı kalan UI ana döngüsü — tao event loop'unu başlatır ve
 /// asla geri dönmez (`!`).
 fn run_app() -> ! {
@@ -454,10 +472,10 @@ fn run_app() -> ! {
     #[cfg(not(target_os = "macos"))]
     let event_loop = EventLoopBuilder::new().build();
 
-    // Dock'ta görünme — her zaman sadece menü çubuğunda (macOS'a özgü davranış;
-    // Linux'ta pencere yöneticileri bunu uygulama tarafından yönetmez).
+    // Pencere açık olunca Dock'ta görün, gizlenince kaybol (macOS).
+    // Linux/Windows'ta pencere yöneticisi görünürlüğü otomatik yansıtır.
     #[cfg(target_os = "macos")]
-    event_loop.set_activation_policy(ActivationPolicy::Accessory);
+    event_loop.set_activation_policy(ActivationPolicy::Regular);
 
     let device_name = state::get()
         .settings
@@ -654,6 +672,8 @@ fn run_app() -> ! {
         {
             // Kapatma yerine gizle — uygulama arkaplanda çalışmaya devam eder.
             window.set_visible(false);
+            #[cfg(target_os = "macos")]
+            set_dock_visible(false);
             ui::notify(i18n::t("notify.app_name"), i18n::t("notify.background"));
             return;
         }
@@ -661,9 +681,13 @@ fn run_app() -> ! {
         // IPC'den gelen pencere istekleri
         if state::consume_hide_window() {
             window.set_visible(false);
+            #[cfg(target_os = "macos")]
+            set_dock_visible(false);
         }
         if state::consume_show_window() {
             window.set_visible(true);
+            #[cfg(target_os = "macos")]
+            set_dock_visible(true);
             window.set_focus();
         }
 
@@ -711,6 +735,8 @@ fn run_app() -> ! {
             } = ev
             {
                 window.set_visible(true);
+                #[cfg(target_os = "macos")]
+                set_dock_visible(true);
                 window.set_focus();
             }
         }
