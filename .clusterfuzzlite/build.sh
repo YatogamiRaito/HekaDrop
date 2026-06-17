@@ -6,7 +6,7 @@ if [ "$SANITIZER" = "coverage" ]; then
 fi
 
 if [ "$SANITIZER" = "undefined" ]; then
-    export RUSTFLAGS="$RUSTFLAGS -C sanitize=undefined"
+    export RUSTFLAGS="$RUSTFLAGS -Z sanitize=undefined"
 fi
 
 cd "$SRC/hekadrop"
