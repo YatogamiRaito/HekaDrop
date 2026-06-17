@@ -10,9 +10,6 @@ use hekadrop_core::{
 fuzz_target!(|data: &[u8]| {
     let Ok(pt) = PayloadTransferFrame::decode(data) else { return };
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("tokio rt");
     let mut assembler = PayloadAssembler::new();
-    let _ = rt.block_on(assembler.ingest(&pt));
+    let _ = assembler.ingest(&pt);
 });

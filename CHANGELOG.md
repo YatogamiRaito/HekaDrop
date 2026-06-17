@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**"Hardening + CLI" — Pedantic batch 14 yapısal refaktör + tam fonksiyonel CLI binary + fuzz derleme düzeltmesi.**
+
+v0.9.0 ve v0.10.0 deliverable'larını kapsayan bu çalışma; (1) `clippy::too_many_lines`
+ve `clippy::large_futures` lint'lerinin workspace genelinde enforce edilmesi için
+`hekadrop-core` içindeki devasa fonksiyonların yapısal refaktörü, (2) `hekadrop-cli`
+stub'ının tam fonksiyonel headless CLI binary'ye dönüştürülmesi, (3) RUST_GUIDELINE.md
+uyumluluk düzeltmeleri (constant-time comparison, safe cast, clone elimination) ve
+(4) fuzz target derleme hatasının giderilmesini içerir.
+
+### Added — CLI Binary (v0.10.0 deliverable)
+- **feat(cli): tam fonksiyonel headless CLI** — `hekadrop-cli` stub'dan çıkıp 6 ana
+  alt komut destekleyen production-ready binary'ye dönüştü:
+  - `list-peers` — mDNS peer taraması + `--json` yapısal çıktı
+  - `send <dosya>` — interaktif peer seçimi + progress bar + şifreli transfer
+  - `send-text <metin>` — URL/metin gönderimi
+  - `receive` — ağ dinleyici + dosya kabul motoru (`--accept all|trusted`)
+  - `trust list|add|remove` — yerel güven veritabanı CRUD
+  - `doctor` — ağ arayüzü + config + identity diagnostik raporu
+  - `version` — sürüm bilgisi
+  - `daemon` — v0.10.1 stub (headless servis altyapısı)
+- **feat(cli): yeni modüller** — `paths.rs` (macOS/Linux config path çözümleme),
+  `bootstrap.rs` (config yükleme + bozuk JSON backup), `terminal.rs` (headless
+  `UiPort`/`PlatformOps` trait implementasyonları + TTY progress bar).
+- **feat(cli): `--json` output modu** — receive ve send pipeline'larında structured
+  JSON event yayını; headless script entegrasyonu için.
+- **feat(cli): TTY tespiti** — `std::io::IsTerminal` (MSRV 1.90) ile interaktif/pipe
+  modunu otomatik ayırt etme; pipe modunda transfer otomatik reddedilir.
+
+### Added — Pedantic Batch 14 Lint Enforce
+- **chore(lint): `too_many_lines` + `large_futures`** — workspace `[workspace.lints.clippy]`
+  altına `too_many_lines = "warn"` ve `large_futures = "warn"` eklendi. Core kütüphanede
+  istisnasız tüm fonksiyonlar limitlere uyduruldu; app/cli üst seviye kodlarında gerekçeli
+  `#[allow]` annotasyonları kullanıldı.
+
+### Changed — Yapısal Refaktör (connection.rs + sender.rs)
+- **refactor(core): `handle_sharing_frame` bölündü** — 403 satırlık fonksiyon
+  `handle_introduction_frame`, `handle_pke_frame` helper'larına ayrıştırıldı;
+  dispatcher < 30 satıra indi.
+- **refactor(core): `handle_resume_for_file` bölündü** — `.meta` doğrulama mantığı
+  `load_and_validate_meta` helper'ına çekildi; fonksiyon < 80 satıra indi.
+- **refactor(core): `handle_hekadrop_frame` bölündü** — `handle_capabilities_payload`
+  ve `handle_chunktag_payload` asenkron helper'larına ayrıştırıldı.
+- **refactor(core): large future boxing** — `connection::handle` future'ı (21992 byte)
+  `server.rs`'de `Box::pin(...)` ile sarmalandı. CLI ve GUI send çağrıları da
+  `Box::pin(...).await` ile optimize edildi.
+
+### Changed — RUST_GUIDELINE.md Uyumluluk Düzeltmeleri
+- **fix(core/ukey2): constant-time commitment doğrulama** — UKEY2 handshake'te
+  cipher commitment karşılaştırması `==` yerine `subtle::ConstantTimeEq` ile
+  yapılarak timing attack yüzeyi kapatıldı.
+- **fix(core/config): safe numeric cast** — `name_bytes.len() as u8` →
+  `u8::try_from(name_bytes.len()).unwrap_or(0)` ile truncation riski giderildi.
+- **perf(core/connection): gereksiz clone eliminasyonu** — `perform_handshake`
+  içindeki `endpoint_info` ve `endpoint_id` sahiplik transferi (move) ile optimize
+  edildi; nested `if let` → flat `and_then` zinciri.
+
+### Fixed
+- **fix(fuzz): `fuzz_payload_assembler` derleme hatası** — `PayloadAssembler::ingest`
+  senkron metot olmasına rağmen gereksiz `tokio::block_on` sarmalı kullanılıyordu;
+  `E0277` hatası giderildi, 10 fuzz harness derleniyor.
+
 ## [0.8.0] - 2026-05-01
 
 **"Workspace + protocol" release — RFC-0001 Foundation refactor + 3 yeni protocol RFC.**
@@ -525,9 +586,13 @@ autostart katmanları `cfg`-gated cross-platform hale geldi.
 - Replay koruması: sequence counter ile HMAC doğrulaması
 - Trafik hiçbir sunucuya uğramaz — yalnız yerel ağ
 
-[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.6.0...v0.8.0
+[0.6.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.2...v0.6.0
+[0.5.2]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/YatogamiRaito/HekaDrop/releases/tag/v0.1.0
+

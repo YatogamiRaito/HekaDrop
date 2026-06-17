@@ -14,7 +14,7 @@ hekadrop-core     — protokol engine: UKEY2, AES-256-CBC, HMAC, frame,
        ↑
 hekadrop-net      — mDNS discovery + advertising
        ↑
-hekadrop-cli      — headless CLI stub (v0.10'da gelişecek)
+hekadrop-cli      — headless CLI binary (v0.10 deliverable tamamlandı)
        ↑
 hekadrop-app      — binary + UI (tao/wry/tray-icon) + platform shims + i18n
 ```
@@ -82,28 +82,28 @@ typos
 
 ## Repo bilgisi
 
-- **Güncel sürüm:** v0.8.0
-- **Aktif milestone:** v0.9.0 (2026-09-30) — Fuzzing + Audit hazırlık
-- **Sıradaki:** v0.10.0 (2026-10-31) — CLI binary + headless daemon
+- **Güncel sürüm:** v0.8.0 (released) — v0.9.0 + v0.10.0 deliverable'ları working tree'de (uncommitted)
+- **Aktif milestone:** v0.9.0 deliverable'ları tamamlandı (fuzzing, pedantic batch 14, audit-scope)
+- **Sıradaki:** v0.10.0 CLI binary tamamlandı; daemon altyapısı v0.10.1'e ertelendi
 - **MSRV:** Rust 1.90 (CI'da pinned)
 - **Edition:** 2021
-- **Lint policy:** root `Cargo.toml` `[workspace.lints]` — pedantic batch 1-13 enforce edildi
+- **Lint policy:** root `Cargo.toml` `[workspace.lints]` — pedantic batch 1-14 enforce edildi (too_many_lines + large_futures dahil)
 - **Commit konvansiyonu:** Türkçe imperative başlık + `Why:` satırı (bkz. CONTRIBUTING.md)
-- **AI commit footer:** `Co-Authored-By: Claude Sonnet 4.6 (1M context) <noreply@anthropic.com>`
+- **AI commit footer:** `Co-Authored-By: Claude Opus 4.6 (Thinking) <noreply@anthropic.com>`
 
 ---
 
 ## Sıradaki işler (öncelik sırasıyla)
 
-1. **NLnet başvurusu** — Ekim 2026 deadline; `docs/security/audit-scope.md` altyapı hazır.
+1. **Uncommitted değişiklikleri commit'le** — 19 dosya, ~2600 satır değişiklik unstaged.
+   3 mantıksal commit önerisi: (a) CLI binary, (b) pedantic batch 14, (c) RUST_GUIDELINE uyum.
+2. **NLnet başvurusu** — Ekim 2026 deadline; `docs/security/audit-scope.md` altyapı hazır.
    Başvuru: https://nlnet.nl/propose/ (Privacy & Trust Enhancing Technologies programı).
-2. **ClusterFuzzLite doğrulama** — `.clusterfuzzlite/` eklendi; CI'da gerçekten çalışıyor mu
-   kontrol et (workflow tetikle, build + run yeşil mi).
-3. **v0.10.0 CLI binary** — `crates/hekadrop-cli` stub'ı; `hekadrop send/receive/list-peers`
-   komutları. `docs/ROADMAP.md` §v0.10.0 detaylı spec.
-4. **Pedantic batch 14** — `too_many_lines` (connection.rs, sender.rs büyük fn'ler) +
-   `large_futures` (async state machine boxing). Her ikisi yapısal refactor; bağımsız PR.
-5. **OSS-Fuzz yeniden başvuru** — v0.11.0+ sonrası, daha fazla star/contributor ile.
+3. **v0.10.1 daemon altyapısı** — `hekadrop-cli daemon` gerçek implementasyon (systemd/launchd).
+4. **ClusterFuzzLite CI doğrulama** — `.clusterfuzzlite/` + workflow tetikle, build + run yeşil mi kontrol.
+5. **Property-based testing (proptest)** — UKEY2 state transitions, payload reassembly.
+6. **Static musl binary** — `x86_64-unknown-linux-musl` target ile ~4-6 MiB CLI binary.
+7. **OSS-Fuzz yeniden başvuru** — v0.11.0+ sonrası, daha fazla star/contributor ile.
 
 ---
 
@@ -120,13 +120,15 @@ typos
 
 ## Lint disiplini özeti
 
-Workspace lints `Cargo.toml [workspace.lints]`'te. Pedantic batch 1-13 enforce edildi (toplam ~65 lint). Batch geçmişi git log'unda; burada tutulmaz.
+Workspace lints `Cargo.toml [workspace.lints]`'te. Pedantic batch 1-14 enforce edildi (toplam ~67 lint). Batch geçmişi git log'unda; burada tutulmaz.
 
 **Kapsam dışı (ertelenmiş):**
-- `clippy::too_many_lines` — büyük fonksiyonlar (connection.rs, sender.rs) refactor gerektirir
-- `clippy::large_futures` — async state machine boxing, architectural change
 - `clippy::similar_names` — crypto test variable naming, risk > kazanç
 - `clippy::redundant_pub_crate` — `unreachable_pub` ile çakışıyor, RFC-0001 sonrası
+
+**Tamamlanan ertelenmiş lint'ler (v0.9.0):**
+- ~~`clippy::too_many_lines`~~ — yapısal refaktör ile enforce edildi (connection.rs 1747 satır refaktör)
+- ~~`clippy::large_futures`~~ — `Box::pin` sarmalı ile enforce edildi (server.rs, main.rs)
 
 **Bilinen gap:** platform-gated kod (`#[cfg(target_os = "...")]`) lokal lint kapsamı dışı. CI push sonrası Linux/Windows fail edebilir; 1 ekstra iterasyon kabul edilebilir.
 

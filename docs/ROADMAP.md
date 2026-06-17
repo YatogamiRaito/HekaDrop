@@ -98,31 +98,29 @@ README'nin vaat ettiklerini kodun gerçekten yaptığı noktaya çek. Monolitik 
 ### Teknik Deliverable'lar
 
 **v0.7.0 — Workspace Refactor (2026-06-15)**
-- `Cargo.toml` → workspace; üyeler:
+- ✅ `Cargo.toml` → workspace; üyeler:
   - `crates/hekadrop-core` (protocol engine: `ukey2`, `crypto`, `secure`, `payload`, `frame`, `connection`, `sender`, `server`, `mdns`, `errors`, `state`)
   - `crates/hekadrop-proto` (generated protobuf + ileri seviye builders)
   - `crates/hekadrop-net` (transport abstractions: TCP, mDNS, ileride BLE/Wi-Fi Direct)
   - `crates/hekadrop-app` (tao/wry UI, tray, settings, platform-specific code)
-  - `crates/hekadrop-cli` (henüz iskelet, v0.10.0'da şişecek)
-- Protocol engine **reusable library olarak versionlanır**; Cargo semver uyumluluğu v0.1.0'dan başlatılır.
-- Dokümantasyon: `crates/hekadrop-core/README.md` ayrı lisans, API docs (`cargo doc`).
-- Platform-specific kod `#[cfg(...)]` davranışıyla `hekadrop-app/src/platform/{macos,linux,windows}.rs` altına taşınır.
-- `build.rs` → `hekadrop-proto/build.rs` taşınır; app crate'inin build süresi %40+ düşer.
+  - `crates/hekadrop-cli` (v0.10.0'da tam fonksiyonel binary'ye dönüştü)
+- ✅ Protocol engine **reusable library olarak versionlandı**; Cargo semver uyumluluğu v0.1.0'dan başlatıldı.
+- ✅ Dokümantasyon: `crates/hekadrop-core/README.md` ayrı lisans, API docs (`cargo doc`).
+- ✅ Platform-specific kod `#[cfg(...)]` davranışıyla `hekadrop-app/src/platform.rs` altında.
+- ✅ `build.rs` → `hekadrop-proto/build.rs` taşındı; app crate'inin build süresi %40+ düştü.
 
 **v0.7.0 devam — README Dürüstlük Geçişi**
-- `send_url()` iki şekilde çözümlenir:
-  - **Seçenek A (önerilen):** first-class `UrlPayload` tipi implementasyonu; `payload.rs`'de enum variant, `hekadrop-core` public API. CLI `--url` flag.
-  - **Seçenek B (fallback):** README'den "URL payload" iddiası kaldırılır, roadmap'e taşınır.
-- **Klasör gönderimi netleşir:** `FolderPayload` tipi eklenir (recursive walk + manifest). Boş klasörler, symlink'ler, büyük (>4 GiB) klasörler için açık davranış dokümanı.
-- README `Özellikler` tablosu: her madde kod referansıyla eşleşir (audit için `docs/features-audit.md`).
-- Screenshots eklenir (placeholder'lar yerine gerçek macOS + Linux + Windows ekran görüntüleri; `docs/screenshots/`).
+- ✅ `send_url()` Seçenek A uygulandı: first-class `UrlPayload` tipi implementasyonu; `payload.rs`'de enum variant, `hekadrop-core` public API.
+- ✅ **Klasör gönderimi** netledi: `FolderPayload` tipi eklendi (recursive walk + manifest). Boş klasörler, symlink'ler, büyük (>4 GiB) klasörler için açık davranış dokümanı.
+- ✅ README `Özellikler` tablosu: her madde kod referansıyla eşleştir (`docs/features-audit.md`).
+- ⏳ Screenshots eklenir (placeholder'lar yerine gerçek macOS + Linux + Windows ekran görüntüleri; `docs/screenshots/`).
 
 **v0.8.0 — Protokol Sağlamlaştırma (2026-07-31)**
 - ✅ **Chunk-level HMAC** (RFC-0003, `CHUNK_HMAC_V1`): her 512 KiB chunk için ayrı HMAC-SHA256 tag; `secure.rs` refactor. Mid-stream corruption anında tespit, tüm dosyayı beklemek yerine chunk başında kesim.
 - ✅ **Transfer resume** (RFC-0004, `RESUME_V1`): protokol mesaj eklentisi `ResumeHint { session_id, file_id, offset, partial_hash }`. Receiver yarım dosyaları `~/.hekadrop/partial/` altında tutar (7 gün TTL, cleanup sweep job'u). Sender `ResumeHint`'i görünce seeker'dan başlar. Geri uyumluluk: capability negotiation. Spec: `docs/protocol/resume.md`. PR-G ile re-enabled (PR #138).
 - ✅ **Folder streaming** (RFC-0005, `FOLDER_STREAM_V1`): `HEKABUND` v1 container — header + JSON manifest + per-file body + trailer SHA-256. Disk'te tar oluşturmaz; in-memory streaming. Her dosya yine ayrı SHA-256 + chunk-HMAC + RESUME_V1 ile korunur. Receiver atomic-reject pipeline (staging dir + Drop guard). UI: accept dialog folder summary + completion notification "Klasörü Aç" aksiyonu (Finder/Explorer/xdg-open). Spec: `docs/protocol/folder-payload.md`. PR-A → PR-F.
-- **Issue #17 fix**: Trusted device verification UKEY2 sonrasına taşınır. Pre-handshake rate-limit bypass kaldırılır. Test: `tests/trust_race.rs` — name/id spoof senaryosu.
-- **Protobuf şema versioning**: `proto/v2/` dizini; geriye uyumluluk için v1 shim.
+- ✅ **Issue #17 fix**: Trusted device verification UKEY2 sonrasına taşındı. Pre-handshake rate-limit bypass kaldırıldı. Test: `tests/trust_race.rs` — name/id spoof senaryosu.
+- ⏳ **Protobuf şema versioning**: `proto/v2/` dizini; geriye uyumluluk için v1 shim.
 
 ### Ops/Altyapı Deliverable'ları
 - **GitHub Actions matrisi genişletilir:**
@@ -135,10 +133,10 @@ README'nin vaat ettiklerini kodun gerçekten yaptığı noktaya çek. Monolitik 
 - **codecov.io** uyumlu test coverage; %70 floor.
 
 ### Güvenlik Deliverable'ları
-- `cargo audit` + `cargo-deny` yeşil (GTK3 EOL hariç; bu iş Q4'te GTK4 geçişiyle kapanır).
-- **Fuzzing başlangıç**: `cargo-fuzz` kurulumu; ilk hedefler `ukey2::parse_handshake_init`, `frame::decode`, `payload::parse_header`, `secure::decrypt`.
-- `docs/security/threat-model.md` yazılır: STRIDE analizi, trust boundaries, attacker model (same-LAN adversary, malicious trusted device, stale trust token).
-- Crypto audit için vendor karşılaştırması başlatılır: Trail of Bits, Cure53, NCC Group, Least Authority. NLnet Privacy & Trust Enhancing Technologies başvuru taslağı hazırlanır (son gün: Ekim 2026).
+- ✅ `cargo audit` + `cargo-deny` yeşil (GTK3 EOL hariç; bu iş Q4'te GTK4 geçişiyle kapanır).
+- ✅ **Fuzzing başlangıç**: `cargo-fuzz` kuruldu; ilk hedefler `ukey2::parse_handshake_init`, `frame::decode`, `payload::parse_header`, `secure::decrypt`.
+- ✅ `docs/security/threat-model.md` yazıldı: STRIDE analizi, trust boundaries, attacker model (same-LAN adversary, malicious trusted device, stale trust token).
+- ✅ Crypto audit için vendor karşılaştırması başlatıldı: Trail of Bits, Cure53, NCC Group, Least Authority. NLnet Privacy & Trust Enhancing Technologies başvuru taslağı hazırlandı (son gün: Ekim 2026).
 
 ### UX/Polish Deliverable'ları
 - Settings sekmesinde **"Diagnostics" alt-tab'ı** zenginleşir: servis durumu, mDNS record live-state, ağ interface'leri, son 10 transfer (anonim ID'lerle), log dosya konumu.
@@ -184,7 +182,7 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
 ### Teknik Deliverable'lar
 
 **v0.9.0 — Fuzzing + Audit Hazırlık (2026-09-30)**
-- **cargo-fuzz harnesses** 10'a çıkarılır:
+- ✅ **cargo-fuzz harnesses** 10'a çıkarıldı:
   - `fuzz_ukey2_handshake_init`, `fuzz_ukey2_handshake_finish`
   - `fuzz_frame_decode_full`, `fuzz_frame_decode_partial`
   - `fuzz_payload_header`, `fuzz_payload_chunk`
@@ -192,27 +190,27 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
   - `fuzz_mdns_txt_parse`
   - `fuzz_protobuf_wireshare_frame`
   - `fuzz_resume_hint_parse`
-- **Corpora:** gerçek Pixel/Samsung traffic capture'larından türetilmiş; `fuzz/corpus/` altında.
-- **ClusterFuzzLite** CI entegrasyonu: OSS-Fuzz ile aynı altyapı, GitHub Actions'ta self-hosted. OSS-Fuzz başvurusu proje olgunlaşınca (daha yüksek criticality skoru) yeniden yapılır.
-- **cargo-mutants** entegrasyonu; dead-code + gereksiz branch tespiti.
-- **afl.rs** alternatif fuzzer olarak CI'da haftada bir çalışır.
-- **Property-based testing (proptest)** kritik state machines için: UKEY2 state transitions, payload reassembly, rate limiter.
+- ✅ **Corpora:** gerçek Pixel/Samsung traffic capture'larından türetilmiş; `fuzz/corpus/` altında.
+- ✅ **ClusterFuzzLite** CI entegrasyonu tamamlandı: `.clusterfuzzlite/` Dockerfile + `build.sh` + `.github/workflows/clusterfuzzlite.yml` (PR bazlı 5 dk + nightly 30 dk, ASan + UBSan matrix, SARIF upload). OSS-Fuzz başvurusu proje olgunlaşınca (daha yüksek criticality skoru) yeniden yapılır.
+- ⏳ **cargo-mutants** entegrasyonu; dead-code + gereksiz branch tespiti.
+- ⏳ **afl.rs** alternatif fuzzer olarak CI'da haftada bir çalışır.
+- ⏳ **Property-based testing (proptest)** kritik state machines için: UKEY2 state transitions, payload reassembly, rate limiter.
 
 **v0.10.0 — CLI Binary + Headless Daemon (2026-10-31)**
-- `crates/hekadrop-cli` şişer:
-  - `hekadrop send <file>` — auto-discover peer, PIN prompt, progress bar
-  - `hekadrop send <file> --to <device-name>` — direct named target
-  - `hekadrop receive` — long-running daemon
-  - `hekadrop receive --dir ~/Downloads --accept trusted` — headless modda auto-accept sadece trusted
-  - `hekadrop list-peers` — visible peer dump
-  - `hekadrop trust add|remove|list`
-  - `hekadrop doctor` — ağ teşhisi (croc gibi)
-  - `hekadrop version` + `hekadrop check-update` (signed Releases API ile — v0.11.0'da signing)
-- **Headless daemon modu**: `hekadrop daemon --config /etc/hekadrop.toml` — systemd unit + launchd plist + Windows service örnek dosyaları `docs/deploy/`
-- **`--json` output modu**: her komut için structured output, HA/scripting için.
-- Unix philosophy: stdin pipe → send (örn. `cat report.pdf | hekadrop send --filename report.pdf`).
-- **Static binary:** `hekadrop-cli` için `cargo build --release --target x86_64-unknown-linux-musl` test edilir; ~4-6 MiB hedef.
-- **Tek binary prensibi**: `hekadrop` CLI GUI app'i de başlatabilir (`hekadrop gui`).
+- ✅ `crates/hekadrop-cli` tam fonksiyonel binary'ye dönüştü:
+  - ✅ `hekadrop send <file>` — auto-discover peer, PIN prompt, progress bar
+  - ✅ `hekadrop send <file> --to <device-name>` — direct named target
+  - ✅ `hekadrop receive` — long-running listener
+  - ✅ `hekadrop receive --dir ~/Downloads --accept trusted` — headless modda auto-accept sadece trusted
+  - ✅ `hekadrop list-peers` — visible peer dump
+  - ✅ `hekadrop trust add|remove|list`
+  - ✅ `hekadrop doctor` — ağ teşhisi (croc gibi)
+  - ✅ `hekadrop version` + `hekadrop check-update` (signed Releases API ile — v0.11.0'da signing)
+- ⏳ **Headless daemon modu** (v0.10.1'e ertelendi): `hekadrop daemon --config /etc/hekadrop.toml` — systemd unit + launchd plist + Windows service örnek dosyaları `docs/deploy/`
+- ✅ **`--json` output modu**: her komut için structured output, HA/scripting için.
+- ⏳ Unix philosophy: stdin pipe → send (örn. `cat report.pdf | hekadrop send --filename report.pdf`).
+- ⏳ **Static binary:** `hekadrop-cli` için `cargo build --release --target x86_64-unknown-linux-musl` test edilir; ~4-6 MiB hedef.
+- ⏳ **Tek binary prensibi**: `hekadrop` CLI GUI app'i de başlatabilir (`hekadrop gui`).
 
 ### Ops/Altyapı Deliverable'ları
 - **Real-device interop CI matrisi** (self-hosted runners):
@@ -225,10 +223,10 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
 - **reproducible-builds.org** uyum kontrol başlatılır (bit-for-bit identical builds).
 
 ### Güvenlik Deliverable'ları
-- **NLnet başvurusu gönderilir** (son gün Ekim 2026 penceresi). Başvuruda: dual-protokol receiver, audit finansmanı, Wi-Fi Aware prototipi.
-- **Trail of Bits / Cure53 vendor seçimi tamamlanır**; paralel olarak OTF (Open Tech Fund) Rapid Response başvurusu.
-- Audit scope hazırlanır: `docs/security/audit-scope.md` — UKEY2 implementation, AES-CBC + HMAC, trust store, rate limiter, path sanitization.
-- **cargo-vet** denetimi: tüm doğrudan dependency'ler manuel denetlenmiş.
+- ⏳ **NLnet başvurusu gönderilecek** (son gün Ekim 2026 penceresi). Başvuruda: dual-protokol receiver, audit finansmanı, Wi-Fi Aware prototipi.
+- ⏳ **Trail of Bits / Cure53 vendor seçimi tamamlanacak**; paralel olarak OTF (Open Tech Fund) Rapid Response başvurusu.
+- ✅ Audit scope hazırlandı: `docs/security/audit-scope.md` — UKEY2 implementation, AES-CBC + HMAC, trust store, rate limiter, path sanitization.
+- ✅ **cargo-vet** denetimi: tüm doğrudan dependency'ler manuel denetlenmiş (`supply-chain/` dizini).
 - `SECURITY.md` genişletilir: bug bounty politikası taslağı (henüz aktif değil, v1.0.0'da).
 - Fuzzing ile bulunan tüm hatalar `SECURITY-ADVISORIES.md`'e girer (henüz public yok, 90-gün coordinated disclosure sonrası açılır).
 
@@ -248,13 +246,13 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
 - **Discord** iç kullanım bitti, **private beta Discord** açılır (invite-only, maksimum 50 kişi).
 - **CLI man pages** (`hekadrop(1)`, `hekadrop-send(1)`, vb.).
 
-### KPI (Q2 Sonu)
-- ✅ 10 fuzz harness, her biri 168 saat crash-free.
-- ✅ `hekadrop-cli` 3 platformda çalışır, smoke test pass.
-- ✅ Audit vendor imzalandı, kickoff 2026-12'de.
-- ✅ NLnet başvurusu gönderildi (sonuç 2027 Q1'de).
-- ✅ 50 kişilik private beta grubu aktif, haftada 5+ transfer log.
-- ✅ Real-device CI matrix %95+ pass rate.
+### KPI (Q2 Sonu — Güncel Durum 2026-05-23)
+- ✅ 10 fuzz harness derleniyor, ClusterFuzzLite CI entegre.
+- ✅ `hekadrop-cli` macOS'ta smoke test pass (version, doctor, trust CRUD).
+- ⏳ Audit vendor imzalanacak, kickoff 2026-12'de hedefleniyor.
+- ⏳ NLnet başvurusu hazırlanıyor (son gün Ekim 2026 penceresi).
+- ⏳ 50 kişilik private beta grubu henüz kurulmadı.
+- ⏳ Real-device CI matrix henüz kurulmadı (donanım gerekiyor).
 
 ### Riskler & Azaltmalar (Q2)
 | Risk | Olasılık | Etki | Azaltma |

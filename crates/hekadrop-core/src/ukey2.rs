@@ -56,6 +56,7 @@ pub struct DerivedKeys {
 /// - `ServerInit` cipher / version downgrade ([`validate_server_init`])
 /// - Peer ECDH public key parse fail veya invalid curve point
 /// - HKDF derivation hatası (length cap)
+#[allow(clippy::too_many_lines)]
 pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     use sha2::{Digest, Sha512};
 
@@ -396,6 +397,7 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
 /// - HKDF derivation hatası
 pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Result<DerivedKeys> {
     use sha2::{Digest, Sha512};
+    use subtle::ConstantTimeEq;
 
     // Önce mesaj tipini kontrol et (peer Alert gönderdiyse anlamsız bir byte dizisi
     // ClientFinished sanılmasın)
@@ -412,7 +414,12 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
     let mut sha = Sha512::new();
     sha.update(raw_frame);
     let digest = sha.finalize();
-    if digest.as_slice() != state.cipher_commitment.as_slice() {
+    if digest
+        .as_slice()
+        .ct_eq(state.cipher_commitment.as_slice())
+        .unwrap_u8()
+        == 0
+    {
         tracing::debug!(
             "commitment mismatch: beklenen={}, hesaplanan={}",
             hex::encode(&state.cipher_commitment),
