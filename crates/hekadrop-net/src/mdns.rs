@@ -94,7 +94,7 @@ pub fn advertise(device_name: &str, port: u16) -> Result<Option<MdnsHandle>> {
 
     let fullname = info.get_fullname().to_string();
 
-    let daemon = ServiceDaemon::new()?;
+    let daemon = crate::get_daemon()?;
     daemon.register(info)?;
 
     info!(

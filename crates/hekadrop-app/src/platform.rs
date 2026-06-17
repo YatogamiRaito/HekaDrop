@@ -40,24 +40,29 @@ fn home_dir() -> PathBuf {
 /// - Linux: `$XDG_CONFIG_HOME/HekaDrop` → `~/.config/HekaDrop`
 /// - Windows: `FOLDERID_RoamingAppData\HekaDrop` (genelde `%APPDATA%\HekaDrop`)
 pub(crate) fn config_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        home_dir().join("Library/Application Support/HekaDrop")
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
-            return PathBuf::from(xdg).join("HekaDrop");
-        }
-        home_dir().join(".config/HekaDrop")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        win::known_folder(&windows::Win32::UI::Shell::FOLDERID_RoamingAppData).map_or_else(
-            || home_dir().join(r"AppData\Roaming\HekaDrop"),
-            |p| p.join("HekaDrop"),
-        )
-    }
+    static CONFIG_DIR_CACHE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    CONFIG_DIR_CACHE
+        .get_or_init(|| {
+            #[cfg(target_os = "macos")]
+            {
+                home_dir().join("Library/Application Support/HekaDrop")
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+                    return PathBuf::from(xdg).join("HekaDrop");
+                }
+                home_dir().join(".config/HekaDrop")
+            }
+            #[cfg(target_os = "windows")]
+            {
+                win::known_folder(&windows::Win32::UI::Shell::FOLDERID_RoamingAppData).map_or_else(
+                    || home_dir().join(r"AppData\Roaming\HekaDrop"),
+                    |p| p.join("HekaDrop"),
+                )
+            }
+        })
+        .clone()
 }
 
 /// Log dosyalarının gideceği dizin.
@@ -66,24 +71,29 @@ pub(crate) fn config_dir() -> PathBuf {
 /// - Linux: `$XDG_STATE_HOME/HekaDrop/logs` → `~/.local/state/HekaDrop/logs`
 /// - Windows: `FOLDERID_LocalAppData\HekaDrop\logs` — log'lar roam etmesin.
 pub(crate) fn logs_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        home_dir().join("Library/Logs/HekaDrop")
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(xdg) = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
-            return PathBuf::from(xdg).join("HekaDrop/logs");
-        }
-        home_dir().join(".local/state/HekaDrop/logs")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        win::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData).map_or_else(
-            || home_dir().join(r"AppData\Local\HekaDrop\logs"),
-            |p| p.join(r"HekaDrop\logs"),
-        )
-    }
+    static LOGS_DIR_CACHE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    LOGS_DIR_CACHE
+        .get_or_init(|| {
+            #[cfg(target_os = "macos")]
+            {
+                home_dir().join("Library/Logs/HekaDrop")
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(xdg) = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
+                    return PathBuf::from(xdg).join("HekaDrop/logs");
+                }
+                home_dir().join(".local/state/HekaDrop/logs")
+            }
+            #[cfg(target_os = "windows")]
+            {
+                win::known_folder(&windows::Win32::UI::Shell::FOLDERID_LocalAppData).map_or_else(
+                    || home_dir().join(r"AppData\Local\HekaDrop\logs"),
+                    |p| p.join(r"HekaDrop\logs"),
+                )
+            }
+        })
+        .clone()
 }
 
 /// Varsayılan indirme klasörü.
@@ -93,26 +103,31 @@ pub(crate) fn logs_dir() -> PathBuf {
 /// - Windows: `FOLDERID_Downloads` (kullanıcının özel konuma taşımış olması
 ///   durumunda da doğru yolu döner)
 pub(crate) fn default_download_dir() -> PathBuf {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(out) = Command::new("xdg-user-dir").arg("DOWNLOAD").output() {
-            if out.status.success() {
-                if let Ok(s) = String::from_utf8(out.stdout) {
-                    let trimmed = s.trim();
-                    if !trimmed.is_empty() {
-                        return PathBuf::from(trimmed);
+    static DOWNLOAD_DIR_CACHE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DOWNLOAD_DIR_CACHE
+        .get_or_init(|| {
+            #[cfg(target_os = "linux")]
+            {
+                if let Ok(out) = Command::new("xdg-user-dir").arg("DOWNLOAD").output() {
+                    if out.status.success() {
+                        if let Ok(s) = String::from_utf8(out.stdout) {
+                            let trimmed = s.trim();
+                            if !trimmed.is_empty() {
+                                return PathBuf::from(trimmed);
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(p) = win::known_folder(&windows::Win32::UI::Shell::FOLDERID_Downloads) {
-            return p;
-        }
-    }
-    home_dir().join("Downloads")
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(p) = win::known_folder(&windows::Win32::UI::Shell::FOLDERID_Downloads) {
+                    return p;
+                }
+            }
+            home_dir().join("Downloads")
+        })
+        .clone()
 }
 
 /// mDNS / UI için gösterilecek cihaz adı.
@@ -122,60 +137,66 @@ pub(crate) fn default_download_dir() -> PathBuf {
 /// - Windows: `GetComputerNameExW(ComputerNameDnsHostname)` → fallback
 ///   `%COMPUTERNAME%` → "`HekaDrop` PC"
 pub(crate) fn device_name() -> String {
+    static DEVICE_NAME_CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
     if let Ok(v) = std::env::var("HEKADROP_NAME") {
         if !v.is_empty() {
             return v;
         }
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(out) = Command::new("scutil")
-            .args(["--get", "ComputerName"])
-            .output()
-        {
-            if let Ok(s) = String::from_utf8(out.stdout) {
-                let t = s.trim();
-                if !t.is_empty() {
-                    return t.to_string();
+    DEVICE_NAME_CACHE
+        .get_or_init(|| {
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(out) = Command::new("scutil")
+                    .args(["--get", "ComputerName"])
+                    .output()
+                {
+                    if let Ok(s) = String::from_utf8(out.stdout) {
+                        let t = s.trim();
+                        if !t.is_empty() {
+                            return t.to_string();
+                        }
+                    }
                 }
+                "HekaDrop Mac".to_string()
             }
-        }
-        "HekaDrop Mac".to_string()
-    }
 
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
-            let t = h.trim();
-            if !t.is_empty() {
-                return format!("HekaDrop {t}");
-            }
-        }
-        if let Ok(out) = Command::new("hostname").output() {
-            if let Ok(s) = String::from_utf8(out.stdout) {
-                let t = s.trim();
-                if !t.is_empty() {
-                    return format!("HekaDrop {t}");
+            #[cfg(target_os = "linux")]
+            {
+                if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
+                    let t = h.trim();
+                    if !t.is_empty() {
+                        return format!("HekaDrop {t}");
+                    }
                 }
+                if let Ok(out) = Command::new("hostname").output() {
+                    if let Ok(s) = String::from_utf8(out.stdout) {
+                        let t = s.trim();
+                        if !t.is_empty() {
+                            return format!("HekaDrop {t}");
+                        }
+                    }
+                }
+                "HekaDrop Linux".to_string()
             }
-        }
-        "HekaDrop Linux".to_string()
-    }
 
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(name) = win::computer_name() {
-            return format!("HekaDrop {name}");
-        }
-        if let Ok(v) = std::env::var("COMPUTERNAME") {
-            let t = v.trim();
-            if !t.is_empty() {
-                return format!("HekaDrop {t}");
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(name) = win::computer_name() {
+                    return format!("HekaDrop {name}");
+                }
+                if let Ok(v) = std::env::var("COMPUTERNAME") {
+                    let t = v.trim();
+                    if !t.is_empty() {
+                        return format!("HekaDrop {t}");
+                    }
+                }
+                "HekaDrop PC".to_string()
             }
-        }
-        "HekaDrop PC".to_string()
-    }
+        })
+        .clone()
 }
 
 /// Verilen dosyayı/dizini işletim sisteminin varsayılan programıyla açar.

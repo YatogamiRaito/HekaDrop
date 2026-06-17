@@ -27,3 +27,18 @@
 
 pub mod discovery;
 pub mod mdns;
+
+/// Global `ServiceDaemon` instance'ını get eder veya başlatır.
+///
+/// # Errors
+///
+/// Returns `Err` if `ServiceDaemon::new()` fails.
+pub(crate) fn get_daemon() -> Result<mdns_sd::ServiceDaemon, mdns_sd::Error> {
+    static DAEMON_CACHE: std::sync::OnceLock<mdns_sd::ServiceDaemon> = std::sync::OnceLock::new();
+    if let Some(daemon) = DAEMON_CACHE.get() {
+        return Ok(daemon.clone());
+    }
+    let daemon = mdns_sd::ServiceDaemon::new()?;
+    let _ = DAEMON_CACHE.set(daemon);
+    DAEMON_CACHE.get().cloned().ok_or(mdns_sd::Error::Again)
+}

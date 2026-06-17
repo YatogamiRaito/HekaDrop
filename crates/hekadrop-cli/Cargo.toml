@@ -24,10 +24,16 @@ path = "src/main.rs"
 [dependencies]
 hekadrop-core = { path = "../hekadrop-core", version = "=0.8.0" }
 hekadrop-net = { path = "../hekadrop-net", version = "=0.8.0" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+serde_json = "1"
+async-trait = "0.1"
+parking_lot = "0.12"
+if-addrs = "0.15"
+hex = "0.4"
 
 [lints]
 workspace = true
-
-# v0.10.0'da CLI komutları core+net'e dokunduğunda kaldırılır.
-[package.metadata.cargo-machete]
-ignored = ["hekadrop-core", "hekadrop-net"]

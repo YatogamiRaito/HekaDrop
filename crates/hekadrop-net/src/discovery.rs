@@ -8,7 +8,7 @@ use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use hekadrop_core::config;
-use mdns_sd::{ResolvedService, ServiceDaemon, ServiceEvent};
+use mdns_sd::{ResolvedService, ServiceEvent};
 use std::net::IpAddr;
 use std::time::Duration;
 use tracing::debug;
@@ -27,7 +27,7 @@ pub use hekadrop_core::discovery_types::DiscoveredDevice;
 /// - `mdns-sd` `ServiceDaemon` başlatılamadı (socket bind / OS resource hatası)
 /// - Browse subscription kurulamadı (daemon kapalı / kanal hatası)
 pub async fn scan(duration: Duration, own_port: u16) -> Result<Vec<DiscoveredDevice>> {
-    let daemon = ServiceDaemon::new()?;
+    let daemon = crate::get_daemon()?;
     let service_type = config::service_type();
     let rx = daemon.browse(&service_type)?;
 
@@ -67,7 +67,6 @@ pub async fn scan(duration: Duration, own_port: u16) -> Result<Vec<DiscoveredDev
         }
     }
 
-    daemon.shutdown().ok();
     Ok(devices)
 }
 
