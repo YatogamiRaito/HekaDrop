@@ -5,10 +5,6 @@ if [ "$SANITIZER" = "coverage" ]; then
     export CFLAGS=""
 fi
 
-if [ "$SANITIZER" = "undefined" ]; then
-    export RUSTFLAGS="$RUSTFLAGS -Z sanitizer=undefined"
-fi
-
 cd "$SRC/hekadrop"
 
 # Map CFL sanitizer to cargo fuzz sanitizer
