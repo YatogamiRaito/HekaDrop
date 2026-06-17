@@ -414,16 +414,11 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
     let mut sha = Sha512::new();
     sha.update(raw_frame);
     let digest = sha.finalize();
-    if digest
-        .as_slice()
-        .ct_eq(state.cipher_commitment.as_slice())
-        .unwrap_u8()
-        == 0
-    {
+    if digest[..].ct_eq(&state.cipher_commitment[..]).unwrap_u8() == 0 {
         tracing::debug!(
             "commitment mismatch: beklenen={}, hesaplanan={}",
             hex::encode(&state.cipher_commitment),
-            hex::encode(digest.as_slice())
+            hex::encode(&digest[..])
         );
         return Err(HekaError::Ukey2CommitmentMismatch.into());
     }

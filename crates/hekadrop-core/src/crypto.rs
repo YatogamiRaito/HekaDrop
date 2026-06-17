@@ -3,7 +3,7 @@
 use aes::Aes256;
 use cbc::{Decryptor, Encryptor};
 use cipher::block_padding::Pkcs7;
-use cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -130,22 +130,22 @@ pub fn hmac_sha256_verify(key: &[u8], data: &[u8], tag: &[u8]) -> bool {
 
 #[must_use]
 pub fn aes256_cbc_encrypt(key: &[u8; 32], iv: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
-    Aes256CbcEnc::new(key.into(), iv.into()).encrypt_padded_vec_mut::<Pkcs7>(plaintext)
+    Aes256CbcEnc::new(key.into(), iv.into()).encrypt_padded_vec::<Pkcs7>(plaintext)
 }
 
 /// AES-256-CBC çözümü + PKCS#7 unpadding.
 ///
 /// # Errors
 ///
-/// Returns [`cipher::block_padding::UnpadError`] if PKCS#7 padding bayt'ları
+/// Returns [`cipher::block_padding::Error`] if PKCS#7 padding bayt'ları
 /// geçersizse (ciphertext bozuk veya yanlış key/IV) ya da ciphertext uzunluğu
 /// 16-byte block hizalamasında değilse.
 pub fn aes256_cbc_decrypt(
     key: &[u8; 32],
     iv: &[u8; 16],
     ciphertext: &[u8],
-) -> Result<Vec<u8>, cipher::block_padding::UnpadError> {
-    Aes256CbcDec::new(key.into(), iv.into()).decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+) -> Result<Vec<u8>, cipher::block_padding::Error> {
+    Aes256CbcDec::new(key.into(), iv.into()).decrypt_padded_vec::<Pkcs7>(ciphertext)
 }
 
 /// D2D key derivation sonrası secure-message HMAC salt'ı: SHA256("SecureMessage").

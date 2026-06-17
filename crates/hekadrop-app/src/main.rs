@@ -2138,6 +2138,10 @@ fn toggle_login_item() {
 /// `current_exe()` ile alınır (tırnak içine alınarak; Program Files gibi
 /// boşluklu yollara dayanıklı).
 #[cfg(target_os = "windows")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "API: Windows registry API calls require verbose error checking and wide string conversions in a single logical transaction"
+)]
 fn toggle_login_item() {
     use crate::platform::win::to_wide;
     use std::os::windows::ffi::OsStrExt;

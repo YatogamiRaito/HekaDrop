@@ -7,7 +7,17 @@ fi
 
 cd "$SRC/hekadrop"
 
-cargo fuzz build -O --fuzz-dir fuzz
+# Map CFL sanitizer to cargo fuzz sanitizer
+case "$SANITIZER" in
+  address|leak|memory|thread)
+    CARGO_FUZZ_SANITIZER="$SANITIZER"
+    ;;
+  *)
+    CARGO_FUZZ_SANITIZER="none"
+    ;;
+esac
+
+cargo fuzz build -O --fuzz-dir fuzz --sanitizer "$CARGO_FUZZ_SANITIZER"
 
 for f in fuzz/fuzz_targets/*.rs; do
     target=$(basename "${f%.*}")

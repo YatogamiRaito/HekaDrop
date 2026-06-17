@@ -92,7 +92,7 @@ fn clamp_to_utf8_boundary(name: &str, max: usize) -> &[u8] {
 ///   `[0]`      bitmap: (sürüm<<5)|(görünürlük<<4)|(`cihaz_tipi`<<1)|rez
 ///   `[1..17]`  16 bayt rastgele
 ///   `[17]`     ad uzunluğu (u8)
-///   `[18..]`   UTF-8 cihaz adı (max [`MAX_DEVICE_NAME_BYTES`] bayt — bkz.
+///   `[18..]`   UTF-8 cihaz adı (max `MAX_DEVICE_NAME_BYTES` bayt — bkz.
 ///              RFC 6763 §6.1 TXT record limit derivasyonu)
 #[must_use]
 pub fn endpoint_info(device_name: &str) -> Vec<u8> {
