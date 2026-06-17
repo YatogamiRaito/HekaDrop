@@ -85,7 +85,7 @@ pub fn session_id_i64(auth_key: &[u8]) -> i64 {
 
 /// Stream SHA-256 over `path[0..offset]` in 1 MiB chunks.
 ///
-/// Memory: O(1) — fixed [`HASH_BUF_SIZE`] buffer. Does not mmap.
+/// Memory: O(1) — fixed `HASH_BUF_SIZE` buffer. Does not mmap.
 ///
 /// # Errors
 ///
@@ -242,7 +242,7 @@ pub struct PartialMeta {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// PR-G: receiver-side absolute path of the partial download file. When
-    /// non-empty, [`connection`] resume orchestration reuses this exact path
+    /// non-empty, [`crate::connection`] resume orchestration reuses this exact path
     /// (skipping fresh `unique_downloads_path` placeholder allocation) so the
     /// existing `.part` bytes survive the second handshake.
     ///

@@ -4,7 +4,7 @@
 //! `HekaDrop` extension frame'i emit edilmeden önce çağrılır. Send + receive
 //! + 2 sn timeout fallback semantiğini tek async fn içine paketler.
 //!
-//! Wire-byte-exact spec: [`docs/protocol/capabilities.md`] §5.
+//! Wire-byte-exact spec: `docs/protocol/capabilities.md` §5.
 //!
 //! **State machine entegrasyon notu (v0.8):** Bu helper henüz `sender.rs`
 //! veya `connection.rs` ana akışına bağlı değildir; eski Quick Share peer'ları

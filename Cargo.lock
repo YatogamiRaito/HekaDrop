@@ -1608,7 +1608,6 @@ dependencies = [
  "hekadrop-net",
  "hex",
  "if-addrs",
- "parking_lot",
  "serde_json",
  "tokio",
  "tracing",
