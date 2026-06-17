@@ -589,7 +589,7 @@ pub(crate) mod win {
         // (MSRV 1.90 ≥ kullanılabilir); `as i32` yerine lint-clean alternatif.
         // (CLAUDE.md I-2 / clippy::items_after_statements — block başına çekildi.)
         const RPC_E_CHANGED_MODE: windows::core::HRESULT =
-            windows::core::HRESULT(0x80010106u32.cast_signed());
+            windows::core::HRESULT(0x8001_0106_u32.cast_signed());
         COM_INITED.with(|flag| {
             if flag.get() {
                 return;

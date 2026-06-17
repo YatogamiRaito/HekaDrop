@@ -245,7 +245,7 @@ pub struct Settings {
     ///
     /// JSON'da hem yeni biçim (`[{"name","id","secret_id_hash","trusted_at_epoch"}]`)
     /// hem de eski biçim (`["ad1", "ad2"]` / `[{"name","id"}]`) kabul
-    /// edilir — bkz. [`migrate_trusted_value`].
+    /// edilir — bkz. `migrate_trusted_value`.
     #[serde(default, deserialize_with = "deserialize_trusted_devices")]
     pub trusted_devices: Vec<TrustedDevice>,
 

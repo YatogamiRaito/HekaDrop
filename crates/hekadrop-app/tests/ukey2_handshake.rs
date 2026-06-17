@@ -104,8 +104,8 @@ fn ecdh_iki_taraf_ayni_shared_secret_uretir() {
     let bob_view = diffie_hellman(bob_sk.to_nonzero_scalar(), alice_pk.as_affine());
 
     assert_eq!(
-        alice_view.raw_secret_bytes().as_slice(),
-        bob_view.raw_secret_bytes().as_slice(),
+        &alice_view.raw_secret_bytes()[..],
+        &bob_view.raw_secret_bytes()[..],
         "P-256 ECDH simetrik olmalı"
     );
 }
@@ -132,10 +132,10 @@ fn alice_bob_handshake_ayni_derived_keys_uretir() {
         alice_sk.public_key().as_affine(),
     );
     assert_eq!(
-        alice_view.raw_secret_bytes().as_slice(),
-        bob_view.raw_secret_bytes().as_slice()
+        &alice_view.raw_secret_bytes()[..],
+        &bob_view.raw_secret_bytes()[..]
     );
-    let shared_sha = sha256(alice_view.raw_secret_bytes().as_slice());
+    let shared_sha = sha256(&alice_view.raw_secret_bytes()[..]);
 
     let alice_keys = derive_from_shared(&shared_sha, client_init, server_init);
     let bob_keys = derive_from_shared(&shared_sha, client_init, server_init);
@@ -158,7 +158,7 @@ fn transcript_binding_farkli_transcript_farkli_anahtar() {
         alice_sk.to_nonzero_scalar(),
         bob_sk.public_key().as_affine(),
     );
-    let shared_sha = sha256(view.raw_secret_bytes().as_slice());
+    let shared_sha = sha256(&view.raw_secret_bytes()[..]);
 
     let ci = b"CLIENT_INIT_v1";
     let si = b"SERVER_INIT_v1";
@@ -287,7 +287,7 @@ fn rol_simetrisi_client_enc_eq_server_dec() {
         alice_sk.to_nonzero_scalar(),
         bob_sk.public_key().as_affine(),
     );
-    let shared_sha = sha256(view.raw_secret_bytes().as_slice());
+    let shared_sha = sha256(&view.raw_secret_bytes()[..]);
     let ci = b"ci";
     let si = b"si";
     let keys = derive_from_shared(&shared_sha, ci, si);

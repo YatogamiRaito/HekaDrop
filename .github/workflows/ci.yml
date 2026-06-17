@@ -181,7 +181,7 @@ jobs:
 
       - name: cargo-vet (supply-chain audit)
         run: |
-          cargo install cargo-vet --locked
+          cargo install cargo-vet
           cargo vet
 
   test-windows:

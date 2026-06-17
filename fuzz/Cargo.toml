@@ -15,15 +15,13 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 hekadrop-core = { path = "../crates/hekadrop-core" }
 hekadrop-proto = { path = "../crates/hekadrop-proto" }
-hekadrop-net = { path = "../crates/hekadrop-net" }
 prost = "0.14"
-bytes = "1"
 p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
-tokio = { version = "1", features = ["rt"] }
 
 [profile.release]
 debug = true
 opt-level = 3
+overflow-checks = true
 
 [[bin]]
 name = "fuzz_ukey2_client_init"
