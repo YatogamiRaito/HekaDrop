@@ -75,9 +75,9 @@ async-trait = "0.1"
 sha2 = "0.10"
 hkdf = "0.12"
 hmac = "0.12"
-aes = "0.8"
-cbc = { version = "0.1", features = ["std"] }
-cipher = { version = "0.4", features = ["block-padding"] }
+aes = "0.9"
+cbc = { version = "0.2", features = ["alloc"] }
+cipher = { version = "0.5", features = ["block-padding", "alloc"] }
 subtle = "2"
 p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
 elliptic-curve = { version = "0.13", features = ["sec1"] }

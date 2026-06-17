@@ -31,22 +31,22 @@ mod common;
 use aes::Aes256;
 use cbc::{Decryptor, Encryptor};
 use cipher::block_padding::Pkcs7;
-use cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use common::hmac_sha256;
 
 type Aes256CbcEnc = Encryptor<Aes256>;
 type Aes256CbcDec = Decryptor<Aes256>;
 
 fn aes256_cbc_encrypt(key: &[u8; 32], iv: &[u8; 16], pt: &[u8]) -> Vec<u8> {
-    Aes256CbcEnc::new(key.into(), iv.into()).encrypt_padded_vec_mut::<Pkcs7>(pt)
+    Aes256CbcEnc::new(key.into(), iv.into()).encrypt_padded_vec::<Pkcs7>(pt)
 }
 
 fn aes256_cbc_decrypt(
     key: &[u8; 32],
     iv: &[u8; 16],
     ct: &[u8],
-) -> Result<Vec<u8>, cipher::block_padding::UnpadError> {
-    Aes256CbcDec::new(key.into(), iv.into()).decrypt_padded_vec_mut::<Pkcs7>(ct)
+) -> Result<Vec<u8>, cipher::block_padding::Error> {
+    Aes256CbcDec::new(key.into(), iv.into()).decrypt_padded_vec::<Pkcs7>(ct)
 }
 
 /// Ciphertext + IV + HMAC tag'i "sahte secure message" olarak tek vector'e serialize.
