@@ -57,7 +57,7 @@ base64 = "0.22"
 # Kripto stack — connection.rs / sender.rs / identity.rs hâlâ doğrudan kullanır.
 # Sonraki RFC adımlarında (state + connection core'a taşınınca) ihtiyaç
 # duyulmayacak; o zaman temizlenir.
-aes = "0.8"
+aes = "0.9"
 cbc = { version = "0.1", features = ["std"] }
 cipher = { version = "0.4", features = ["block-padding"] }
 hmac = "0.12"
