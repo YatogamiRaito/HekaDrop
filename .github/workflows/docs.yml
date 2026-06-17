@@ -19,6 +19,7 @@ env:
   RUSTDOCFLAGS: "-D warnings"
   # Node 20 kalktıktan sonra dahi çalışması için Node 24'e zorla.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
 
 jobs:
   build:
@@ -48,6 +49,8 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
+        with:
+          enablement: true
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
