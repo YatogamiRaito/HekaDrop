@@ -42,15 +42,15 @@
 )]
 
 use anyhow::Result;
+#[cfg(target_os = "macos")]
+use objc2::MainThreadMarker;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
-#[cfg(target_os = "macos")]
-use objc2::MainThreadMarker;
-#[cfg(target_os = "macos")]
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 use tao::window::WindowBuilder;
@@ -216,6 +216,7 @@ async fn async_main() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() {
     // H#4 privacy control: log level Settings'ten okunur. `RUST_LOG` env var
     // varsa o öncelikli (geliştirici kaçış vanası). Settings'i logger'dan
@@ -466,6 +467,7 @@ fn set_dock_visible(visible: bool) {
 
 /// Process'in canlı kalan UI ana döngüsü — tao event loop'unu başlatır ve
 /// asla geri dönmez (`!`).
+#[allow(clippy::too_many_lines)]
 fn run_app() -> ! {
     #[cfg(target_os = "macos")]
     let mut event_loop = EventLoopBuilder::new().build();
@@ -804,6 +806,7 @@ fn run_app() -> ! {
 
 /// `WebView` IPC mesaj handler'ı — `cmd` `verb::payload` formatında prefix'lere
 /// göre dispatch eder (`send_text::`, `settings_save::` vb).
+#[allow(clippy::too_many_lines)]
 fn handle_ipc(cmd: &str) {
     // PRIVACY: Metin gönderim komutları kullanıcı verisi içerir; log'a düşmesin.
     // `send_text::` prefix'i yalnız başlangıç kısmıyla logla, geri kalanı redact.
@@ -1572,7 +1575,7 @@ async fn initiate_send_flow() {
     let Some(files) = ui::choose_files().await else {
         return;
     };
-    initiate_send_flow_with(files).await;
+    Box::pin(initiate_send_flow_with(files)).await;
 }
 
 /// Hazır path listesiyle gönderim akışını başlatır (drag-drop ve dosya
@@ -1634,7 +1637,7 @@ async fn initiate_send_flow_with(files: Vec<std::path::PathBuf>) {
         device: device.clone(),
         files,
     };
-    match sender::send(req, state::get()).await {
+    match Box::pin(sender::send(req, state::get())).await {
         Ok(()) => {
             ui::notify(
                 i18n::t("notify.app_name"),
@@ -1708,7 +1711,7 @@ async fn initiate_text_send_flow(text: String) {
     let send_ctx = sender::SendCtx {
         text_summary: i18n::t("sender.text_summary").to_string(),
     };
-    match sender::send_text(req, state::get(), send_ctx).await {
+    match Box::pin(sender::send_text(req, state::get(), send_ctx)).await {
         Ok(()) => {
             ui::notify(
                 i18n::t("notify.app_name"),

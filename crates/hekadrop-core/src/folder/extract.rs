@@ -195,6 +195,7 @@ pub fn extract_bundle(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 /// `extract_bundle`'ın panic-koruyucu sarmalı altındaki gerçek implementasyon.
 /// Bundle aç → manifest doğrula → staging'e dosyaları yaz → atomic rename.
 fn extract_bundle_inner(

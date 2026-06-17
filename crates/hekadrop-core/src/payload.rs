@@ -654,6 +654,7 @@ impl PayloadAssembler {
     /// FILE payload chunk'ını sink'e yaz; `last_chunk` true ise dosya finalize
     /// edilir, hash + path döndürülür. Chunk-HMAC capability aktif iken
     /// `pending_chunk` üzerinden iki-adımlı verify-then-write akışı çalışır.
+    #[allow(clippy::too_many_lines)]
     fn ingest_file(
         &mut self,
         id: i64,
@@ -1043,6 +1044,7 @@ impl PayloadAssembler {
     /// - `chunk_index` / `offset` / `body_len` beklenenle eşleşmiyor (protokol ihlali)
     /// - HMAC verify fail (`VerifyError::TagMismatch` vb.)
     /// - Diske body yazımı fail (I/O)
+    #[allow(clippy::too_many_lines)]
     pub fn verify_chunk_tag(&mut self, ci: &ChunkIntegrity) -> Result<Option<CompletedPayload>> {
         let key = self.chunk_hmac_key.ok_or_else(|| {
             HekaError::ProtocolState(format!(

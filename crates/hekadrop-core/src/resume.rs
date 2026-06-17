@@ -520,6 +520,7 @@ pub struct CleanupReport {
 /// Corrupted `.meta` dosyaları (parse hatası) da silinir — yoksa süresiz
 /// disk kalır + budget hesabını bozar. Eşleşen `.part` mevcut değilse
 /// `.meta` tek başına silinir (yetim meta).
+#[allow(clippy::too_many_lines)]
 pub fn cleanup_sweep<S: ::std::hash::BuildHasher>(
     dir: &Path,
     ttl_days: i64,

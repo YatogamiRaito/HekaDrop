@@ -97,9 +97,14 @@ pub async fn accept_loop(
         let state_for_conn = Arc::clone(&state);
         let platform_for_conn = Arc::clone(&platform);
         tokio::spawn(async move {
-            if let Err(e) =
-                connection::handle(socket, addr, ui_for_conn, state_for_conn, platform_for_conn)
-                    .await
+            if let Err(e) = Box::pin(connection::handle(
+                socket,
+                addr,
+                ui_for_conn,
+                state_for_conn,
+                platform_for_conn,
+            ))
+            .await
             {
                 warn!("bağlantı hatası ({}): {:?}", addr, e);
             }

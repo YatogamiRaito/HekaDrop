@@ -151,6 +151,7 @@ struct PlannedFolder {
 /// Pratik olarak panik etmez; hot path'teki `u64::try_from(plan.size.max(0))`
 /// `expect` çağrısı `max(0)` invariant'ı sayesinde infallible (i64 ≥ 0 her
 /// zaman u64'e sığar). INVARIANT yorumu kod içinde mevcut.
+#[allow(clippy::too_many_lines)]
 pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
     if req.files.is_empty() {
         // Not: "hiç dosya yok" ile "toplam 0 bayt dosya var" semantik olarak
@@ -792,6 +793,7 @@ fn detect_url_kind(text: &str) -> TextKind {
 /// Pratik olarak panik etmez; hot path'teki `u64::try_from(total_bytes.max(0))`
 /// `expect` çağrısı `max(0)` invariant'ı sayesinde infallible (i64 ≥ 0 her
 /// zaman u64'e sığar). INVARIANT yorumu kod içinde mevcut.
+#[allow(clippy::too_many_lines)]
 pub async fn send_text(
     req: SendTextRequest,
     state: Arc<AppState>,

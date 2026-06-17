@@ -150,6 +150,7 @@ pub(crate) fn apply_args(template: &str, args: &[&str]) -> String {
               anlamını yok eder. PR #87 deferred listesinden match_same_arms enforce \
               edilirken bu fn istisna."
 )]
+#[allow(clippy::too_many_lines)]
 /// Türkçe çeviri tablosu — bilinmeyen key için `None`.
 fn lookup_tr(key: &str) -> Option<&'static str> {
     Some(match key {
@@ -368,6 +369,7 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
     clippy::match_same_arms,
     reason = "API: Bkz. lookup_tr — i18n table'da farklı key'lerin aynı çeviriye düşmesi doğal."
 )]
+#[allow(clippy::too_many_lines)]
 /// English translation table — `None` for unknown keys.
 fn lookup_en(key: &str) -> Option<&'static str> {
     Some(match key {
@@ -652,6 +654,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn her_key_her_iki_dilde_tanimli() {
         // Test listesinin kapsamı: lookup_tr ve lookup_en'in birinde var olan
         // her key, diğerinde de bulunmalı — aksi halde çeviri boşluğu var demek.

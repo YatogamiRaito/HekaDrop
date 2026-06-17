@@ -67,30 +67,26 @@ pub trait PlatformOps: Send + Sync {
 /// # Errors
 ///
 /// Returns `Err` if:
-/// - Frame I/O fail (timeout, peer disconnect, slow-loris guard)
-/// - `ConnectionRequest` / `OfflineFrame` protobuf decode fail
-/// - UKEY2 handshake fail (cipher downgrade, commitment mismatch)
 /// - PIN hash mismatch (`PairedKeyEncryption`) veya kullanıcı reddi
 /// - Diske yazım fail (payload assembly, finalize, stats persist)
 /// - Capability negotiation veya secure loop policy violation
-pub async fn handle(
-    mut socket: TcpStream,
-    peer: SocketAddr,
-    ui: Arc<dyn UiPort>,
-    state: Arc<AppState>,
-    platform: Arc<dyn PlatformOps>,
-) -> Result<()> {
-    // `TransferGuard::new()` içinde auto clear_cancel — bu bağlantıya özel
-    // child token hem taze root'a hem de scope sonunda active_transfers
-    // map'inden otomatik temizliğe (early-return yollarında bile) garanti verir.
-    let guard = state::TransferGuard::new(Arc::clone(&state), format!("in:{peer}"));
-    let cancel = guard.token.clone();
+///
+/// `ConnectionRequest`, UKEY2 handshake ve `ConnectionResponse` acceptance süreçlerini yürütür.
+/// Başarı durumunda peer'ın derived key'lerini, adını ve endpoint id'sini döner.
+async fn perform_handshake(
+    socket: &mut TcpStream,
+    peer: &SocketAddr,
+    ui: &dyn UiPort,
+    state: &AppState,
+) -> Result<(ukey2::DerivedKeys, String, String)> {
+    use anyhow::Context;
+    use tracing::{info, warn};
 
     // 1) plain ConnectionRequest
     // SECURITY: Handshake fazındaki tüm frame okumaları slow-loris DoS'a karşı
     // 30 sn timeout ile sarmalanır; aksi halde saldırgan TCP bağlantı açıp
     // veri göndermeden tokio task'ını sonsuza kadar tutabilir.
-    let req = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
+    let req = frame::read_frame_timeout(socket, frame::HANDSHAKE_READ_TIMEOUT)
         .await
         .context("ConnectionRequest okunamadı")?;
     let offline = OfflineFrame::decode(req.as_ref()).context("OfflineFrame decode")?;
@@ -100,11 +96,10 @@ pub async fn handle(
         .ok_or_else(|| anyhow!("connection_request yok"))?;
     let endpoint_info = cr
         .endpoint_info
-        .clone()
         .ok_or_else(|| anyhow!("endpoint_info yok"))?;
     // endpoint_id: peer'ın kalıcı tanıtıcısı (Bug #32). Eksikse boş kabul;
     // is_trusted() boş id'yi legacy kayıt kabul edeceğinden güvenli.
-    let remote_id = cr.endpoint_id.clone().unwrap_or_default();
+    let remote_id = cr.endpoint_id.unwrap_or_default();
     let remote_name = parse_remote_name(&endpoint_info).unwrap_or_else(|| "bilinmeyen".into());
     info!(
         "[{}] uzak cihaz: {} (endpoint_id: {})",
@@ -118,20 +113,6 @@ pub async fn handle(
     );
 
     // Rate limiting — gate'de HERKES'e uygulanır (Issue #17 closure).
-    //
-    // Eski davranış (v0.5/erken v0.6): peer'ın iddia ettiği `(remote_name,
-    // remote_id)` çifti trusted listede varsa `check_and_record` hiç
-    // çağrılmaz, rate-limit bypass edilir. Bu alanlar peer-controlled —
-    // saldırgan kurbanın trusted listesindeki bir adı + endpoint_id'yi
-    // spoof edip 10/60s limit'i aşabilir ve 32-permit `Semaphore`'u
-    // handshake-in-progress ile doldurarak meşru peer'ları DoS edebilir.
-    //
-    // Yeni davranış: gate'de muafiyet yok. Trusted kararı yalnızca
-    // `PairedKeyEncryption` sonrası peer'ın secret_id_hash'i doğrulandığında
-    // geriye-dönük uygulanır — o noktada `rate_limiter.forget_most_recent`
-    // ile bu bağlantının kaydı silinir. Böylece hash-doğrulanmış trusted
-    // peer sürekli bağlantılarla throttle olmaz, ama peer-controlled
-    // stringlere güvenmeyiz.
     if state.rate_limiter.check_and_record(peer.ip()) {
         warn!(
             "[{}] rate limit aşıldı (60 sn pencerede >10 bağlantı), reddediliyor",
@@ -146,21 +127,22 @@ pub async fn handle(
     // tek noktadan gösterilir (Dalga 2 UX: "sessiz sonlandırma" yerine
     // anlaşılır bildirim).
     let handshake: Result<(ukey2::ServerInitResult, ukey2::DerivedKeys)> = async {
-        let ci = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
+        let ci = frame::read_frame_timeout(socket, frame::HANDSHAKE_READ_TIMEOUT)
             .await
             .context("Ukey2ClientInit okunamadı")?;
         let st = ukey2::process_client_init(&ci).context("ClientInit")?;
-        frame::write_frame(&mut socket, &st.server_init_bytes)
+        frame::write_frame(socket, &st.server_init_bytes)
             .await
             .context("ServerInit yazılamadı")?;
-        let cf = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
+        let cf = frame::read_frame_timeout(socket, frame::HANDSHAKE_READ_TIMEOUT)
             .await
             .context("Ukey2ClientFinished okunamadı")?;
         let k = ukey2::process_client_finish(&cf, &st).context("ClientFinish")?;
         Ok((st, k))
     }
     .await;
-    let (_state, keys) = match handshake {
+
+    let (_server_state, keys) = match handshake {
         Ok(v) => v,
         Err(e) => {
             let key = classify_handshake_error(&e);
@@ -184,7 +166,7 @@ pub async fn handle(
     );
 
     // 5) plain ConnectionResponse (karşı taraftan)
-    let resp_in = frame::read_frame_timeout(&mut socket, frame::HANDSHAKE_READ_TIMEOUT)
+    let resp_in = frame::read_frame_timeout(socket, frame::HANDSHAKE_READ_TIMEOUT)
         .await
         .context("peer ConnectionResponse okunamadı")?;
     let peer_resp =
@@ -197,12 +179,35 @@ pub async fn handle(
 
     // 6) plain ConnectionResponse (bizden Accept)
     let our_resp = build_connection_response_accept();
-    frame::write_frame(&mut socket, &our_resp.encode_to_vec())
+    frame::write_frame(socket, &our_resp.encode_to_vec())
         .await
         .context("ConnectionResponse yazılamadı")?;
     info!("[{}] bizim ConnectionResponse (Accept) gönderildi", peer);
 
-    // 7) Şifreli loop
+    Ok((keys, remote_name, remote_id))
+}
+
+/// Incoming TCP connection handler. Manages peer handshake (UKEY2),
+/// PIN verification, capability exchange, and the encrypted loop for receiving payloads.
+#[allow(clippy::missing_errors_doc)]
+pub async fn handle(
+    mut socket: TcpStream,
+    peer: SocketAddr,
+    ui: Arc<dyn UiPort>,
+    state: Arc<AppState>,
+    platform: Arc<dyn PlatformOps>,
+) -> Result<()> {
+    // `TransferGuard::new()` içinde auto clear_cancel — bu bağlantıya özel
+    // child token hem taze root'a hem de scope sonunda active_transfers
+    // map'inden otomatik temizliğe (early-return yollarında bile) garanti verir.
+    let guard = state::TransferGuard::new(Arc::clone(&state), format!("in:{peer}"));
+    let cancel = guard.token.clone();
+
+    // 1-6) Handshake adımlarını perform_handshake helper'ı ile yap
+    let (keys, remote_name, remote_id) =
+        perform_handshake(&mut socket, &peer, ui.as_ref(), state.as_ref()).await?;
+
+    // 7) Şifreli loop kurulumu
     let mut ctx = SecureCtx::from_keys(&keys);
     let mut assembler = PayloadAssembler::new();
 
@@ -248,6 +253,69 @@ pub async fn handle(
     let mut peer_capabilities_received = false;
     let mut our_capabilities_sent = false;
 
+    let loop_res = handle_steady_loop(
+        &peer,
+        &mut socket,
+        &mut ctx,
+        &mut assembler,
+        &cancel,
+        ui.as_ref(),
+        state.as_ref(),
+        platform.as_ref(),
+        &keys,
+        &remote_name_shared,
+        &remote_id_shared,
+        &pin_shared,
+        &mut sent_paired_result,
+        &mut accepted,
+        &mut pending_texts,
+        &mut pending_names,
+        &mut peer_secret_id_hash,
+        &mut active_capabilities,
+        &mut peer_capabilities_received,
+        &mut our_capabilities_sent,
+    )
+    .await;
+
+    // Loop'tan nasıl çıkıldığından bağımsız olarak artakalan yarım dosyaları,
+    // pending haritaları ve global state bayraklarını temizle. Böylece bir
+    // sonraki bağlantı tamamen temiz bir state ile başlar (Bug #28).
+    cleanup_transfer_state(
+        &peer,
+        &mut assembler,
+        &mut pending_names,
+        &mut pending_texts,
+        state.as_ref(),
+    );
+
+    loop_res
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+/// Ana şifreli transfer döngüsü — peer'dan gelen her `OfflineFrame` veya `HekaDropFrame`'i
+/// işler, durum güncellemelerini UI'a yansıtır ve bitiş sinyaliyle döner.
+async fn handle_steady_loop(
+    peer: &SocketAddr,
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    assembler: &mut PayloadAssembler,
+    cancel: &tokio_util::sync::CancellationToken,
+    ui: &dyn UiPort,
+    state: &AppState,
+    platform: &dyn PlatformOps,
+    keys: &ukey2::DerivedKeys,
+    remote_name_shared: &str,
+    remote_id_shared: &str,
+    pin_shared: &str,
+    sent_paired_result: &mut bool,
+    accepted: &mut bool,
+    pending_texts: &mut HashMap<i64, TextType>,
+    pending_names: &mut HashMap<i64, String>,
+    peer_secret_id_hash: &mut Option<[u8; 6]>,
+    active_capabilities: &mut crate::capabilities::ActiveCapabilities,
+    peer_capabilities_received: &mut bool,
+    our_capabilities_sent: &mut bool,
+) -> Result<()> {
     loop {
         // Steady-loop timeout: peer Quick Share spec'i gereği ~30s'de bir
         // KeepAlive gönderir. 60 sn içinde hiçbir frame gelmezse bağlantıyı
@@ -265,23 +333,11 @@ pub async fn handle(
                     peer
                 );
                 let cf = build_sharing_cancel();
-                send_sharing_frame(&mut socket, &mut ctx, &cf).await.ok();
-                send_disconnection(&mut socket, &mut ctx).await.ok();
-                cleanup_transfer_state(
-                    &peer,
-                    &mut assembler,
-                    &mut pending_names,
-                    &mut pending_texts,
-                    state.as_ref(),
-                );
-                ui.notify(UiNotification::Toast {
-                    title_key: "notify.app_name",
-                    body_key: Some("notify.transfer_cancelled"),
-                    body_args: Vec::new(),
-                });
+                send_sharing_frame(socket, ctx, &cf).await.ok();
+                send_disconnection(socket, ctx).await.ok();
                 break;
             }
-            res = frame::read_frame_timeout(&mut socket, frame::STEADY_READ_TIMEOUT) => res,
+            res = frame::read_frame_timeout(socket, frame::STEADY_READ_TIMEOUT) => res,
         };
         let raw = match read_result {
             Ok(b) => b,
@@ -313,17 +369,17 @@ pub async fn handle(
                 // propagate, `?` ile drop.
                 if let Err(e) = handle_hekadrop_frame(
                     ext_bytes,
-                    &peer,
-                    &mut socket,
-                    &mut ctx,
-                    &mut active_capabilities,
-                    &mut peer_capabilities_received,
-                    &mut our_capabilities_sent,
-                    &mut assembler,
-                    &keys,
-                    state.as_ref(),
-                    &remote_name_shared,
-                    ui.as_ref(),
+                    peer,
+                    socket,
+                    ctx,
+                    active_capabilities,
+                    peer_capabilities_received,
+                    our_capabilities_sent,
+                    assembler,
+                    keys,
+                    state,
+                    remote_name_shared,
+                    ui,
                 )
                 .await
                 {
@@ -331,14 +387,7 @@ pub async fn handle(
                         "[{}] HekaDropFrame protocol violation; oturum sonlandırılıyor: {:?}",
                         peer, e
                     );
-                    cleanup_transfer_state(
-                        &peer,
-                        &mut assembler,
-                        &mut pending_names,
-                        &mut pending_texts,
-                        state.as_ref(),
-                    );
-                    let _ = send_disconnection(&mut socket, &mut ctx).await;
+                    let _ = send_disconnection(socket, ctx).await;
                     break;
                 }
                 continue;
@@ -384,7 +433,7 @@ pub async fn handle(
                         if let Some(percent) = compute_recv_percent(offset, body_len_usize, total) {
                             if let Some(name) = pending_names.get(&id).cloned() {
                                 state.set_progress(ProgressState::Receiving {
-                                    device: remote_name_shared.clone(),
+                                    device: remote_name_shared.to_string(),
                                     file: name,
                                     percent,
                                 });
@@ -398,45 +447,32 @@ pub async fn handle(
                         CompletedPayload::Bytes { id, data } => {
                             // Metin/URL payload mı?
                             if let Some(kind) = pending_texts.remove(&id) {
-                                handle_text_payload(
-                                    &peer,
-                                    kind,
-                                    &data,
-                                    ui.as_ref(),
-                                    platform.as_ref(),
-                                );
+                                handle_text_payload(peer, kind, &data, ui, platform);
                                 continue;
                             }
                             if let Ok(sharing) = SharingFrame::decode(&data[..]) {
                                 let outcome = handle_sharing_frame(
-                                    &peer,
-                                    &mut socket,
-                                    &mut ctx,
-                                    &mut assembler,
+                                    peer,
+                                    socket,
+                                    ctx,
+                                    assembler,
                                     &sharing,
-                                    &mut sent_paired_result,
-                                    &remote_name_shared,
-                                    &remote_id_shared,
-                                    &pin_shared,
-                                    &mut accepted,
-                                    &mut pending_texts,
-                                    &mut pending_names,
-                                    &mut peer_secret_id_hash,
-                                    ui.as_ref(),
-                                    state.as_ref(),
+                                    sent_paired_result,
+                                    remote_name_shared,
+                                    remote_id_shared,
+                                    pin_shared,
+                                    accepted,
+                                    pending_texts,
+                                    pending_names,
+                                    peer_secret_id_hash,
+                                    ui,
+                                    state,
                                     &keys.auth_key,
-                                    active_capabilities,
+                                    *active_capabilities,
                                 )
                                 .await?;
                                 if outcome == FlowOutcome::Disconnect {
-                                    send_disconnection(&mut socket, &mut ctx).await.ok();
-                                    cleanup_transfer_state(
-                                        &peer,
-                                        &mut assembler,
-                                        &mut pending_names,
-                                        &mut pending_texts,
-                                        state.as_ref(),
-                                    );
+                                    send_disconnection(socket, ctx).await.ok();
                                     break;
                                 }
                             }
@@ -449,15 +485,15 @@ pub async fn handle(
                         } => {
                             pending_names.remove(&id);
                             finalize_received_payload(
-                                &peer,
+                                peer,
                                 id,
                                 &path,
                                 total_size,
                                 sha256,
-                                &remote_name_shared,
-                                &mut assembler,
-                                state.as_ref(),
-                                ui.as_ref(),
+                                remote_name_shared,
+                                assembler,
+                                state,
+                                ui,
                             )
                             .await;
                         }
@@ -475,7 +511,7 @@ pub async fn handle(
                     }),
                 };
                 let enc = ctx.encrypt(&reply.encode_to_vec())?;
-                frame::write_frame(&mut socket, &enc).await?;
+                frame::write_frame(socket, &enc).await?;
             }
             Some(v1_frame::FrameType::Disconnection) => {
                 info!("[{}] karşı taraf disconnect", peer);
@@ -486,18 +522,6 @@ pub async fn handle(
             }
         }
     }
-
-    // Loop'tan nasıl çıkıldığından bağımsız olarak artakalan yarım dosyaları,
-    // pending haritaları ve global state bayraklarını temizle. Böylece bir
-    // sonraki bağlantı tamamen temiz bir state ile başlar (Bug #28).
-    cleanup_transfer_state(
-        &peer,
-        &mut assembler,
-        &mut pending_names,
-        &mut pending_texts,
-        state.as_ref(),
-    );
-
     Ok(())
 }
 
@@ -827,6 +851,544 @@ enum FlowOutcome {
 // RFC-0001 §5 Adım 5b: handler call-graph'ında 13 arg vardı; 14. olarak `ui`
 // eklendi. Adım 5c'de 15. olarak `state` eklendi (singleton lookup yerine
 // inject); helper'lar bir sonraki refactor'da struct olarak gruplanacak.
+/// Peer'dan gelen `PairedKeyEncryption` frame'ini işler ve `PairedKeyResult` gönderir.
+async fn handle_pke_frame(
+    peer: &SocketAddr,
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    v1: &ShV1Frame,
+    sent_paired_result: &mut bool,
+    peer_secret_id_hash: &mut Option<[u8; 6]>,
+    state: &AppState,
+) -> Result<()> {
+    // Issue #17: peer'ın secret_id_hash'ini yakala. 6 bayt olmayan
+    // değerler (eski / bozuk peer) yok sayılır → legacy fallback.
+    if let Some(raw) = v1
+        .paired_key_encryption
+        .as_ref()
+        .and_then(|pke| pke.secret_id_hash.as_ref())
+    {
+        if raw.len() == 6 {
+            let mut h = [0u8; 6];
+            h.copy_from_slice(raw);
+            *peer_secret_id_hash = Some(h);
+        } else {
+            info!(
+                "[{}] peer secret_id_hash beklenen 6 bayt değil ({}) — legacy fallback",
+                peer,
+                raw.len()
+            );
+        }
+    }
+    // Issue #17 post-hoc muafiyet: Hash-first trust kararı burada
+    // doğrulanırsa, `handle` fonksiyonunun gate'inde kaydettiğimiz
+    // rate-limit timestamp'ini geri alırız. Böylece hash-verified
+    // trusted peer gate'de yakalanan sayaca tabi olmaz, ama
+    // peer-controlled string (name/id) spoof'u muafiyet kazandırmaz.
+    if let Some(h) = *peer_secret_id_hash {
+        if state.settings.read().is_trusted_by_hash(&h) {
+            state.rate_limiter.forget_most_recent(peer.ip());
+            info!(
+                "[{}] trusted hash doğrulandı — rate-limit kaydı geri alındı",
+                peer
+            );
+        }
+    }
+    send_sharing_frame(socket, ctx, &build_paired_key_result()).await?;
+    *sent_paired_result = true;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+/// Introduction frame'indeki dosya meta verilerini işler ve geçici placeholder dosyaları hazırlar.
+async fn gather_introduction_files(
+    peer: &SocketAddr,
+    intro: &crate::sharing::nearby::IntroductionFrame,
+    active_capabilities: crate::capabilities::ActiveCapabilities,
+    state: &AppState,
+    auth_key: &[u8],
+) -> Result<(
+    Vec<FileSummary>,
+    Vec<(i64, std::path::PathBuf, String, i64)>,
+    Vec<(i64, i64, std::path::PathBuf)>,
+)> {
+    let folder_active = active_capabilities.has(crate::capabilities::features::FOLDER_STREAM_V1);
+    let mut summaries = Vec::new();
+    let mut planned_files: Vec<(i64, std::path::PathBuf, String, i64)> = Vec::new();
+    let mut planned_bundles: Vec<(i64, i64, std::path::PathBuf)> = Vec::new();
+
+    for f in &intro.file_metadata {
+        let name = f.name.clone().unwrap_or_else(|| "dosya".into());
+        let raw_size = f.size.unwrap_or(0);
+        let size = match crate::file_size_guard::classify_file_size(raw_size) {
+            crate::file_size_guard::FileSizeGuard::Accept(s) => s,
+            crate::file_size_guard::FileSizeGuard::Clamped => {
+                warn!(
+                    "[{}] FileMetadata.size negatif ({}) — 0'a clamp edildi (ad: {})",
+                    peer,
+                    raw_size,
+                    crate::log_redact::path_basename(std::path::Path::new(&name))
+                );
+                0
+            }
+            crate::file_size_guard::FileSizeGuard::Reject => {
+                warn!(
+                    "[{}] FileMetadata.size MAX_FILE_BYTES sınırını aştı ({} > {}) — Introduction reddediliyor",
+                    peer,
+                    raw_size,
+                    crate::file_size_guard::MAX_FILE_BYTES
+                );
+                for (_pid, path, _name, _size) in &planned_files {
+                    if let Err(e) = std::fs::remove_file(path) {
+                        if e.kind() != std::io::ErrorKind::NotFound {
+                            tracing::debug!(
+                                "size-guard cleanup: placeholder silinemedi {}: {}",
+                                crate::log_redact::path_basename(path),
+                                e
+                            );
+                        }
+                    }
+                }
+                return Err(HekaError::PayloadSizeAbsurd(raw_size).into());
+            }
+        };
+        summaries.push(FileSummary {
+            name: name.clone(),
+            size,
+        });
+        if let Some(pid) = f.payload_id {
+            let mime = f.mime_type.as_deref().unwrap_or("");
+            if mime == FOLDER_BUNDLE_MIME && folder_active {
+                let downloads_dir = state
+                    .settings
+                    .read()
+                    .resolved_download_dir(|| state.default_download_dir.clone());
+                #[expect(
+                    clippy::cast_sign_loss,
+                    reason = "bit-cast for hex rendering — matches meta_filename"
+                )]
+                let session_hex =
+                    format!("{:016x}", crate::resume::session_id_i64(auth_key) as u64);
+                let bundle_path =
+                    downloads_dir.join(format!(".hekadrop-temp-{session_hex}.bundle"));
+
+                let resume_eligible =
+                    if active_capabilities.has(crate::capabilities::features::RESUME_V1) {
+                        let sid = crate::resume::session_id_i64(auth_key);
+                        let name_owned = name.clone();
+                        let bundle_path_owned = bundle_path.clone();
+                        tokio::task::spawn_blocking(move || {
+                            crate::resume::partial_dir().ok().is_some_and(|dir| {
+                                resolve_resume_path(&dir, sid, pid, &name_owned, size)
+                                    .is_some_and(|rp| rp == bundle_path_owned)
+                            })
+                        })
+                        .await
+                        .context("resume_eligible spawn_blocking join")?
+                    } else {
+                        false
+                    };
+                if resume_eligible {
+                    tracing::info!(
+                        "[{}] folder bundle resume eligible — partial korunuyor: {}",
+                        peer,
+                        crate::log_redact::path_basename(&bundle_path)
+                    );
+                } else {
+                    tokio::task::block_in_place(|| -> Result<()> {
+                        std::fs::create_dir_all(&downloads_dir).ok();
+                        let _ = std::fs::remove_file(&bundle_path);
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&bundle_path)
+                            .with_context(|| {
+                                format!(
+                                    "bundle placeholder rezerve edilemedi: {}",
+                                    bundle_path.display()
+                                )
+                            })?;
+                        Ok(())
+                    })?;
+                }
+                let attachment_hash = f.attachment_hash.unwrap_or(0);
+                info!(
+                    "[{}] folder bundle Introduction: payload_id={}, mime={}, attachment_hash={:#018x}",
+                    peer, pid, FOLDER_BUNDLE_MIME, attachment_hash
+                );
+                planned_files.push((pid, bundle_path, name, size));
+                planned_bundles.push((pid, attachment_hash, downloads_dir));
+            } else {
+                if mime == FOLDER_BUNDLE_MIME && !folder_active {
+                    warn!(
+                        "[{}] folder bundle MIME geldi ama FOLDER_STREAM_V1 negotiate edilmemiş — raw .hekabundle save (spec §7)",
+                        peer
+                    );
+                }
+                let target = tokio::task::block_in_place(|| unique_downloads_path(&name, state))?;
+                planned_files.push((pid, target, name, size));
+            }
+        }
+    }
+    Ok((summaries, planned_files, planned_bundles))
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "consent prompt parameters passed down"
+)]
+/// Kullanıcının transfer talebini kabul edip etmeyeceğine karar veren onay akışını yürütür.
+async fn determine_introduction_consent(
+    peer: &SocketAddr,
+    state: &AppState,
+    remote_name: &str,
+    remote_id: &str,
+    pin_code: &str,
+    peer_secret_id_hash: Option<[u8; 6]>,
+    ui: &dyn UiPort,
+    summaries: &[FileSummary],
+    text_count: usize,
+    planned_bundles: &[(i64, i64, std::path::PathBuf)],
+    planned_files: &[(i64, std::path::PathBuf, String, i64)],
+) -> (bool, AcceptDecision) {
+    let trusted = {
+        let s = state.settings.read();
+        match peer_secret_id_hash {
+            Some(h) => s.is_trusted_by_hash(&h),
+            None => s.is_trusted_legacy(remote_name, remote_id),
+        }
+    };
+
+    let auto_accept = state.settings.read().auto_accept;
+
+    let migration_hint = peer_secret_id_hash.is_some() && !trusted && {
+        let s = state.settings.read();
+        s.is_trusted_legacy(remote_name, remote_id)
+    };
+
+    let decision = if trusted {
+        info!("[{}] trusted cihaz → otomatik kabul", peer);
+        if let Some(h) = peer_secret_id_hash {
+            let snap = {
+                let mut s = state.settings.write();
+                s.touch_trusted_by_hash(&h);
+                s.clone()
+            };
+            state.try_save_settings(snap);
+        }
+        AcceptDecision::Accept
+    } else if auto_accept {
+        info!("[{}] settings.auto_accept=true → otomatik kabul", peer);
+        AcceptDecision::Accept
+    } else {
+        if migration_hint {
+            info!(
+                "[{}] legacy → hash migration dialog'u gösteriliyor: {}",
+                peer, remote_name
+            );
+            ui.notify(UiNotification::TrustMigrationHint {
+                device: remote_name.to_string(),
+                pin: pin_code.to_string(),
+            });
+        }
+        let folder_summary = build_folder_prompt_summary(planned_bundles, planned_files);
+        ui.prompt_accept(
+            remote_name,
+            pin_code,
+            summaries,
+            text_count,
+            folder_summary.as_ref(),
+        )
+        .await
+    };
+
+    let ok = !matches!(decision, AcceptDecision::Reject);
+    (ok, decision)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "introduction response orchestration"
+)]
+#[allow(clippy::too_many_lines)]
+/// Kullanıcının onay kararına göre transfer sürecini nihayete erdirir, payload'ları tescil eder.
+async fn finalize_introduction_acceptance(
+    peer: &SocketAddr,
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    assembler: &mut PayloadAssembler,
+    state: &AppState,
+    remote_name: &str,
+    remote_id: &str,
+    peer_secret_id_hash: Option<[u8; 6]>,
+    ui: &dyn UiPort,
+    decision: AcceptDecision,
+    ok: bool,
+    planned_files: Vec<(i64, std::path::PathBuf, String, i64)>,
+    planned_bundles: Vec<(i64, i64, std::path::PathBuf)>,
+    planned_texts: Vec<(i64, TextType)>,
+    pending_names: &mut HashMap<i64, String>,
+    pending_texts: &mut HashMap<i64, TextType>,
+    auth_key: &[u8],
+    active_capabilities: crate::capabilities::ActiveCapabilities,
+) -> Result<FlowOutcome> {
+    if matches!(decision, AcceptDecision::Accept) {
+        if let Some(h) = peer_secret_id_hash {
+            let needs_upgrade = {
+                let s = state.settings.read();
+                s.is_trusted_legacy(remote_name, remote_id) && !s.is_trusted_by_hash(&h)
+            };
+            if needs_upgrade {
+                let snap = {
+                    let mut s = state.settings.write();
+                    s.add_trusted_with_hash(remote_name, remote_id, h);
+                    s.clone()
+                };
+                state.try_save_settings(snap);
+                info!(
+                    "[{}] legacy trust kaydı secret_id_hash ile yükseltildi: {}",
+                    peer, remote_name
+                );
+            }
+        }
+    }
+
+    if matches!(decision, AcceptDecision::AcceptAndTrust) {
+        let snap = {
+            let mut s = state.settings.write();
+            if let Some(h) = peer_secret_id_hash {
+                s.add_trusted_with_hash(remote_name, remote_id, h);
+            } else {
+                info!(
+                    "[{}] peer secret_id_hash göndermedi — legacy trust kaydı yazıldı",
+                    peer
+                );
+                s.add_trusted(remote_name, remote_id);
+            }
+            s.clone()
+        };
+        state.try_save_settings(snap);
+        info!(
+            "[{}] cihaz trusted listeye eklendi: {} (id: {})",
+            peer,
+            remote_name,
+            if remote_id.is_empty() {
+                "<yok>"
+            } else {
+                remote_id
+            }
+        );
+        ui.notify(UiNotification::ToastRaw {
+            title: "HekaDrop".to_string(),
+            body: format!("{remote_name} artık güvenilir cihaz"),
+        });
+    }
+
+    if ok {
+        let resume_active = active_capabilities.has(crate::capabilities::features::RESUME_V1);
+        let session_id = resume_active.then(|| crate::resume::session_id_i64(auth_key));
+        let cached_partial_dir = if session_id.is_some() {
+            crate::resume::partial_dir().ok()
+        } else {
+            None
+        };
+
+        for (pid, fresh_path, display_name, announced_size) in planned_files {
+            let actual_path =
+                if let (Some(sid), Some(dir)) = (session_id, cached_partial_dir.as_deref()) {
+                    match resolve_resume_path(dir, sid, pid, &display_name, announced_size) {
+                        Some(resume_path) => {
+                            if fresh_path != resume_path {
+                                if let Err(e) = std::fs::remove_file(&fresh_path) {
+                                    if e.kind() != std::io::ErrorKind::NotFound {
+                                        tracing::debug!(
+                                            "[{}] resume swap: fresh placeholder silinemedi {}: {}",
+                                            peer,
+                                            crate::log_redact::path_basename(&fresh_path),
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                            tracing::info!(
+                                "[{}] resume aktif: payload_id={} → mevcut .part'a devam ({})",
+                                peer,
+                                pid,
+                                crate::log_redact::path_basename(&resume_path)
+                            );
+                            resume_path
+                        }
+                        None => fresh_path,
+                    }
+                } else {
+                    fresh_path
+                };
+
+            assembler
+                .register_file_destination(pid, actual_path)
+                .context("dosya hedefi kaydı")?;
+            pending_names.insert(pid, display_name.clone());
+
+            if let Some((_, attach_hash, dl_dir)) =
+                planned_bundles.iter().find(|(b_pid, _, _)| *b_pid == pid)
+            {
+                #[expect(
+                    clippy::cast_sign_loss,
+                    reason = "bit-cast for hex rendering — matches meta_filename"
+                )]
+                let session_hex =
+                    format!("{:016x}", crate::resume::session_id_i64(auth_key) as u64);
+                assembler.register_bundle_marker(
+                    pid,
+                    crate::payload::BundleMarker {
+                        expected_manifest_sha256_prefix: *attach_hash,
+                        extract_root_dir: dl_dir.clone(),
+                        session_id_hex_lower: session_hex,
+                    },
+                );
+            }
+
+            if let (Some(sid), Some(dir)) = (session_id, cached_partial_dir.as_deref()) {
+                if let Err(e) = handle_resume_for_file(
+                    socket,
+                    ctx,
+                    assembler,
+                    dir,
+                    sid,
+                    pid,
+                    &display_name,
+                    announced_size,
+                    remote_id,
+                )
+                .await
+                {
+                    tracing::debug!("[{}] resume handler skip (payload_id={}): {}", peer, pid, e);
+                }
+            }
+        }
+        for (pid, kind) in planned_texts {
+            pending_texts.insert(pid, kind);
+        }
+        send_sharing_frame(socket, ctx, &build_consent_accept()).await?;
+        info!("[{}] ✓ kullanıcı kabul etti", peer);
+    } else {
+        for (_pid, path, _name, _size) in &planned_files {
+            if let Err(e) = std::fs::remove_file(path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::debug!(
+                        "reject cleanup: placeholder silinemedi {}: {}",
+                        crate::log_redact::path_basename(path),
+                        e
+                    );
+                }
+            }
+        }
+        send_sharing_frame(socket, ctx, &build_consent_reject()).await?;
+        info!("[{}] ✗ kullanıcı reddetti", peer);
+        ui.notify(UiNotification::ToastRaw {
+            title: "HekaDrop".to_string(),
+            body: format!("{remote_name}: aktarım reddedildi"),
+        });
+        return Ok(FlowOutcome::Disconnect);
+    }
+
+    Ok(FlowOutcome::Continue)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "introduction frame handler — context arguments passed down"
+)]
+/// Introduction frame'ini karşılar, alt aşamaları koordine eder ve `FlowOutcome` döner.
+async fn handle_introduction_frame(
+    peer: &SocketAddr,
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    assembler: &mut PayloadAssembler,
+    v1: &ShV1Frame,
+    remote_name: &str,
+    remote_id: &str,
+    pin_code: &str,
+    accepted_flag: &mut bool,
+    pending_texts: &mut HashMap<i64, TextType>,
+    pending_names: &mut HashMap<i64, String>,
+    peer_secret_id_hash: Option<[u8; 6]>,
+    ui: &dyn UiPort,
+    state: &AppState,
+    auth_key: &[u8],
+    active_capabilities: crate::capabilities::ActiveCapabilities,
+) -> Result<FlowOutcome> {
+    let intro = v1
+        .introduction
+        .as_ref()
+        .ok_or_else(|| anyhow!("introduction yok"))?;
+    let file_count = intro.file_metadata.len();
+    let text_count = intro.text_metadata.len();
+
+    if file_count > 1000 || text_count > 64 {
+        return Err(HekaError::IntroductionFlood {
+            files: file_count,
+            texts: text_count,
+        }
+        .into());
+    }
+
+    info!(
+        "[{}] Introduction: {} dosya, {} metin",
+        peer, file_count, text_count
+    );
+
+    let (summaries, planned_files, planned_bundles) =
+        gather_introduction_files(peer, intro, active_capabilities, state, auth_key).await?;
+
+    let mut planned_texts = Vec::new();
+    for tm in &intro.text_metadata {
+        let kind = TextType::try_from(tm.r#type.unwrap_or(0)).unwrap_or(TextType::Unknown);
+        if let Some(pid) = tm.payload_id {
+            planned_texts.push((pid, kind));
+        }
+    }
+
+    let (ok, decision) = determine_introduction_consent(
+        peer,
+        state,
+        remote_name,
+        remote_id,
+        pin_code,
+        peer_secret_id_hash,
+        ui,
+        &summaries,
+        text_count,
+        &planned_bundles,
+        &planned_files,
+    )
+    .await;
+
+    *accepted_flag = ok;
+
+    finalize_introduction_acceptance(
+        peer,
+        socket,
+        ctx,
+        assembler,
+        state,
+        remote_name,
+        remote_id,
+        peer_secret_id_hash,
+        ui,
+        decision,
+        ok,
+        planned_files,
+        planned_bundles,
+        planned_texts,
+        pending_names,
+        pending_texts,
+        auth_key,
+        active_capabilities,
+    )
+    .await
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "RFC-0001 §5 — handler call-graph (15 arg: socket/ctx/assembler/ui/state/...); HandlerCtx struct refactor v0.9'a defer"
@@ -860,573 +1422,37 @@ async fn handle_sharing_frame(
     let t = v1.r#type.and_then(|t| sh_v1::FrameType::try_from(t).ok());
     match t {
         Some(sh_v1::FrameType::PairedKeyEncryption) if !*sent_paired_result => {
-            // Issue #17: peer'ın secret_id_hash'ini yakala. 6 bayt olmayan
-            // değerler (eski / bozuk peer) yok sayılır → legacy fallback.
-            if let Some(pke) = v1.paired_key_encryption.as_ref() {
-                if let Some(raw) = pke.secret_id_hash.as_ref() {
-                    if raw.len() == 6 {
-                        let mut h = [0u8; 6];
-                        h.copy_from_slice(raw);
-                        *peer_secret_id_hash = Some(h);
-                    } else {
-                        info!(
-                            "[{}] peer secret_id_hash beklenen 6 bayt değil ({}) — legacy fallback",
-                            peer,
-                            raw.len()
-                        );
-                    }
-                }
-            }
-            // Issue #17 post-hoc muafiyet: Hash-first trust kararı burada
-            // doğrulanırsa, `handle` fonksiyonunun gate'inde kaydettiğimiz
-            // rate-limit timestamp'ini geri alırız. Böylece hash-verified
-            // trusted peer gate'de yakalanan sayaca tabi olmaz, ama
-            // peer-controlled string (name/id) spoof'u muafiyet kazandırmaz.
-            if let Some(h) = *peer_secret_id_hash {
-                if state.settings.read().is_trusted_by_hash(&h) {
-                    state.rate_limiter.forget_most_recent(peer.ip());
-                    info!(
-                        "[{}] trusted hash doğrulandı — rate-limit kaydı geri alındı",
-                        peer
-                    );
-                }
-            }
-            send_sharing_frame(socket, ctx, &build_paired_key_result()).await?;
-            *sent_paired_result = true;
+            handle_pke_frame(
+                peer,
+                socket,
+                ctx,
+                v1,
+                sent_paired_result,
+                peer_secret_id_hash,
+                state,
+            )
+            .await?;
         }
-        #[expect(
-            clippy::match_same_arms,
-            reason = "PROTO: Explicit no-op (catch-all'a düşmesin diye yazılı): biz \
-                      `build_paired_key_result()` gönderdik, peer'ın aynısını geri yollayışı \
-                      protokol gereği — dokümante edilmiş expected frame, action yok. Match \
-                      arm clippy::match_same_arms `_ => {}`'ye birleştir önerirse anlam \
-                      kaybı; expect ile koruyoruz."
-        )]
-        Some(sh_v1::FrameType::PairedKeyResult) => {}
         Some(sh_v1::FrameType::Introduction) => {
-            let intro = v1
-                .introduction
-                .as_ref()
-                .ok_or_else(|| anyhow!("introduction yok"))?;
-            let file_count = intro.file_metadata.len();
-            let text_count = intro.text_metadata.len();
-
-            // SECURITY: `prost` repeated alan cardinality sınırlaması uygulamıyor;
-            // saldırgan milyonlarca `file_metadata` göndererek UI dialog'u
-            // donduracak kadar Vec allocation + `prompt_accept` summary render
-            // maliyeti yaratabilir. Quick Share pratikte tek aktarımda
-            // yüzlerce dosya yeterli — 1000 cömert üst sınır.
-            if file_count > 1000 || text_count > 64 {
-                return Err(HekaError::IntroductionFlood {
-                    files: file_count,
-                    texts: text_count,
-                }
-                .into());
-            }
-
-            info!(
-                "[{}] Introduction: {} dosya, {} metin",
-                peer, file_count, text_count
-            );
-
-            let mut summaries: Vec<FileSummary> = Vec::new();
-            // RFC-0004 §3.3: planned_files'a announced size eklendi —
-            // resume `.meta` validate'inde `meta.total_size == introduction.size`
-            // invariant'ı için. Sender Introduction'da büyüklüğü bildirir;
-            // mismatch → stale meta sil + fresh transfer.
-            let mut planned_files: Vec<(i64, std::path::PathBuf, String, i64)> = Vec::new();
-            // RFC-0005 §6: bundle marker'ları paralel olarak biriktir; consent
-            // accept sonrası `register_bundle_marker` ile assembler'a tanıtılır.
-            // Tuple: (payload_id, expected_attachment_hash_prefix, downloads_dir_clone).
-            let mut planned_bundles: Vec<(i64, i64, std::path::PathBuf)> = Vec::new();
-            // RFC-0005 §6: folder capability aktif mi — Introduction'daki
-            // bundle MIME marker'ını ya extract pipeline'a yönlendirir ya da
-            // raw `.hekabundle` save fallback'i (capability inactive).
-            let folder_active =
-                active_capabilities.has(crate::capabilities::features::FOLDER_STREAM_V1);
-            for f in &intro.file_metadata {
-                let name = f.name.clone().unwrap_or_else(|| "dosya".into());
-                let raw_size = f.size.unwrap_or(0);
-                let size = match crate::file_size_guard::classify_file_size(raw_size) {
-                    crate::file_size_guard::FileSizeGuard::Accept(s) => s,
-                    crate::file_size_guard::FileSizeGuard::Clamped => {
-                        warn!(
-                            "[{}] FileMetadata.size negatif ({}) — 0'a clamp edildi (ad: {})",
-                            peer,
-                            raw_size,
-                            crate::log_redact::path_basename(std::path::Path::new(&name))
-                        );
-                        0
-                    }
-                    crate::file_size_guard::FileSizeGuard::Reject => {
-                        warn!(
-                            "[{}] FileMetadata.size MAX_FILE_BYTES sınırını aştı ({} > {}) — Introduction reddediliyor",
-                            peer,
-                            raw_size,
-                            crate::file_size_guard::MAX_FILE_BYTES
-                        );
-                        for (_pid, path, _name, _size) in &planned_files {
-                            if let Err(e) = std::fs::remove_file(path) {
-                                if e.kind() != std::io::ErrorKind::NotFound {
-                                    tracing::debug!(
-                                        "size-guard cleanup: placeholder silinemedi {}: {}",
-                                        crate::log_redact::path_basename(path),
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                        send_sharing_frame(socket, ctx, &build_sharing_cancel()).await?;
-                        return Err(HekaError::PayloadSizeAbsurd(raw_size).into());
-                    }
-                };
-                summaries.push(FileSummary {
-                    name: name.clone(),
-                    size,
-                });
-                if let Some(pid) = f.payload_id {
-                    // RFC-0005 §6 — bundle MIME tespiti. Capability aktif ise
-                    // `.bundle` temp path'e route et + bundle marker biriktir.
-                    // Capability inactive ise spec §7 receiver-side defensive:
-                    // raw `.hekabundle` olarak Downloads'a düşür (mevcut akış,
-                    // unique_downloads_path) + warn log.
-                    let mime = f.mime_type.as_deref().unwrap_or("");
-                    if mime == FOLDER_BUNDLE_MIME && folder_active {
-                        // Bundle path: ~/Downloads/.hekadrop-temp-<sid>.bundle.
-                        // Session id auth_key'den; aynı session içinde paralel
-                        // bundle pratikte yok (sender tek bundle/payload).
-                        let downloads_dir = state
-                            .settings
-                            .read()
-                            .resolved_download_dir(|| state.default_download_dir.clone());
-                        // INVARIANT (CLAUDE.md I-2): bit-cast — i64 → u64
-                        // hex render, no value change.
-                        #[expect(
-                            clippy::cast_sign_loss,
-                            reason = "bit-cast for hex rendering — matches meta_filename"
-                        )]
-                        let session_hex =
-                            format!("{:016x}", crate::resume::session_id_i64(auth_key) as u64);
-                        let bundle_path =
-                            downloads_dir.join(format!(".hekadrop-temp-{session_hex}.bundle"));
-                        // RFC-0005 PR-E: bundle resume eligibility pre-check.
-                        // Bundle path session-deterministik (auth_key →
-                        // session_id_i64 → hex). Re-handshake'te aynı session
-                        // hex döndüğü için bundle_path da aynı olur. Eğer
-                        // önceki handshake'ten valid `.meta` + non-empty
-                        // partial bundle dosyası varsa onu KORUMALI; aksi
-                        // halde fresh placeholder (önceki crash artığı /
-                        // farklı session). I-5 invariant: peer-controlled
-                        // payload_id + announced size validate edilmeden
-                        // remove etmiyoruz.
-                        // RFC-0005 audit defer: `resume_eligible` hesabı
-                        // `partial_dir` (mkdir best-effort) + `resolve_resume_path`
-                        // (PartialMeta::load = fs::read + serde_json) blocking I/O
-                        // yapar. Async runtime worker'ı tıkamamak için
-                        // `spawn_blocking` ile sar — task panic ederse JoinError
-                        // zincirlenir, içsel `Ok(bool)` dönüyor (hata yok).
-                        let resume_eligible =
-                            if active_capabilities.has(crate::capabilities::features::RESUME_V1) {
-                                let sid = crate::resume::session_id_i64(auth_key);
-                                let name_owned = name.clone();
-                                let bundle_path_owned = bundle_path.clone();
-                                tokio::task::spawn_blocking(move || {
-                                    crate::resume::partial_dir().ok().is_some_and(|dir| {
-                                        resolve_resume_path(&dir, sid, pid, &name_owned, size)
-                                            .is_some_and(|rp| rp == bundle_path_owned)
-                                    })
-                                })
-                                .await
-                                .with_context(|| "resume_eligible spawn_blocking join")?
-                            } else {
-                                false
-                            };
-                        if resume_eligible {
-                            tracing::info!(
-                                "[{}] folder bundle resume eligible — partial korunuyor: {}",
-                                peer,
-                                crate::log_redact::path_basename(&bundle_path)
-                            );
-                        } else {
-                            // create_dir_all + atomic placeholder reserve (TOCTOU).
-                            // Bundle marker'ı `planned_bundles` içine biriktirilir;
-                            // `register_bundle_marker` consent accept sonrası
-                            // çağrılır ki cancel/reject yolunda gereksiz state
-                            // kalmasın.
-                            tokio::task::block_in_place(|| -> Result<()> {
-                                std::fs::create_dir_all(&downloads_dir).ok();
-                                // Placeholder reserve — eski .bundle kalıntısı
-                                // varsa temizle (önceki crash artığı).
-                                let _ = std::fs::remove_file(&bundle_path);
-                                std::fs::OpenOptions::new()
-                                    .write(true)
-                                    .create_new(true)
-                                    .open(&bundle_path)
-                                    .with_context(|| {
-                                        format!(
-                                            "bundle placeholder rezerve edilemedi: {}",
-                                            bundle_path.display()
-                                        )
-                                    })?;
-                                Ok(())
-                            })?;
-                        }
-                        let attachment_hash = f.attachment_hash.unwrap_or(0);
-                        info!(
-                            "[{}] folder bundle Introduction: payload_id={}, mime={}, attachment_hash={:#018x}",
-                            peer, pid, FOLDER_BUNDLE_MIME, attachment_hash
-                        );
-                        planned_files.push((pid, bundle_path, name, size));
-                        planned_bundles.push((pid, attachment_hash, downloads_dir));
-                    } else {
-                        if mime == FOLDER_BUNDLE_MIME && !folder_active {
-                            // Spec §7 defensive — capability advertise edilmedi
-                            // ama sender bundle gönderdi. Raw `.hekabundle`
-                            // olarak save (no extraction).
-                            warn!(
-                                "[{}] folder bundle MIME geldi ama FOLDER_STREAM_V1 negotiate edilmemiş — raw .hekabundle save (spec §7)",
-                                peer
-                            );
-                        }
-                        // `unique_downloads_path` `std::fs::create_dir_all` +
-                        // `OpenOptions::create_new` (atomic placeholder reserve) gibi
-                        // sync I/O yapar; worker thread bloklamamak için
-                        // `block_in_place` (multi-thread runtime'da scheduler'ı
-                        // bilgilendirir, result inline alınır). PR #93 Gemini review.
-                        let target =
-                            tokio::task::block_in_place(|| unique_downloads_path(&name, state))?;
-                        planned_files.push((pid, target, name, size));
-                    }
-                }
-            }
-
-            let mut planned_texts: Vec<(i64, TextType)> = Vec::new();
-            for tm in &intro.text_metadata {
-                let kind = TextType::try_from(tm.r#type.unwrap_or(0)).unwrap_or(TextType::Unknown);
-                if let Some(pid) = tm.payload_id {
-                    planned_texts.push((pid, kind));
-                }
-            }
-
-            // Karar mantığı (Issue #17):
-            //   1) Peer secret_id_hash gönderdiyse → YALNIZ hash eşleşmesi
-            //      trust'a yeterlidir. Legacy `(name, id)` fallback bu yolda
-            //      devreye alınmaz.
-            //   2) Peer hash göndermediyse (pre-v0.6 peer) → legacy
-            //      `(name, id)` eşleşmesi (3 sürümlük uyumluluk penceresi).
-            //   3) Settings.auto_accept → dialog atla.
-            //   4) Aksi halde dialog göster (3 seçenek: reddet/kabul/kabul+güven).
-            //
-            // SECURITY (PR #35 review — Copilot HIGH, discussion_r3107564927):
-            // PR #35'in ilk fix'i `Some(h) => is_trusted_by_hash(h) ||
-            // is_trusted_legacy(name, id)` kullanıyordu. Bu OR fallback
-            // legacy `(name, id)` spoofing vektörünü geri açmıştı: attacker
-            // kurbanın endpoint-id + cihaz adını öğrenir → hash gönderir →
-            // legacy kaydı OR ile eşleşir → auto-accept → "opportunistic
-            // upgrade" attacker'ın hash'ini kalıcı olarak kayda bağlar.
-            // Bundan sonra legacy fallback kaldırılsa bile attacker sessiz
-            // bypass ile trusted kalır.
-            //
-            // Legacy kullanıcı migration UX: v0.5 → v0.6 geçişinde legitimate
-            // cihazın ilk hash-gönderili bağlantısında dialog ONE-TIME çıkar
-            // (çünkü hash henüz kayıtta yok). Kullanıcı Accept / Accept+Trust
-            // dediğinde aşağıdaki opportunistic upgrade hash'i legacy kayda
-            // bağlar; sonraki bağlantılar hash-first trusted, dialog yok.
-            // Bu migration-dialog-cost spoofing engelinin doğru bedelidir.
-            let trusted = {
-                let s = state.settings.read();
-                match peer_secret_id_hash {
-                    Some(h) => s.is_trusted_by_hash(h),
-                    None => s.is_trusted_legacy(remote_name, remote_id),
-                }
-            };
-
-            // TODO(ux): peer hash gönderdiği halde is_trusted_by_hash false ama
-            // is_trusted_legacy true ise — bu "v0.5 legacy kullanıcı ilk v0.6
-            // bağlantısı" senaryosudur. Dialog prompt'unu customize etmek
-            // kullanıcıya one-time dialog'un nedenini açıklar
-            // ("Önceki güvenilir cihazın yeni kimliği doğrulanıyor…").
-            // prompt_accept() imzası şu an custom prompt kabul etmediği için
-            // (macOS/Windows/Linux 3 ayrı blocking fn) bu polish atlandı.
-
-            let auto_accept = state.settings.read().auto_accept;
-
-            // Dalga 3 UX: Peer hash göndermiş olduğu halde hash kayıtta yoksa,
-            // `(name, id)` legacy kaydı varsa — bu "v0.5 → v0.6 migration"
-            // senaryosudur. Dialog açılmadan önce kullanıcıya nedenini
-            // açıklayan bir bildirim gönder; aksi halde tanıdık cihaz için
-            // birden dialog görünce "güveni zedelenmiş mi?" tereddüdü doğar.
-            let migration_hint = peer_secret_id_hash.is_some() && !trusted && {
-                let s = state.settings.read();
-                s.is_trusted_legacy(remote_name, remote_id)
-            };
-
-            let decision = if trusted {
-                info!("[{}] trusted cihaz → otomatik kabul", peer);
-                // Sliding-window TTL: aktif kullanım varsa timestamp'i yenile.
-                if let Some(h) = peer_secret_id_hash {
-                    let snap = {
-                        let mut s = state.settings.write();
-                        s.touch_trusted_by_hash(h);
-                        s.clone()
-                    };
-                    // PR #93 + #109: try_save_settings = spawn_blocking +
-                    // persistence_blocked guard (bozuk config korunsun).
-                    state.try_save_settings(snap);
-                }
-                AcceptDecision::Accept
-            } else if auto_accept {
-                info!("[{}] settings.auto_accept=true → otomatik kabul", peer);
-                AcceptDecision::Accept
-            } else {
-                if migration_hint {
-                    info!(
-                        "[{}] legacy → hash migration dialog'u gösteriliyor: {}",
-                        peer, remote_name
-                    );
-                    ui.notify(UiNotification::TrustMigrationHint {
-                        device: remote_name.to_string(),
-                        pin: pin_code.to_string(),
-                    });
-                }
-                // RFC-0005 PR-F: peer Introduction'da bundle MIME marker
-                // gönderdiyse `planned_bundles` non-empty. UI'a klasör
-                // summary'i geç → dialog body "klasör — N dosya, X MB"
-                // satırı ile zenginleşir. Sender `build_introduction_folder`
-                // bundle marker + her bir inner file için ek FileMetadata
-                // gönderir; entry_count = (toplam planned_files) − (bundle
-                // marker count) = manifest'teki file entry sayısı.
-                let folder_summary = build_folder_prompt_summary(&planned_bundles, &planned_files);
-                ui.prompt_accept(
-                    remote_name,
-                    pin_code,
-                    &summaries,
-                    text_count,
-                    folder_summary.as_ref(),
-                )
-                .await
-            };
-
-            let ok = !matches!(decision, AcceptDecision::Reject);
-            *accepted_flag = ok;
-
-            // Opportunistic legacy → hash upgrade.
-            //
-            // SECURITY (Copilot review #34 HIGH): **yalnızca** kullanıcı
-            // kabul ettiyse çalışır. Önceki kod dialog öncesinde, kararın
-            // farkında olmadan upgrade yapıyordu — attacker bağlanır, kullanıcı
-            // reddeder, ama attacker'ın hash'i legacy kayda bağlanmış olurdu;
-            // bir sonraki bağlantısında hash-first kararla sessizce auto-accept
-            // edilirdi (dialog bypass).
-            //
-            // Tasarım (design 017 §5.2): "user zaten 'bu cihazı güven' demişti"
-            // — yani legacy kayıt varsa ve kullanıcı ŞU ANDAKİ bağlantıyı
-            // reddetmiyorsa hash'i işle. `AcceptAndTrust` branch'i zaten
-            // `add_trusted_with_hash` ile upgrade eder (legacy match → hash
-            // doldurulur); burada sadece düz `Accept` + legacy varsa enrich
-            // ederiz. Reject yolunda hiçbir zaman çalışmaz.
-            if matches!(decision, AcceptDecision::Accept) {
-                if let Some(h) = peer_secret_id_hash {
-                    let needs_upgrade = {
-                        let s = state.settings.read();
-                        s.is_trusted_legacy(remote_name, remote_id) && !s.is_trusted_by_hash(h)
-                    };
-                    if needs_upgrade {
-                        let snap = {
-                            let mut s = state.settings.write();
-                            s.add_trusted_with_hash(remote_name, remote_id, *h);
-                            s.clone()
-                        };
-                        state.try_save_settings(snap);
-                        info!(
-                            "[{}] legacy trust kaydı secret_id_hash ile yükseltildi: {}",
-                            peer, remote_name
-                        );
-                    }
-                }
-            }
-
-            if matches!(decision, AcceptDecision::AcceptAndTrust) {
-                let snap = {
-                    let mut s = state.settings.write();
-                    if let Some(h) = peer_secret_id_hash {
-                        s.add_trusted_with_hash(remote_name, remote_id, *h);
-                    } else {
-                        // Peer hash göndermedi — legacy kayıt yazılır.
-                        // Üç sürüm sonra (v0.7) bu yol kaldırılacak; o zamana
-                        // kadar kullanıcı trust seçtiği halde spec'e uymayan
-                        // peer'lar çalışmaya devam etsin.
-                        info!(
-                            "[{}] peer secret_id_hash göndermedi — legacy trust kaydı yazıldı",
-                            peer
-                        );
-                        s.add_trusted(remote_name, remote_id);
-                    }
-                    s.clone()
-                };
-                state.try_save_settings(snap);
-                info!(
-                    "[{}] cihaz trusted listeye eklendi: {} (id: {})",
-                    peer,
-                    remote_name,
-                    if remote_id.is_empty() {
-                        "<yok>"
-                    } else {
-                        remote_id
-                    }
-                );
-                ui.notify(UiNotification::ToastRaw {
-                    title: "HekaDrop".to_string(),
-                    body: format!("{remote_name} artık güvenilir cihaz"),
-                });
-            }
-
-            if ok {
-                // RFC-0004 §3.3: capability gate. RESUME_V1 aktif olmadıkça
-                // hiçbir `.meta` dosyası okunmaz/yazılmaz/emit edilmez —
-                // mevcut path tamamen değişmez. Şu an `ALL_SUPPORTED` `RESUME_V1`
-                // içermediği için pratikte unreachable; PR-F'de feature
-                // bit aktive olunca devreye girer.
-                let resume_active =
-                    active_capabilities.has(crate::capabilities::features::RESUME_V1);
-                let session_id = resume_active.then(|| crate::resume::session_id_i64(auth_key));
-                // PR #133 medium: `partial_dir()` her dosya için ayrı çağrılıyordu
-                // (`resolve_resume_path` + `handle_resume_for_file`). Loop ÖNCESİ
-                // tek sefer hesapla — N dosya için 2N→1 dizin ensure I/O. None →
-                // HOME yok / mkdir başarısız → resume tamamen skip (fresh transfer).
-                let cached_partial_dir: Option<std::path::PathBuf> = if session_id.is_some() {
-                    crate::resume::partial_dir().ok()
-                } else {
-                    None
-                };
-                for (pid, fresh_path, display_name, announced_size) in planned_files {
-                    // PR-G: RESUME_V1 + meta valid + meta.dest_path mevcut →
-                    // fresh placeholder'ı sil + meta.dest_path'i register et
-                    // (mevcut `.part` üstüne devam). Aksi halde fresh_path.
-                    let actual_path = if let (Some(sid), Some(dir)) =
-                        (session_id, cached_partial_dir.as_deref())
-                    {
-                        match resolve_resume_path(dir, sid, pid, &display_name, announced_size) {
-                            Some(resume_path) => {
-                                // Fresh placeholder boş — sil, resume path'e geç.
-                                // RFC-0005 PR-E: bundle path session-deterministik
-                                // — fresh_path == resume_path olabilir (aynı bundle
-                                // tek payload_id, aynı session_hex). Bu durumda
-                                // remove partial'ı yok eder; skip.
-                                if fresh_path != resume_path {
-                                    if let Err(e) = std::fs::remove_file(&fresh_path) {
-                                        if e.kind() != std::io::ErrorKind::NotFound {
-                                            tracing::debug!(
-                                                "[{}] resume swap: fresh placeholder silinemedi {}: {}",
-                                                peer,
-                                                crate::log_redact::path_basename(&fresh_path),
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                                tracing::info!(
-                                    "[{}] resume aktif: payload_id={} → mevcut .part'a devam ({})",
-                                    peer,
-                                    pid,
-                                    crate::log_redact::path_basename(&resume_path)
-                                );
-                                resume_path
-                            }
-                            None => fresh_path,
-                        }
-                    } else {
-                        fresh_path
-                    };
-
-                    assembler
-                        .register_file_destination(pid, actual_path)
-                        .context("dosya hedefi kaydı")?;
-                    pending_names.insert(pid, display_name.clone());
-
-                    // RFC-0005 §6: bundle marker register (varsa). Bu pid
-                    // `planned_bundles`'da ise extract pipeline'ın ihtiyacı
-                    // olan attachment_hash + extract dir + session hex'i
-                    // assembler'a tanıt. CompletedPayload::File döndüğünde
-                    // caller `take_bundle_marker(pid)` ile çekecek.
-                    if let Some((_, attach_hash, dl_dir)) =
-                        planned_bundles.iter().find(|(b_pid, _, _)| *b_pid == pid)
-                    {
-                        // INVARIANT (CLAUDE.md I-2): bit-cast — i64 → u64 hex
-                        // render, no value change.
-                        #[expect(
-                            clippy::cast_sign_loss,
-                            reason = "bit-cast for hex rendering — matches meta_filename"
-                        )]
-                        let session_hex =
-                            format!("{:016x}", crate::resume::session_id_i64(auth_key) as u64);
-                        assembler.register_bundle_marker(
-                            pid,
-                            crate::payload::BundleMarker {
-                                expected_manifest_sha256_prefix: *attach_hash,
-                                extract_root_dir: dl_dir.clone(),
-                                session_id_hex_lower: session_hex,
-                            },
-                        );
-                    }
-
-                    // RFC-0004 §3.3 — Introduction sonrası `.meta` lookup
-                    // + (matching ise) `ResumeHint` emit. Hata yutulur:
-                    // resume best-effort, fresh transfer her zaman OK.
-                    if let (Some(sid), Some(dir)) = (session_id, cached_partial_dir.as_deref()) {
-                        if let Err(e) = handle_resume_for_file(
-                            socket,
-                            ctx,
-                            assembler,
-                            dir,
-                            sid,
-                            pid,
-                            &display_name,
-                            announced_size,
-                            remote_id,
-                        )
-                        .await
-                        {
-                            tracing::debug!(
-                                "[{}] resume handler skip (payload_id={}): {}",
-                                peer,
-                                pid,
-                                e
-                            );
-                        }
-                    }
-                }
-                for (pid, kind) in planned_texts {
-                    pending_texts.insert(pid, kind);
-                }
-                send_sharing_frame(socket, ctx, &build_consent_accept()).await?;
-                info!("[{}] ✓ kullanıcı kabul etti", peer);
-            } else {
-                // Reject: `unique_downloads_path` her `planned_files` için
-                // `create_new(true)` ile 0-bayt placeholder rezerve etmişti.
-                // Hiçbirini PayloadAssembler'a kaydetmediğimiz için normal
-                // cleanup yolu bunları bilmiyor — burada elle siliyoruz,
-                // aksi halde indirme klasöründe sahipsiz boş dosyalar birikir
-                // (review-18 MED).
-                for (_pid, path, _name, _size) in &planned_files {
-                    if let Err(e) = std::fs::remove_file(path) {
-                        if e.kind() != std::io::ErrorKind::NotFound {
-                            tracing::debug!(
-                                "reject cleanup: placeholder silinemedi {}: {}",
-                                crate::log_redact::path_basename(path),
-                                e
-                            );
-                        }
-                    }
-                }
-                send_sharing_frame(socket, ctx, &build_consent_reject()).await?;
-                info!("[{}] ✗ kullanıcı reddetti", peer);
-                ui.notify(UiNotification::ToastRaw {
-                    title: "HekaDrop".to_string(),
-                    body: format!("{remote_name}: aktarım reddedildi"),
-                });
-                return Ok(FlowOutcome::Disconnect);
-            }
+            return handle_introduction_frame(
+                peer,
+                socket,
+                ctx,
+                assembler,
+                v1,
+                remote_name,
+                remote_id,
+                pin_code,
+                accepted_flag,
+                pending_texts,
+                pending_names,
+                *peer_secret_id_hash,
+                ui,
+                state,
+                auth_key,
+                active_capabilities,
+            )
+            .await;
         }
         Some(sh_v1::FrameType::Cancel) => {
             info!("[{}] peer cancel", peer);
@@ -1628,28 +1654,20 @@ fn resolve_resume_path(
 ///
 /// Bu PR (PR-C) kapsamında sadece **emit** tarafı; sender bu hint'i consume
 /// edecek (PR-D), receiver `.part` üstüne devam edecek (PR-E).
-#[expect(
-    clippy::too_many_arguments,
-    reason = "resume hint emit pipeline — socket/ctx/assembler/dir/session/payload/file context; struct refactor v0.9'a defer"
-)]
-async fn handle_resume_for_file(
-    socket: &mut TcpStream,
-    ctx: &mut SecureCtx,
-    assembler: &mut PayloadAssembler,
+/// `.meta` dosyasını asenkron olarak yükler ve geçerliliğini doğrular.
+/// Eğer meta dosyası yoksa veya bayatsa (stale), fresh transfer durumuna geçmek
+/// üzere `assembler.enable_resume` çağrılır ve `Ok(None)` döndürülür.
+#[allow(clippy::too_many_arguments)]
+async fn load_and_validate_meta(
     dir: &std::path::Path,
     session_id: i64,
     payload_id: i64,
     file_name: &str,
     announced_total_size: i64,
     peer_endpoint_id: &str,
-) -> Result<()> {
-    use base64::engine::general_purpose::STANDARD as BASE64_STD;
-    use base64::Engine;
-    use hekadrop_proto::hekadrop_ext::ResumeHint;
-
-    // PR #133 medium: `dir` caller-cached `partial_dir()`. Introduction loop'u
-    // tek sefer hesaplar, N dosya için reuse — N×`partial_dir()` mkdir I/O
-    // bedeli elimine.
+    assembler: &mut PayloadAssembler,
+) -> Result<Option<crate::resume::PartialMeta>> {
+    use anyhow::Context;
 
     // `.meta` lookup. NotFound → fresh; load Err → silently skip.
     // PR-G: meta validate sonucuna göre `enable_resume_with_offset` ya da
@@ -1680,7 +1698,7 @@ async fn handle_resume_for_file(
                 peer_endpoint_id.to_string(),
                 file_name.to_string(),
             );
-            return Ok(());
+            return Ok(None);
         }
     };
     let Some(meta) = maybe_meta else {
@@ -1691,7 +1709,7 @@ async fn handle_resume_for_file(
             peer_endpoint_id.to_string(),
             file_name.to_string(),
         );
-        return Ok(());
+        return Ok(None);
     };
 
     // 3. Receiver MUST invariant validate (RFC §5).
@@ -1722,8 +1740,48 @@ async fn handle_resume_for_file(
             peer_endpoint_id.to_string(),
             file_name.to_string(),
         );
-        return Ok(());
+        return Ok(None);
     }
+
+    Ok(Some(meta))
+}
+
+/// RFC-0004 §3.3 — Bir dosya için aktarımın kaldığı yerden devam edip edemeyeceğini
+/// kontrol eder, öyleyse offset'i ve kısmi hash'i hesaplayıp `ResumeHint` frame'i gönderir.
+#[allow(clippy::too_many_arguments)]
+async fn handle_resume_for_file(
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    assembler: &mut PayloadAssembler,
+    dir: &std::path::Path,
+    session_id: i64,
+    payload_id: i64,
+    file_name: &str,
+    announced_total_size: i64,
+    peer_endpoint_id: &str,
+) -> Result<()> {
+    use base64::engine::general_purpose::STANDARD as BASE64_STD;
+    use base64::Engine;
+    use hekadrop_proto::hekadrop_ext::ResumeHint;
+
+    // PR #133 medium: `dir` caller-cached `partial_dir()`. Introduction loop'u
+    // tek sefer hesaplar, N dosya için reuse — N×`partial_dir()` mkdir I/O
+    // bedeli elimine.
+
+    // `.meta` lookup and validate
+    let Some(meta) = load_and_validate_meta(
+        dir,
+        session_id,
+        payload_id,
+        file_name,
+        announced_total_size,
+        peer_endpoint_id,
+        assembler,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
 
     // 4. Meta valid + RESUME_V1 aktif → resume offset ile enable et.
     //    PR-G: `enable_resume_with_offset` `received_bytes` + chunk_index +
@@ -1822,6 +1880,156 @@ async fn handle_resume_for_file(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+/// `HekaDrop` capabilities payload'ını işler, özellikleri müzakere eder (negotiate)
+/// ve gerekirse kendi yeteneklerimizi geri gönderir.
+async fn handle_capabilities_payload(
+    peer: &SocketAddr,
+    socket: &mut TcpStream,
+    ctx: &mut SecureCtx,
+    peer_caps: hekadrop_proto::hekadrop_ext::Capabilities,
+    active_capabilities: &mut crate::capabilities::ActiveCapabilities,
+    peer_capabilities_received: &mut bool,
+    our_capabilities_sent: &mut bool,
+    assembler: &mut PayloadAssembler,
+    keys: &ukey2::DerivedKeys,
+) -> Result<()> {
+    use tracing::{info, warn};
+
+    // Spec capabilities.md §6: aynı oturumda ikinci Capabilities frame
+    // ignore + warn. Downgrade/flip-flop attack vector — peer
+    // ilk frame'de tüm özellikleri reklam eder, sonra azaltıp aktif
+    // chunk-HMAC vb.'yi kapatabilir. İlk frame karara bağlanır.
+    if *peer_capabilities_received {
+        warn!(
+            "[{}] ikinci Capabilities frame yok sayıldı (spec §6 — downgrade engelleme)",
+            peer
+        );
+        return Ok(());
+    }
+
+    let our_features = crate::capabilities::features::ALL_SUPPORTED;
+    *active_capabilities =
+        crate::capabilities::ActiveCapabilities::negotiate(our_features, peer_caps.features);
+    *peer_capabilities_received = true;
+    info!(
+        "[{}] active capabilities: 0x{:04x} (chunk_hmac={}, resume={}, folder={})",
+        peer,
+        active_capabilities.raw(),
+        active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1),
+        active_capabilities.has(crate::capabilities::features::RESUME_V1),
+        active_capabilities.has(crate::capabilities::features::FOLDER_STREAM_V1),
+    );
+
+    // RFC-0003 §4.1: capability aktif ise chunk-HMAC anahtarını
+    // assembler'a kur. PayloadAssembler artık her FILE chunk'ını
+    // pending buffer'a alır, ChunkIntegrity verify olduktan sonra
+    // diske yazar (storage corruption early-abort).
+    if active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1) {
+        let key = crate::chunk_hmac::derive_chunk_hmac_key(&keys.next_secret);
+        assembler.set_chunk_hmac_key(key);
+        info!(
+            "[{}] chunk-HMAC anahtarı türetildi + assembler'a kuruldu (RFC-0003 §4.1)",
+            peer
+        );
+    }
+
+    if !*our_capabilities_sent {
+        let our = crate::capabilities::build_capabilities_frame(
+            crate::capabilities::build_self_capabilities(),
+        );
+        let pb = our.encode_to_vec();
+        let wrapped = frame::wrap_hekadrop_frame(&pb);
+        let enc = ctx
+            .encrypt(&wrapped)
+            .with_context(|| format!("[{peer}] our Capabilities encrypt"))?;
+        frame::write_frame(socket, &enc)
+            .await
+            .with_context(|| format!("[{peer}] our Capabilities write"))?;
+        *our_capabilities_sent = true;
+        info!("[{}] receiver Capabilities geri yollandı", peer);
+    }
+    Ok(())
+}
+
+/// Alınan `ChunkIntegrity` payload'ını işler ve assembler'a doğrulama verisi olarak iletir.
+async fn handle_chunktag_payload(
+    peer: &SocketAddr,
+    ci: hekadrop_proto::hekadrop_ext::ChunkIntegrity,
+    active_capabilities: &crate::capabilities::ActiveCapabilities,
+    assembler: &mut PayloadAssembler,
+    state: &AppState,
+    remote_name: &str,
+    ui: &dyn UiPort,
+) -> Result<()> {
+    use tracing::{debug, warn};
+
+    // RFC-0003 §5: ChunkIntegrity verify pipeline. Capability gate
+    // kapalıysa peer protocol violation yapıyor (spec §9 son satır:
+    // "Sender sends tag but receiver lacks capability") — abort +
+    // disconnect (caller `?` ile yukarı propagate edip session sonu
+    // tetikler).
+    if !active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1) {
+        return Err(HekaError::ProtocolState(format!(
+            "[{peer}] ChunkIntegrity geldi ama CHUNK_HMAC_V1 capability negotiate edilmemiş (spec §9)"
+        )).into());
+    }
+    debug!(
+        "[{}] ChunkTag verify: payload_id={}, chunk_index={}, offset={}, body_len={}",
+        peer, ci.payload_id, ci.chunk_index, ci.offset, ci.body_len
+    );
+    // PRIVACY (spec §10): ChunkIntegrity.tag içeriği log'a düşmez —
+    // sadece kategori metadata. Hata durumunda da mesajda tag yok.
+    match assembler.verify_chunk_tag(&ci) {
+        Ok(None) => Ok(()),
+        Ok(Some(crate::payload::CompletedPayload::File {
+            id,
+            path,
+            total_size,
+            sha256,
+        })) => {
+            debug!("[{}] chunk-HMAC verify path: dosya finalize id={id}", peer);
+            finalize_received_payload(
+                peer,
+                id,
+                &path,
+                total_size,
+                sha256,
+                remote_name,
+                assembler,
+                state,
+                ui,
+            )
+            .await;
+            Ok(())
+        }
+        Ok(Some(other)) => {
+            // Bytes payload'lar verify pipeline'ından geçmez (sender
+            // chunk-HMAC sadece FILE chunk'ları için emit eder).
+            // Defensive: forward-compat için error.
+            Err(anyhow!(
+                "[{peer}] verify_chunk_tag beklenmedik CompletedPayload varyantı: {other:?}"
+            ))
+        }
+        Err(e) => {
+            // Spec §9: cleanup_transfer_state + Disconnection.
+            // Caller (steady loop) `?` ile yakalar, log + cleanup
+            // ardından send_disconnection. .part dosyası kapalı
+            // FileSink artakaldıysa sonraki cleanup_transfer_state
+            // çağrısı yarım dosyayı kanca'dan düşürür.
+            warn!(
+                "[{}] chunk-HMAC verify FAIL — protokol ihlali / corruption (payload_id={}, chunk_index={}): {}",
+                peer, ci.payload_id, ci.chunk_index, e
+            );
+            // Failure path'inde pending_chunk hâlâ FileSink içinde
+            // olabilir (verify_chunk_tag erken return etti). Sink'i
+            // cancel et ki .part diskten silinsin (RFC-0003 §9 row 3).
+            assembler.cancel(ci.payload_id);
+            Err(e)
+        }
+    }
+}
+
 /// `HekaDrop` extension frame'i parse + handle eder. Magic-prefix dispatch
 /// (`frame::dispatch_frame_body`) sonrası caller bu helper'ı çağırır.
 ///
@@ -1865,128 +2073,30 @@ async fn handle_hekadrop_frame(
 
     match payload {
         Payload::Capabilities(peer_caps) => {
-            // Spec capabilities.md §6: aynı oturumda ikinci Capabilities frame
-            // ignore + warn. Downgrade/flip-flop attack vector — peer
-            // ilk frame'de tüm özellikleri reklam eder, sonra azaltıp aktif
-            // chunk-HMAC vb.'yi kapatabilir. İlk frame karara bağlanır.
-            if *peer_capabilities_received {
-                warn!(
-                    "[{}] ikinci Capabilities frame yok sayıldı (spec §6 — downgrade engelleme)",
-                    peer
-                );
-                return Ok(());
-            }
-
-            let our_features = crate::capabilities::features::ALL_SUPPORTED;
-            *active_capabilities = crate::capabilities::ActiveCapabilities::negotiate(
-                our_features,
-                peer_caps.features,
-            );
-            *peer_capabilities_received = true;
-            info!(
-                "[{}] active capabilities: 0x{:04x} (chunk_hmac={}, resume={}, folder={})",
+            handle_capabilities_payload(
                 peer,
-                active_capabilities.raw(),
-                active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1),
-                active_capabilities.has(crate::capabilities::features::RESUME_V1),
-                active_capabilities.has(crate::capabilities::features::FOLDER_STREAM_V1),
-            );
-
-            // RFC-0003 §4.1: capability aktif ise chunk-HMAC anahtarını
-            // assembler'a kur. PayloadAssembler artık her FILE chunk'ını
-            // pending buffer'a alır, ChunkIntegrity verify olduktan sonra
-            // diske yazar (storage corruption early-abort).
-            if active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1) {
-                let key = crate::chunk_hmac::derive_chunk_hmac_key(&keys.next_secret);
-                assembler.set_chunk_hmac_key(key);
-                info!(
-                    "[{}] chunk-HMAC anahtarı türetildi + assembler'a kuruldu (RFC-0003 §4.1)",
-                    peer
-                );
-            }
-
-            if !*our_capabilities_sent {
-                let our = crate::capabilities::build_capabilities_frame(
-                    crate::capabilities::build_self_capabilities(),
-                );
-                let pb = our.encode_to_vec();
-                let wrapped = frame::wrap_hekadrop_frame(&pb);
-                let enc = ctx
-                    .encrypt(&wrapped)
-                    .with_context(|| format!("[{peer}] our Capabilities encrypt"))?;
-                frame::write_frame(socket, &enc)
-                    .await
-                    .with_context(|| format!("[{peer}] our Capabilities write"))?;
-                *our_capabilities_sent = true;
-                info!("[{}] receiver Capabilities geri yollandı", peer);
-            }
-            Ok(())
+                socket,
+                ctx,
+                peer_caps,
+                active_capabilities,
+                peer_capabilities_received,
+                our_capabilities_sent,
+                assembler,
+                keys,
+            )
+            .await
         }
         Payload::ChunkTag(ci) => {
-            // RFC-0003 §5: ChunkIntegrity verify pipeline. Capability gate
-            // kapalıysa peer protocol violation yapıyor (spec §9 son satır:
-            // "Sender sends tag but receiver lacks capability") — abort +
-            // disconnect (caller `?` ile yukarı propagate edip session sonu
-            // tetikler).
-            if !active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1) {
-                return Err(HekaError::ProtocolState(format!(
-                    "[{peer}] ChunkIntegrity geldi ama CHUNK_HMAC_V1 capability negotiate edilmemiş (spec §9)"
-                )).into());
-            }
-            debug!(
-                "[{}] ChunkTag verify: payload_id={}, chunk_index={}, offset={}, body_len={}",
-                peer, ci.payload_id, ci.chunk_index, ci.offset, ci.body_len
-            );
-            // PRIVACY (spec §10): ChunkIntegrity.tag içeriği log'a düşmez —
-            // sadece kategori metadata. Hata durumunda da mesajda tag yok.
-            match assembler.verify_chunk_tag(&ci) {
-                Ok(None) => Ok(()),
-                Ok(Some(crate::payload::CompletedPayload::File {
-                    id,
-                    path,
-                    total_size,
-                    sha256,
-                })) => {
-                    debug!("[{}] chunk-HMAC verify path: dosya finalize id={id}", peer);
-                    finalize_received_payload(
-                        peer,
-                        id,
-                        &path,
-                        total_size,
-                        sha256,
-                        remote_name,
-                        assembler,
-                        state,
-                        ui,
-                    )
-                    .await;
-                    Ok(())
-                }
-                Ok(Some(other)) => {
-                    // Bytes payload'lar verify pipeline'ından geçmez (sender
-                    // chunk-HMAC sadece FILE chunk'ları için emit eder).
-                    // Defensive: forward-compat için error.
-                    Err(anyhow!(
-                        "[{peer}] verify_chunk_tag beklenmedik CompletedPayload varyantı: {other:?}"
-                    ))
-                }
-                Err(e) => {
-                    // Spec §9: cleanup_transfer_state + Disconnection.
-                    // Caller (steady loop) `?` ile yakalar, log + cleanup
-                    // ardından send_disconnection. .part dosyası kapalı
-                    // FileSink artakaldıysa sonraki cleanup_transfer_state
-                    // çağrısı yarım dosyayı kanca'dan düşürür.
-                    warn!(
-                        "[{}] chunk-HMAC verify FAIL — protokol ihlali / corruption (payload_id={}, chunk_index={}): {}",
-                        peer, ci.payload_id, ci.chunk_index, e
-                    );
-                    // Failure path'inde pending_chunk hâlâ FileSink içinde
-                    // olabilir (verify_chunk_tag erken return etti). Sink'i
-                    // cancel et ki .part diskten silinsin (RFC-0003 §9 row 3).
-                    assembler.cancel(ci.payload_id);
-                    Err(e)
-                }
-            }
+            handle_chunktag_payload(
+                peer,
+                ci,
+                active_capabilities,
+                assembler,
+                state,
+                remote_name,
+                ui,
+            )
+            .await
         }
         // Forward-compat stub'ları RFC-bazında ayrı arm'lar — her birinin
         // tam implementasyonu ayrı PR serisinde gelecek (RFC-0004 PR-B+,

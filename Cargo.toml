@@ -184,6 +184,9 @@ unused_async = "warn"                   # 2 hit manuel fix: `payload.rs::ingest_
 unreadable_literal = "warn"                     # 2 hit auto-fix (chunk_hmac.rs test): `0x12345678` → `0x1234_5678`; okunabilirlik.
 match_wildcard_for_single_variants = "warn"     # 8 hit manuel: frame.rs + payload.rs test'leri `other =>` → explicit variant binding veya scoped allow.
 large_stack_arrays = "warn"                     # 1 hit manuel: enumerate.rs `[0u8; 64*1024]` → `vec![]` (heap IO buf); 1 hit scoped allow (chunk_hmac test 512 KiB pratiği).
+# pedantic batch 14 — too_many_lines ve large_futures
+too_many_lines = "warn"
+large_futures = "warn"
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
