@@ -21,6 +21,7 @@ p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
 [profile.release]
 debug = true
 opt-level = 3
+overflow-checks = true
 
 [[bin]]
 name = "fuzz_ukey2_client_init"
