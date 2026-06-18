@@ -34,7 +34,7 @@ mod common;
 use common::{hkdf_sha256, pin_code_from_auth_key, sha256, to_signed_bytes, D2D_SALT};
 use elliptic_curve::sec1::ToEncodedPoint;
 use p256::{ecdh::diffie_hellman, PublicKey, SecretKey};
-use rand::rngs::OsRng;
+use rand_core::OsRng;
 
 /// İki taraf için HKDF ile türetilen 4+ anahtarı kapsayan yardımcı.
 /// `HekaDrop` `DerivedKeys` yapısıyla aynı alanlar.

@@ -19,8 +19,7 @@ use hekadrop_proto::securegcm::{
 use hekadrop_proto::securemessage::{EcP256PublicKey, GenericPublicKey, PublicKeyType};
 use p256::{ecdh::diffie_hellman, EncodedPoint, PublicKey, SecretKey};
 use prost::Message;
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand_core::{OsRng, RngCore};
 use tokio::net::TcpStream;
 
 pub struct DerivedKeys {
@@ -271,7 +270,7 @@ pub struct ServerInitResult {
 /// - `next_protocol` desteklenmiyor (`AES_256_CBC-HMAC_SHA256` bekleniyor)
 /// - HKDF / SHA-512 / ECDH key generation hatası
 pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult> {
-    use rand::RngCore;
+    use rand_core::RngCore;
 
     let msg = Ukey2Message::decode(client_init_frame)?;
     let message_type = msg

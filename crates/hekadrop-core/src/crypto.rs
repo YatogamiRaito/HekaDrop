@@ -5,7 +5,7 @@ use cbc::{Decryptor, Encryptor};
 use cipher::block_padding::Pkcs7;
 use cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 

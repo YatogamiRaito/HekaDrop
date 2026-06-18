@@ -32,7 +32,7 @@ use crate::ui_port::{AcceptDecision, FileSummary, FolderPromptSummary, UiNotific
 use crate::ukey2;
 use anyhow::{anyhow, Context, Result};
 use prost::Message;
-use rand::RngCore;
+use rand::Rng;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -2297,7 +2297,7 @@ fn split_name(name: &str) -> (&str, &str) {
 /// `signed_data` için.
 fn random_bytes(n: usize) -> Vec<u8> {
     let mut v = vec![0u8; n];
-    rand::thread_rng().fill_bytes(&mut v);
+    rand::rng().fill_bytes(&mut v);
     v
 }
 
@@ -2397,7 +2397,7 @@ pub(crate) async fn send_sharing_frame(
         clippy::cast_possible_wrap,
         reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
     )]
-    let payload_id: i64 = (rand::thread_rng().next_u64() >> 1) as i64;
+    let payload_id: i64 = (rand::rng().next_u64() >> 1) as i64;
     let total = i64::try_from(body.len())
         .with_context(|| format!("sharing frame body i64'a sığmıyor: {} bayt", body.len()))?;
 

@@ -1,6 +1,6 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use rand::Rng;
+use rand::{Rng, RngExt};
 use sha2::{Digest, Sha256};
 
 /// Quick Share servis tipi türetiminde kullanılan sabit marker — SHA-256
@@ -21,10 +21,10 @@ pub fn service_type() -> String {
 #[must_use]
 pub fn random_endpoint_id() -> [u8; 4] {
     const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut id = [0u8; 4];
     for b in &mut id {
-        *b = ALPHABET[rng.gen_range(0..ALPHABET.len())];
+        *b = ALPHABET[rng.random_range(0..ALPHABET.len())];
     }
     id
 }
@@ -100,9 +100,9 @@ pub fn endpoint_info(device_name: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(ENDPOINT_INFO_HEADER_LEN + name_bytes.len());
     out.push(DEVICE_TYPE_COMPUTER << 1);
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut rnd = [0u8; 16];
-    rng.fill(&mut rnd);
+    rng.fill_bytes(&mut rnd);
     out.extend_from_slice(&rnd);
 
     let name_len = u8::try_from(name_bytes.len()).unwrap_or(0);

@@ -72,9 +72,9 @@ tracing = "0.1"
 async-trait = "0.1"
 
 # Kripto
-sha2 = "0.10"
-hkdf = "0.12"
-hmac = "0.12"
+sha2 = "0.11"
+hkdf = "0.13"
+hmac = "0.13"
 aes = "0.9"
 cbc = { version = "0.2", features = ["alloc"] }
 cipher = { version = "0.5", features = ["block-padding", "alloc"] }
@@ -83,7 +83,8 @@ p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
 elliptic-curve = { version = "0.13", features = ["sec1"] }
 
 # Random + encoding
-rand = "0.8"
+rand = "0.10"
+rand_core = "0.6"
 base64 = "0.22"
 # `hex` ukey2.rs handshake debug log (cipher_commitment + digest) için.
 hex = "0.4"
@@ -97,7 +98,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 [target.'cfg(target_os = "windows")'.dependencies]
 # settings.rs `replace_atomic` Win32 path'inde `MoveFileExW` çağrısı için.
 # Feature set yalnız o API yüzeyini kapsar — minimum binary etki.
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
 ] }

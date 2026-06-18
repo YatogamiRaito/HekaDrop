@@ -26,7 +26,7 @@
 //!   sessizce kaybolurdu).
 
 use anyhow::{bail, Context, Result};
-use rand::RngCore;
+use rand::Rng;
 #[cfg(target_os = "windows")]
 use std::path::PathBuf;
 
@@ -107,7 +107,7 @@ impl DeviceIdentity {
         // gösteriyordu. `atomic_write_mode` ile bu pencere tamamen kapanır
         // (rename inode'u korur, izinler taşınır).
         let mut key = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut key);
+        rand::rng().fill_bytes(&mut key);
         crate::settings::atomic_write_mode(path, &key, Some(0o600))
             .with_context(|| format!("identity.key yazılamadı: {}", path.display()))?;
 
