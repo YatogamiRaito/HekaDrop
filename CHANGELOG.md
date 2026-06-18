@@ -7,14 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**"Hardening + CLI" — Pedantic batch 14 yapısal refaktör + tam fonksiyonel CLI binary + fuzz derleme düzeltmesi.**
+- (Geliştirme aşamasındaki değişiklikler buraya eklenecektir.)
+
+## [0.9.0] - 2026-06-18
+
+**"Hardening + CLI" — Pedantic batch 14 yapısal refaktör + tam fonksiyonel CLI binary + fuzz derleme düzeltmesi + RustCrypto & rand güncellemesi.**
 
 v0.9.0 ve v0.10.0 deliverable'larını kapsayan bu çalışma; (1) `clippy::too_many_lines`
 ve `clippy::large_futures` lint'lerinin workspace genelinde enforce edilmesi için
 `hekadrop-core` içindeki devasa fonksiyonların yapısal refaktörü, (2) `hekadrop-cli`
 stub'ının tam fonksiyonel headless CLI binary'ye dönüştürülmesi, (3) RUST_GUIDELINE.md
-uyumluluk düzeltmeleri (constant-time comparison, safe cast, clone elimination) ve
-(4) fuzz target derleme hatasının giderilmesini içerir.
+uyumluluk düzeltmeleri (constant-time comparison, safe cast, clone elimination),
+(4) fuzz target derleme hatasının giderilmesini ve (5) p256 0.14-rc + rand 0.10 kütüphane yükseltmelerini içerir.
 
 ### Added — CLI Binary (v0.10.0 deliverable)
 - **feat(cli): tam fonksiyonel headless CLI** — `hekadrop-cli` stub'dan çıkıp 6 ana
@@ -586,7 +590,8 @@ autostart katmanları `cfg`-gated cross-platform hale geldi.
 - Replay koruması: sequence counter ile HMAC doğrulaması
 - Trafik hiçbir sunucuya uğramaz — yalnız yerel ağ
 
-[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.6.0...v0.8.0
 [0.6.0]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/YatogamiRaito/HekaDrop/compare/v0.5.1...v0.5.2

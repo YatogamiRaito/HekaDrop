@@ -22,8 +22,8 @@ name = "hekadrop-cli"
 path = "src/main.rs"
 
 [dependencies]
-hekadrop-core = { path = "../hekadrop-core", version = "=0.8.0" }
-hekadrop-net = { path = "../hekadrop-net", version = "=0.8.0" }
+hekadrop-core = { path = "../hekadrop-core", version = "=0.9.0" }
+hekadrop-net = { path = "../hekadrop-net", version = "=0.9.0" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal", "time"] }
 tracing = "0.1"
