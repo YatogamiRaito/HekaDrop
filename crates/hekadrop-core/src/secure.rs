@@ -16,7 +16,7 @@ use bytes::Bytes;
 use hekadrop_proto::securegcm::{DeviceToDeviceMessage, GcmMetadata, Type as GcmType};
 use hekadrop_proto::securemessage::{EncScheme, Header, HeaderAndBody, SecureMessage, SigScheme};
 use prost::Message;
-use rand::RngCore;
+use rand::Rng;
 
 pub struct SecureCtx {
     pub encrypt_key: [u8; 32],
@@ -62,7 +62,7 @@ impl SecureCtx {
         let d2d_bytes = d2d.encode_to_vec();
 
         let mut iv = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut iv);
+        rand::rng().fill_bytes(&mut iv);
         let ciphertext = crypto::aes256_cbc_encrypt(&self.encrypt_key, &iv, &d2d_bytes);
 
         let gcm_meta = GcmMetadata {

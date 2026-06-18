@@ -38,7 +38,7 @@ use crate::ukey2;
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use prost::Message;
-use rand::RngCore;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Arc;
@@ -230,7 +230,7 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                 clippy::cast_possible_wrap,
                 reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
             )]
-            let payload_id_i64 = (rand::thread_rng().next_u64() >> 1) as i64;
+            let payload_id_i64 = (rand::rng().next_u64() >> 1) as i64;
             planned_folder = Some(PlannedFolder {
                 root_path: path.clone(),
                 manifest,
@@ -269,7 +269,7 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
             clippy::cast_possible_wrap,
             reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
         )]
-        let payload_id_i64 = (rand::thread_rng().next_u64() >> 1) as i64;
+        let payload_id_i64 = (rand::rng().next_u64() >> 1) as i64;
         plans.push(PlannedFile {
             path: path.clone(),
             name,
@@ -821,7 +821,7 @@ pub async fn send_text(
         clippy::cast_possible_wrap,
         reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
     )]
-    let payload_id = (rand::thread_rng().next_u64() >> 1) as i64;
+    let payload_id = (rand::rng().next_u64() >> 1) as i64;
     // URL şeklinde ise TextKind::Url ile etiketliyoruz: Android/alıcı share
     // sheet'te URL'i "Tarayıcıda aç" aksiyonuyla gösterir. Aksi hâlde düz TEXT.
     // Allow-list sender ve receiver'da aynı — tek taraf bypass'lansa bile
@@ -1727,7 +1727,7 @@ fn flatten_folder_to_files(folder: &PlannedFolder) -> Vec<PlannedFile> {
             clippy::cast_possible_wrap,
             reason = "u64 >> 1 high-bit sıfır → daima 0..=i64::MAX"
         )]
-        let payload_id_i64 = (rand::thread_rng().next_u64() >> 1) as i64;
+        let payload_id_i64 = (rand::rng().next_u64() >> 1) as i64;
         out.push(PlannedFile {
             path: entry.absolute_path.clone(),
             name,

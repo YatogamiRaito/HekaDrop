@@ -16,7 +16,7 @@ publish = false
 
 [dependencies]
 # Workspace internal — domain tipleri ve config (Adım 4'te core'a taşındı).
-hekadrop-core = { path = "../hekadrop-core", version = "=0.8.0" }
+hekadrop-core = { path = "../hekadrop-core", version = "=0.9.0" }
 
 # Async runtime — yalnız `tokio::task::spawn_blocking` (discovery.rs:39)
 # kullanılıyor; başka tokio API'sı yok. `rt` feature spawn için yeterli.
@@ -24,7 +24,7 @@ hekadrop-core = { path = "../hekadrop-core", version = "=0.8.0" }
 tokio = { version = "1", features = ["rt"] }
 
 # mDNS — sadece bu crate kullanır (RFC §5 Adım 6 ile core'dan kaldırıldı).
-mdns-sd = "0.19"
+mdns-sd = "0.20"
 
 # Local IP enumeration (mDNS interface seçimi için).
 if-addrs = "0.15"

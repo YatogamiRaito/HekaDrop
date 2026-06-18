@@ -919,7 +919,7 @@ pub(crate) fn atomic_write_mode(
     data: &[u8],
     mode: Option<u32>,
 ) -> std::io::Result<()> {
-    use rand::RngCore;
+    use rand::Rng;
     use std::io::Write as _;
 
     let _disk_guard = SETTINGS_DISK_LOCK.lock();
@@ -939,7 +939,7 @@ pub(crate) fn atomic_write_mode(
     let mut attempts = 0u32;
     let (mut file, tmp_path) = loop {
         attempts += 1;
-        let r = rand::thread_rng().next_u64();
+        let r = rand::rng().next_u64();
         let tmp = parent.join(format!(".{file_name}.{pid}.{r:016x}.tmp"));
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create_new(true);

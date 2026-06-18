@@ -17,7 +17,7 @@
 // algoritma uyumu (bkz. `hekadrop_core::crypto::pin_code_from_auth_key`).
 #![allow(dead_code, clippy::cast_possible_wrap)]
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 /// HKDF-SHA256 → `HekaDrop` `crypto::hkdf_sha256` ile birebir aynı davranış.

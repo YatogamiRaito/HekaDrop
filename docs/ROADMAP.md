@@ -54,7 +54,7 @@ v1.0.0, aşağıdakilerin hepsini sağlamadan çıkmaz:
 |---|---|---|---|---|
 | 1 | Q1 | v0.7.0 | 2026-06-15 | Workspace refactor + README dürüstlük |
 | 3 | Q1 | v0.8.0 | 2026-07-31 | Chunk-HMAC + Resume + Folder streaming |
-| 5 | Q2 | v0.9.0 | 2026-09-30 | Fuzzing altyapısı + audit hazırlık |
+| 5 | Q2 | v0.9.0 | 2026-06-18 | Fuzzing altyapısı + audit hazırlık |
 | 6 | Q2 | v0.10.0 | 2026-10-31 | CLI binary + headless daemon |
 | 8 | Q3 | v0.11.0 | 2026-12-31 | Azure Trusted Signing + MSIX |
 | 9 | Q3 | v0.12.0 | 2027-01-31 | Windows auto-update + polish |
@@ -181,7 +181,7 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
 
 ### Teknik Deliverable'lar
 
-**v0.9.0 — Fuzzing + Audit Hazırlık (2026-09-30)**
+**v0.9.0 — Fuzzing + Audit Hazırlık (2026-06-18)**
 - ✅ **cargo-fuzz harnesses** 10'a çıkarıldı:
   - `fuzz_ukey2_handshake_init`, `fuzz_ukey2_handshake_finish`
   - `fuzz_frame_decode_full`, `fuzz_frame_decode_partial`

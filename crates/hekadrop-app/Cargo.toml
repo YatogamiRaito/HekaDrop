@@ -18,9 +18,9 @@ categories = ["network-programming", "command-line-utilities"]
 # kuralı için workspace path-dep version belirtmesi şart.
 # RFC-0001 §5 Adım 2: hekadrop-proto. Adım 3: hekadrop-core (kripto, frame,
 # UKEY2, secure, error, log_redact, file_size_guard, config taşındı).
-hekadrop-core = { path = "../hekadrop-core", version = "=0.8.0" }
-hekadrop-net = { path = "../hekadrop-net", version = "=0.8.0" }
-hekadrop-proto = { path = "../hekadrop-proto", version = "=0.8.0" }
+hekadrop-core = { path = "../hekadrop-core", version = "=0.9.0" }
+hekadrop-net = { path = "../hekadrop-net", version = "=0.9.0" }
+hekadrop-proto = { path = "../hekadrop-proto", version = "=0.9.0" }
 
 # RFC-0001 §5 Adım 5b — `ui_adapter::UiAdapter` core'un `UiPort` trait'ini
 # implemente eder; `#[async_trait]` makro app crate'inde de gerekiyor.
@@ -37,7 +37,7 @@ hex = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-tray-icon = "0.23"
+tray-icon = "0.24"
 tao = "0.35"
 wry = "0.55"
 serde = { version = "1", features = ["derive"] }
@@ -49,8 +49,8 @@ parking_lot = "0.12"
 # var — Cargo feature unification ile tek build.
 prost = { version = "0.14", features = ["std"] }
 bytes = "1"
-sha2 = "0.10"
-rand = "0.8"
+sha2 = "0.11"
+rand = "0.10"
 anyhow = "1"
 thiserror = "2"
 base64 = "0.22"
@@ -60,10 +60,10 @@ base64 = "0.22"
 aes = "0.9"
 cbc = { version = "0.2", features = ["alloc"] }
 cipher = { version = "0.5", features = ["block-padding", "alloc"] }
-hmac = "0.12"
-hkdf = "0.12"
-p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
-elliptic-curve = { version = "0.13", features = ["sec1"] }
+hmac = "0.13"
+hkdf = "0.13"
+p256 = { version = "=0.14.0-rc.12", features = ["ecdh", "arithmetic"] }
+elliptic-curve = { version = "=0.14.0-rc.35", features = ["sec1"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Aksiyon butonlu (Aç / Klasörde göster) D-Bus bildirimleri için.
@@ -80,7 +80,7 @@ notify-rust = "4"
 # external process spawn etmekten daha hızlı ve doğru.
 # Versiyon wry/webview2-com ile uyumlu olsun (iki farklı windows-core sürümü
 # trait implementasyonlarında çakışıyor); wry 0.55 şu anda 0.61 kullanıyor.
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
