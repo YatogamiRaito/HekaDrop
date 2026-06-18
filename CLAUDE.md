@@ -82,28 +82,26 @@ typos
 
 ## Repo bilgisi
 
-- **Güncel sürüm:** v0.8.0 (released) — v0.9.0 + v0.10.0 deliverable'ları working tree'de (uncommitted)
-- **Aktif milestone:** v0.9.0 deliverable'ları tamamlandı (fuzzing, pedantic batch 14, audit-scope)
-- **Sıradaki:** v0.10.0 CLI binary tamamlandı; daemon altyapısı v0.10.1'e ertelendi
+- **Güncel sürüm:** v0.9.0 (released)
+- **Aktif milestone:** v0.9.0 (Fuzzing ve Test Güvenliğinin Olgunlaştırılması)
+- **Sıradaki:** cargo-mutants ve proptest entegrasyonları ile test kapsamının güçlendirilmesi
 - **MSRV:** Rust 1.90 (CI'da pinned)
 - **Edition:** 2021
 - **Lint policy:** root `Cargo.toml` `[workspace.lints]` — pedantic batch 1-14 enforce edildi (too_many_lines + large_futures dahil)
 - **Commit konvansiyonu:** Türkçe imperative başlık + `Why:` satırı (bkz. CONTRIBUTING.md)
-- **AI commit footer:** `Co-Authored-By: Claude Opus 4.6 (Thinking) <noreply@anthropic.com>`
+- **AI commit footer:** `Co-Authored-By: Antigravity <noreply@google.com>`
 
 ---
 
 ## Sıradaki işler (öncelik sırasıyla)
 
-1. **Uncommitted değişiklikleri commit'le** — 19 dosya, ~2600 satır değişiklik unstaged.
-   3 mantıksal commit önerisi: (a) CLI binary, (b) pedantic batch 14, (c) RUST_GUIDELINE uyum.
-2. **NLnet başvurusu** — Ekim 2026 deadline; `docs/security/audit-scope.md` altyapı hazır.
-   Başvuru: https://nlnet.nl/propose/ (Privacy & Trust Enhancing Technologies programı).
-3. **v0.10.1 daemon altyapısı** — `hekadrop-cli daemon` gerçek implementasyon (systemd/launchd).
-4. **ClusterFuzzLite CI doğrulama** — `.clusterfuzzlite/` + workflow tetikle, build + run yeşil mi kontrol.
-5. **Property-based testing (proptest)** — UKEY2 state transitions, payload reassembly.
-6. **Static musl binary** — `x86_64-unknown-linux-musl` target ile ~4-6 MiB CLI binary.
-7. **OSS-Fuzz yeniden başvuru** — v0.11.0+ sonrası, daha fazla star/contributor ile.
+1. **cargo-mutants entegrasyonu** — Kod tabanındaki test kapsamını mutant testleriyle doğrula.
+2. **Property-based testing (proptest)** — UKEY2 state transitions ve payload reassembly için özellik tabanlı testler yaz.
+3. **afl.rs entegrasyonu** — Alternatif bir fuzzer olarak entegre et.
+4. **v0.10.1 daemon altyapısı** — `hekadrop-cli daemon` gerçek kurulabilir sistem/arkaplan servisi implementasyonu.
+5. **Static musl binary** — `x86_64-unknown-linux-musl` target ile ~4-6 MiB CLI binary.
+6. **NLnet başvurusu** — Ekim 2026 deadline; `docs/security/audit-scope.md` altyapı hazır.
+7. **OSS-Fuzz yeniden başvuru** — v0.11.0+ sonrası.
 
 ---
 
