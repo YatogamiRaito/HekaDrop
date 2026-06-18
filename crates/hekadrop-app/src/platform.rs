@@ -676,7 +676,7 @@ pub(crate) mod win {
         unsafe {
             let pidl = ILCreateFromPathW(PCWSTR(wide.as_ptr()));
             if pidl.is_null() {
-                return Err(windows::core::Error::from_win32());
+                return Err(windows::core::Error::from_thread());
             }
             let result = SHOpenFolderAndSelectItems(pidl, None, 0);
             ILFree(Some(pidl));
@@ -735,13 +735,13 @@ pub(crate) mod win {
         unsafe {
             let hmem = GlobalAlloc(GMEM_MOVEABLE, bytes)?;
             if hmem.0.is_null() {
-                return Err(windows::core::Error::from_win32());
+                return Err(windows::core::Error::from_thread());
             }
 
             let dst = GlobalLock(hmem).cast::<u16>();
             if dst.is_null() {
                 let _ = GlobalFree(Some(hmem));
-                return Err(windows::core::Error::from_win32());
+                return Err(windows::core::Error::from_thread());
             }
             std::ptr::copy_nonoverlapping(wide.as_ptr(), dst, wide.len());
             let _ = GlobalUnlock(hmem);
@@ -824,7 +824,7 @@ pub(crate) mod win {
             let ptr = GlobalLock(hglobal) as *const u16;
             if ptr.is_null() {
                 let _ = CloseClipboard();
-                return Err(windows::core::Error::from_win32());
+                return Err(windows::core::Error::from_thread());
             }
             // GlobalSize bayt döner; u16 slot sayısına çevir (allocation-bounded).
             let size_bytes = GlobalSize(hglobal);
