@@ -1,0 +1,15 @@
+# .cargo/mutants.toml
+# Mutasyon dışı tutulacak dosya regex kalıpları
+exclude_re = [
+    "tests/",
+    "benches/",
+    "src/bin/",
+    # Boilerplate trait implementations
+    "impl\\s+Debug",
+    "impl\\s+Display",
+    "impl\\s+Error",
+    "impl\\s+Default",
+]
+
+# Varsayılan cargo argümanları
+additional_cargo_args = ["--all-features"]

@@ -194,7 +194,7 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
 - ✅ **ClusterFuzzLite** CI entegrasyonu tamamlandı: `.clusterfuzzlite/` Dockerfile + `build.sh` + `.github/workflows/clusterfuzzlite.yml` (PR bazlı 5 dk + nightly 30 dk, ASan + UBSan matrix, SARIF upload). OSS-Fuzz başvurusu proje olgunlaşınca (daha yüksek criticality skoru) yeniden yapılır.
 - ⏳ **cargo-mutants** entegrasyonu; dead-code + gereksiz branch tespiti.
 - ⏳ **afl.rs** alternatif fuzzer olarak CI'da haftada bir çalışır.
-- ⏳ **Property-based testing (proptest)** kritik state machines için: UKEY2 state transitions, payload reassembly, rate limiter.
+- ✅ **Property-based testing (proptest)** kritik state machines için: UKEY2 state transitions, payload reassembly, rate limiter.
 
 **v0.10.0 — CLI Binary + Headless Daemon (2026-10-31)**
 - ✅ `crates/hekadrop-cli` tam fonksiyonel binary'ye dönüştü:
