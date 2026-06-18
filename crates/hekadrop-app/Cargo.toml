@@ -51,7 +51,6 @@ prost = { version = "0.14", features = ["std"] }
 bytes = "1"
 sha2 = "0.11"
 rand = "0.10"
-rand_core = "0.6"
 anyhow = "1"
 thiserror = "2"
 base64 = "0.22"
@@ -63,8 +62,8 @@ cbc = { version = "0.2", features = ["alloc"] }
 cipher = { version = "0.5", features = ["block-padding", "alloc"] }
 hmac = "0.13"
 hkdf = "0.13"
-p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
-elliptic-curve = { version = "0.13", features = ["sec1"] }
+p256 = { version = "=0.14.0-rc.12", features = ["ecdh", "arithmetic"] }
+elliptic-curve = { version = "=0.14.0-rc.35", features = ["sec1"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Aksiyon butonlu (Aç / Klasörde göster) D-Bus bildirimleri için.

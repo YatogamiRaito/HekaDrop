@@ -32,9 +32,8 @@
 mod common;
 
 use common::{hkdf_sha256, pin_code_from_auth_key, sha256, to_signed_bytes, D2D_SALT};
-use elliptic_curve::sec1::ToEncodedPoint;
+use elliptic_curve::{sec1::ToSec1Point, Generate};
 use p256::{ecdh::diffie_hellman, PublicKey, SecretKey};
-use rand_core::OsRng;
 
 /// İki taraf için HKDF ile türetilen 4+ anahtarı kapsayan yardımcı.
 /// `HekaDrop` `DerivedKeys` yapısıyla aynı alanlar.
@@ -95,8 +94,8 @@ fn derive_from_shared(
 #[test]
 fn ecdh_iki_taraf_ayni_shared_secret_uretir() {
     // Deterministic çalışsın diye OsRng ile 2 farklı anahtar
-    let alice_sk = SecretKey::random(&mut OsRng);
-    let bob_sk = SecretKey::random(&mut OsRng);
+    let alice_sk = SecretKey::generate();
+    let bob_sk = SecretKey::generate();
     let alice_pk = alice_sk.public_key();
     let bob_pk = bob_sk.public_key();
 
@@ -114,8 +113,8 @@ fn ecdh_iki_taraf_ayni_shared_secret_uretir() {
 /// üzerinden aynı 4 AES/HMAC anahtarı + aynı `auth_key` + aynı PIN'i türetmeli.
 #[test]
 fn alice_bob_handshake_ayni_derived_keys_uretir() {
-    let alice_sk = SecretKey::random(&mut OsRng);
-    let bob_sk = SecretKey::random(&mut OsRng);
+    let alice_sk = SecretKey::generate();
+    let bob_sk = SecretKey::generate();
 
     // Her iki taraf için raw transcript — production'da bu `Ukey2Message`
     // serialize edilmiş halidir; testte muhtevası değil hash'i önemli.
@@ -152,8 +151,8 @@ fn alice_bob_handshake_ayni_derived_keys_uretir() {
 /// değiştirmiş) türetilen anahtarlar ayrışmalı — bu yüzden MITM tespiti olabilir.
 #[test]
 fn transcript_binding_farkli_transcript_farkli_anahtar() {
-    let alice_sk = SecretKey::random(&mut OsRng);
-    let bob_sk = SecretKey::random(&mut OsRng);
+    let alice_sk = SecretKey::generate();
+    let bob_sk = SecretKey::generate();
     let view = diffie_hellman(
         alice_sk.to_nonzero_scalar(),
         bob_sk.public_key().as_affine(),
@@ -238,9 +237,9 @@ fn to_signed_bytes_bos_slice_bos_kalir() {
 /// Gerçek Android peer'ları bu formatı zorunlu olarak bekler (Java `BigInteger`).
 #[test]
 fn p256_public_key_signed_encoding_java_uyumlu() {
-    let sk = SecretKey::random(&mut OsRng);
+    let sk = SecretKey::generate();
     let pk = sk.public_key();
-    let encoded = pk.to_encoded_point(false);
+    let encoded = pk.to_sec1_point(false);
     let xy = encoded.as_bytes();
     assert_eq!(xy[0], 0x04, "uncompressed prefix");
     let x_raw = &xy[1..33];
@@ -281,8 +280,8 @@ fn hkdf_sha256_rfc5869_a1_test_vector() {
 /// `HekaDrop` `DerivedKeys` doldurmasının simetrik olduğunu doğrular.
 #[test]
 fn rol_simetrisi_client_enc_eq_server_dec() {
-    let alice_sk = SecretKey::random(&mut OsRng);
-    let bob_sk = SecretKey::random(&mut OsRng);
+    let alice_sk = SecretKey::generate();
+    let bob_sk = SecretKey::generate();
     let view = diffie_hellman(
         alice_sk.to_nonzero_scalar(),
         bob_sk.public_key().as_affine(),
@@ -312,14 +311,10 @@ fn rol_simetrisi_client_enc_eq_server_dec() {
     assert_ne!(keys.auth_key, [0u8; 32]);
 }
 
-/// Peer public key `Option<PublicKey>` — None dönen noktalar eğri üzerinde
-/// değildir. Bu test "her türlü bayt kombinasyonu" public key olmadığını
-/// ve UKEY2 tarafının "geçersiz eğri noktası" hatasını verdiğini doğrular.
+/// Peer public key doğrulaması. Bu test "her türlü bayt kombinasyonu" public key olmadığını
+/// ve geçersiz eğri noktasının reddedildiğini doğrular.
 #[test]
 fn gecersiz_peer_pubkey_reddedilir() {
-    use elliptic_curve::sec1::FromEncodedPoint;
-    use p256::EncodedPoint;
-
     // Rastgele 64 bayt — P-256 üzerinde *kesinlikle* valid bir nokta olma olasılığı
     // astronomik derecede düşük (~2^-128). Deterministic test için hep-aynı deseni:
     let bad_x = [0xAAu8; 32];
@@ -328,16 +323,6 @@ fn gecersiz_peer_pubkey_reddedilir() {
     uncompressed.extend_from_slice(&bad_x);
     uncompressed.extend_from_slice(&bad_y);
 
-    let encoded = EncodedPoint::from_bytes(&uncompressed);
-    // EncodedPoint parse'ı başarılı olabilir (yalnızca tag kontrol eder),
-    // ama `PublicKey::from_encoded_point` eğri denklemi kontrolü yapar.
-    match encoded {
-        Ok(ep) => {
-            let pk: Option<PublicKey> = PublicKey::from_encoded_point(&ep).into();
-            assert!(pk.is_none(), "geçersiz point PublicKey'e dönüşmemeli");
-        }
-        Err(_) => {
-            // Encoding zaten hatalıysa da test geçer — amacımız "kabul edilmedi".
-        }
-    }
+    let pk = PublicKey::from_sec1_bytes(&uncompressed);
+    assert!(pk.is_err(), "geçersiz point PublicKey'e dönüşmemeli");
 }

@@ -79,12 +79,11 @@ aes = "0.9"
 cbc = { version = "0.2", features = ["alloc"] }
 cipher = { version = "0.5", features = ["block-padding", "alloc"] }
 subtle = "2"
-p256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
-elliptic-curve = { version = "0.13", features = ["sec1"] }
+p256 = { version = "=0.14.0-rc.12", features = ["ecdh", "arithmetic"] }
+elliptic-curve = { version = "=0.14.0-rc.35", features = ["sec1"] }
 
 # Random + encoding
 rand = "0.10"
-rand_core = "0.6"
 base64 = "0.22"
 # `hex` ukey2.rs handshake debug log (cipher_commitment + digest) için.
 hex = "0.4"

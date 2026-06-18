@@ -11,15 +11,15 @@ use crate::crypto;
 use crate::error::HekaError;
 use crate::frame;
 use anyhow::{anyhow, Result};
-use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+use elliptic_curve::{sec1::ToSec1Point, Generate};
 use hekadrop_proto::securegcm::{
     ukey2_client_init, Ukey2ClientFinished, Ukey2ClientInit, Ukey2HandshakeCipher, Ukey2Message,
     Ukey2ServerInit,
 };
 use hekadrop_proto::securemessage::{EcP256PublicKey, GenericPublicKey, PublicKeyType};
-use p256::{ecdh::diffie_hellman, EncodedPoint, PublicKey, SecretKey};
+use p256::{ecdh::diffie_hellman, PublicKey, SecretKey};
 use prost::Message;
-use rand_core::{OsRng, RngCore};
+use rand::Rng;
 use tokio::net::TcpStream;
 
 pub struct DerivedKeys {
@@ -60,9 +60,9 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     use sha2::{Digest, Sha512};
 
     // 1) P-256 anahtar çifti üret
-    let secret_key = SecretKey::random(&mut OsRng);
+    let secret_key = SecretKey::generate();
     let public_key = secret_key.public_key();
-    let encoded = public_key.to_encoded_point(false);
+    let encoded = public_key.to_sec1_point(false);
     let xy = encoded.as_bytes();
     let x = to_signed_bytes(&xy[1..33]);
     let y = to_signed_bytes(&xy[33..65]);
@@ -95,7 +95,7 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
 
     // 3) ClientInit inşa et
     let mut random = [0u8; 32];
-    OsRng.fill_bytes(&mut random);
+    rand::rng().fill_bytes(&mut random);
 
     let client_init = Ukey2ClientInit {
         version: Some(1),
@@ -151,11 +151,8 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
     let mut uncompressed = vec![0x04u8];
     uncompressed.extend_from_slice(&peer_x);
     uncompressed.extend_from_slice(&peer_y);
-    let encoded =
-        EncodedPoint::from_bytes(&uncompressed).map_err(|e| anyhow!("peer pubkey parse: {e}"))?;
-    let peer_pk = PublicKey::from_encoded_point(&encoded);
-    let peer_pk = Option::<PublicKey>::from(peer_pk)
-        .ok_or_else(|| anyhow!("peer pubkey geçersiz eğri noktası"))?;
+    let peer_pk = PublicKey::from_sec1_bytes(&uncompressed)
+        .map_err(|e| anyhow!("peer pubkey geçersiz eğri noktası: {e}"))?;
 
     // 7) ECDH + HKDF
     let shared = diffie_hellman(secret_key.to_nonzero_scalar(), peer_pk.as_affine());
@@ -270,8 +267,6 @@ pub struct ServerInitResult {
 /// - `next_protocol` desteklenmiyor (`AES_256_CBC-HMAC_SHA256` bekleniyor)
 /// - HKDF / SHA-512 / ECDH key generation hatası
 pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult> {
-    use rand_core::RngCore;
-
     let msg = Ukey2Message::decode(client_init_frame)?;
     let message_type = msg
         .message_type
@@ -342,9 +337,9 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
         .ok_or_else(|| anyhow!("commitment boş"))?;
 
     // P-256 anahtar çifti üret
-    let secret_key = SecretKey::random(&mut OsRng);
+    let secret_key = SecretKey::generate();
     let public_key = secret_key.public_key();
-    let encoded = public_key.to_encoded_point(false); // uncompressed: 04 || X(32) || Y(32)
+    let encoded = public_key.to_sec1_point(false); // uncompressed: 04 || X(32) || Y(32)
     let xy = encoded.as_bytes();
     // Java BigInteger-uyumlu: MSB >= 0x80 ise başa 0x00 ekle (signed representation).
     // Android tarafı Java BigInteger ile parse ettiği için zorunlu.
@@ -362,7 +357,7 @@ pub fn process_client_init(client_init_frame: &[u8]) -> Result<ServerInitResult>
     let generic_pk_bytes = generic_pk.encode_to_vec();
 
     let mut random = [0u8; 32];
-    OsRng.fill_bytes(&mut random);
+    rand::rng().fill_bytes(&mut random);
 
     let server_init = Ukey2ServerInit {
         version: Some(1),
@@ -464,11 +459,8 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
     let mut uncompressed = vec![0x04u8];
     uncompressed.extend_from_slice(&peer_x);
     uncompressed.extend_from_slice(&peer_y);
-    let encoded =
-        EncodedPoint::from_bytes(&uncompressed).map_err(|e| anyhow!("peer pubkey parse: {e}"))?;
-    let peer_pk = PublicKey::from_encoded_point(&encoded);
-    let peer_pk = Option::<PublicKey>::from(peer_pk)
-        .ok_or_else(|| anyhow!("peer pubkey geçersiz eğri noktası"))?;
+    let peer_pk = PublicKey::from_sec1_bytes(&uncompressed)
+        .map_err(|e| anyhow!("peer pubkey geçersiz eğri noktası: {e}"))?;
 
     let shared = diffie_hellman(state.secret_key.to_nonzero_scalar(), peer_pk.as_affine());
     let dhs_x = shared.raw_secret_bytes().to_vec();
