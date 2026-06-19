@@ -10,7 +10,7 @@ use hekadrop_core::state::{AppState, ProgressState};
 use hekadrop_core::ui_port::{
     AcceptDecision, FileSummary, FolderPromptSummary, UiNotification, UiPort,
 };
-use std::io::{stderr, stdin, stdout, IsTerminal, Write};
+use std::io::{IsTerminal, Write, stderr, stdin, stdout};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -108,7 +108,9 @@ impl UiPort for CliUiPort {
                 return AcceptDecision::Accept;
             }
             AcceptMode::Trusted => {
-                eprintln!("⚠️ [Auto-Accept Trusted] Device '{device}' is not trusted via SHA-256 hash. Rejecting.");
+                eprintln!(
+                    "⚠️ [Auto-Accept Trusted] Device '{device}' is not trusted via SHA-256 hash. Rejecting."
+                );
                 return AcceptDecision::Reject;
             }
             AcceptMode::Interactive => {}
@@ -116,7 +118,9 @@ impl UiPort for CliUiPort {
 
         // TTY Check
         if !std::io::stdin().is_terminal() {
-            eprintln!("⚠️ [No TTY] Headless environment without TTY. Rejecting transfer from '{device}' (PIN: {pin})");
+            eprintln!(
+                "⚠️ [No TTY] Headless environment without TTY. Rejecting transfer from '{device}' (PIN: {pin})"
+            );
             return AcceptDecision::Reject;
         }
 

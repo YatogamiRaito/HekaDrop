@@ -50,24 +50,24 @@
 use bytes::Bytes;
 use chrono::Utc;
 use hekadrop::capabilities::{
-    build_resume_hint_frame, build_resume_reject_frame, features, ActiveCapabilities,
-    CAPABILITIES_VERSION, ENVELOPE_VERSION,
+    ActiveCapabilities, CAPABILITIES_VERSION, ENVELOPE_VERSION, build_resume_hint_frame,
+    build_resume_reject_frame, features,
 };
-use hekadrop::frame::{self, dispatch_frame_body, wrap_hekadrop_frame, FrameKind};
+use hekadrop::frame::{self, FrameKind, dispatch_frame_body, wrap_hekadrop_frame};
 use hekadrop::location::nearby::connections::{
-    payload_transfer_frame::{
-        payload_header::PayloadType as PbPayloadType, PayloadChunk, PayloadHeader,
-    },
     PayloadTransferFrame,
+    payload_transfer_frame::{
+        PayloadChunk, PayloadHeader, payload_header::PayloadType as PbPayloadType,
+    },
 };
-use hekadrop::payload::{PayloadAssembler, CHECKPOINT_INTERVAL_CHUNKS};
+use hekadrop::payload::{CHECKPOINT_INTERVAL_CHUNKS, PayloadAssembler};
 use hekadrop::resume::{
-    self, meta_filename, partial_dir, partial_hash_streaming, session_id_i64, PartialMeta,
-    CHUNK_SIZE, RESUME_HINT_TIMEOUT,
+    self, CHUNK_SIZE, PartialMeta, RESUME_HINT_TIMEOUT, meta_filename, partial_dir,
+    partial_hash_streaming, session_id_i64,
 };
 use hekadrop::secure::SecureCtx;
 use hekadrop_core::chunk_hmac::{build_chunk_integrity, compute_tag, derive_chunk_hmac_key};
-use hekadrop_core::negotiation::{negotiate_capabilities, DEFAULT_CAPABILITIES_TIMEOUT};
+use hekadrop_core::negotiation::{DEFAULT_CAPABILITIES_TIMEOUT, negotiate_capabilities};
 use hekadrop_core::ukey2::DerivedKeys;
 use hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload as ExtPayload;
 use hekadrop_proto::hekadrop_ext::resume_reject::Reason as RejectReason;
@@ -770,8 +770,8 @@ async fn e2e_resume_chunk_hmac_fastpath_tag_persisted_in_meta() {
         !meta.chunk_hmac_chain_b64.is_empty(),
         "chunk-HMAC aktif iken son chunk tag .meta'da saklanmalı"
     );
-    use base64::engine::general_purpose::STANDARD as BASE64_STD;
     use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64_STD;
     let tag_bytes = BASE64_STD
         .decode(&meta.chunk_hmac_chain_b64)
         .expect("base64 decode");

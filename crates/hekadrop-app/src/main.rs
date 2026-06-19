@@ -56,8 +56,8 @@ use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 use tao::window::WindowBuilder;
 use tokio::runtime::Handle;
 use tracing::info;
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::TrayIconBuilder;
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 #[cfg(not(target_os = "linux"))]
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use wry::{DragDropEvent, WebViewBuilder};
@@ -370,7 +370,7 @@ fn main() {
 /// `LogLevel` `hekadrop=<seviye>` direktifine dönüşür.
 fn setup_logging(log_level: settings::LogLevel) {
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(log_level.filter_directive()));
@@ -2145,12 +2145,12 @@ fn toggle_login_item() {
 fn toggle_login_item() {
     use crate::platform::win::to_wide;
     use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::ERROR_SUCCESS;
     use windows::Win32::System::Registry::{
-        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
-        HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_SZ,
+        HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_SZ, RegCloseKey, RegDeleteValueW,
+        RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     };
+    use windows::core::PCWSTR;
 
     const SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const VALUE: &str = "HekaDrop";

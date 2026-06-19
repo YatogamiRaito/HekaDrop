@@ -4,7 +4,7 @@ members = ["crates/hekadrop-app", "crates/hekadrop-cli", "crates/hekadrop-core",
 
 [workspace.package]
 version = "0.9.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.90"
 authors = ["destek@sourvice.com"]
 license = "MIT"
@@ -46,6 +46,7 @@ unused_macro_rules = "warn"
 unreachable_pub = "warn"
 
 [workspace.lints.clippy]
+collapsible_if = "allow"
 # Ship-blocker'lar — production'a sızmamalı
 dbg_macro = "deny"
 print_stdout = "warn"

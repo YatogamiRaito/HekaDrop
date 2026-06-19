@@ -37,15 +37,15 @@
 use chrono::Utc;
 use hekadrop::capabilities::CAPABILITIES_VERSION;
 use hekadrop::location::nearby::connections::{
-    payload_transfer_frame::{
-        payload_header::PayloadType as PbPayloadType, PayloadChunk, PayloadHeader,
-    },
     PayloadTransferFrame,
+    payload_transfer_frame::{
+        PayloadChunk, PayloadHeader, payload_header::PayloadType as PbPayloadType,
+    },
 };
-use hekadrop::payload::{PayloadAssembler, CHECKPOINT_INTERVAL_CHUNKS};
+use hekadrop::payload::{CHECKPOINT_INTERVAL_CHUNKS, PayloadAssembler};
 use hekadrop::resume::{
-    self, meta_filename, partial_dir, session_id_i64, PartialMeta, CHUNK_SIZE, MAX_META_VERSION,
-    RESUME_TTL_DAYS,
+    self, CHUNK_SIZE, MAX_META_VERSION, PartialMeta, RESUME_TTL_DAYS, meta_filename, partial_dir,
+    session_id_i64,
 };
 use hekadrop_core::chunk_hmac::{build_chunk_integrity, compute_tag, derive_chunk_hmac_key};
 use std::sync::Mutex;
@@ -447,9 +447,11 @@ async fn validate_resumability_invariants_total_size_and_ttl() {
     let path = dir.join(resume::meta_filename(session_id, payload_id));
     let _ = std::fs::remove_file(&path);
     assert!(!path.exists());
-    assert!(PartialMeta::load(&dir, session_id, payload_id)
-        .unwrap()
-        .is_none());
+    assert!(
+        PartialMeta::load(&dir, session_id, payload_id)
+            .unwrap()
+            .is_none()
+    );
 
     // CAPABILITIES_VERSION mevcut sürümle uyumlu (sender ResumeHint'te bunu
     // yollayacak — PR-D'de sürüm uyumsuzluğunda VERSION_MISMATCH reject).

@@ -1,0 +1,34 @@
+[package]
+name = "hekadrop-afl"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+afl = "0.15"
+hekadrop-core = { path = "../crates/hekadrop-core" }
+hekadrop-proto = { path = "../crates/hekadrop-proto" }
+prost = "0.14"
+
+[[bin]]
+name = "afl_frame_decode"
+path = "src/afl_frame_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "afl_ukey2_client_init"
+path = "src/afl_ukey2_client_init.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "afl_secure_decrypt"
+path = "src/afl_secure_decrypt.rs"
+test = false
+doc = false
+bench = false

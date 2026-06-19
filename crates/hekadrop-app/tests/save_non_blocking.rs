@@ -80,8 +80,8 @@
 //!   * `src/main.rs:801-806` (`open_config_file` — H#2'de düzeltildi)
 
 use parking_lot::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Pattern'in test edildiği tipik bir "büyük snapshot" payload'u —

@@ -231,11 +231,11 @@ fn prompt_accept_blocking(
     // olur. Mesaj metninde kullanıcıya hangi butonun ne anlama geldiği
     // açıkça yazılır.
     use crate::platform::win::to_wide;
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, IDCANCEL, IDNO, IDYES, MB_ICONINFORMATION, MB_SYSTEMMODAL, MB_YESNOCANCEL,
+        IDCANCEL, IDNO, IDYES, MB_ICONINFORMATION, MB_SYSTEMMODAL, MB_YESNOCANCEL, MessageBoxW,
     };
+    use windows::core::PCWSTR;
 
     let files_str = format_payload_lines(files, text_count, folder);
     // MessageBoxW'un Yes/No/Cancel butonları Windows sistem diline göre
@@ -594,11 +594,11 @@ pub(crate) fn fatal_error_dialog(title: &str, body: &str) {
     #[cfg(target_os = "windows")]
     {
         use crate::platform::win::to_wide;
-        use windows::core::PCWSTR;
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::{
-            MessageBoxW, MB_ICONERROR, MB_OK, MB_SYSTEMMODAL,
+            MB_ICONERROR, MB_OK, MB_SYSTEMMODAL, MessageBoxW,
         };
+        use windows::core::PCWSTR;
         let body_w = to_wide(body);
         let title_w = to_wide(title);
         // Startup path'te — thread spawn etmeden main thread'de blokla.
@@ -664,11 +664,11 @@ pub(crate) fn show_info(title: &str, body: &str) {
             .name("hekadrop-showinfo".into())
             .spawn(move || {
                 use crate::platform::win::to_wide;
-                use windows::core::PCWSTR;
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{
-                    MessageBoxW, MB_ICONINFORMATION, MB_OK, MB_SYSTEMMODAL,
+                    MB_ICONINFORMATION, MB_OK, MB_SYSTEMMODAL, MessageBoxW,
                 };
+                use windows::core::PCWSTR;
                 let body_w = to_wide(&body);
                 let title_w = to_wide(&title);
                 // SAFETY: `MessageBoxW`
@@ -739,11 +739,7 @@ pathList
         .filter(|l| !l.is_empty())
         .map(std::path::PathBuf::from)
         .collect();
-    if paths.is_empty() {
-        None
-    } else {
-        Some(paths)
-    }
+    if paths.is_empty() { None } else { Some(paths) }
 }
 
 /// Windows sürümü — Win32 `IFileOpenDialog` `FOS_ALLOWMULTISELECT` ile çoklu dosya seçimi.
@@ -782,11 +778,7 @@ if ($dlg.ShowDialog() -eq 'OK') { $dlg.FileNames -join "`n" }
         .filter(|l| !l.is_empty())
         .map(std::path::PathBuf::from)
         .collect();
-    if paths.is_empty() {
-        None
-    } else {
-        Some(paths)
-    }
+    if paths.is_empty() { None } else { Some(paths) }
 }
 
 /// Linux sürümü — `zenity` (öncelik) veya `kdialog` ile çoklu dosya seçimi.
@@ -814,11 +806,7 @@ fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
             .filter(|l| !l.is_empty())
             .map(std::path::PathBuf::from)
             .collect();
-        if paths.is_empty() {
-            None
-        } else {
-            Some(paths)
-        }
+        if paths.is_empty() { None } else { Some(paths) }
     } else if have("kdialog") {
         let out = Command::new("kdialog")
             .args([
@@ -841,11 +829,7 @@ fn choose_files_blocking() -> Option<Vec<std::path::PathBuf>> {
             .filter(|l| !l.is_empty())
             .map(std::path::PathBuf::from)
             .collect();
-        if paths.is_empty() {
-            None
-        } else {
-            Some(paths)
-        }
+        if paths.is_empty() { None } else { Some(paths) }
     } else {
         tracing::warn!("choose_files: zenity/kdialog yok");
         None

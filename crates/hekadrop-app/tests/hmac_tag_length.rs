@@ -34,9 +34,9 @@
 //!   * `src/secure.rs::SecureCtx::decrypt` — HMAC doğrulamadan ÖNCE uzunluk check
 //!   * `src/crypto.rs::hmac_sha256_verify` — defansif `tag.len() != 32 → false`
 
+use hekadrop::DerivedKeys;
 use hekadrop::secure::SecureCtx;
 use hekadrop::securemessage::SecureMessage;
-use hekadrop::DerivedKeys;
 use prost::Message;
 
 fn derived_keys_fixed() -> DerivedKeys {

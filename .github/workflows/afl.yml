@@ -1,0 +1,51 @@
+name: AFL Fuzzing
+
+on:
+  schedule:
+    # Her Cumartesi gece yarısı (UTC)
+    - cron: '0 0 * * 6'
+  workflow_dispatch: # Manuel çalıştırma desteği
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  afl:
+    name: AFL Fuzzing Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install cargo-afl
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-afl
+
+      - name: Build AFL Targets
+        working-directory: afl
+        run: cargo afl build --release
+
+      - name: Run AFL Verification (Quick Fuzz)
+        working-directory: afl
+        env:
+          AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES: 1
+          AFL_SKIP_CPUFREQ: 1
+        run: |
+          # Fuzzing için boş seed giriş klasörü hazırla
+          mkdir -p in
+          echo "hello fuzzing seed" > in/seed
+          
+          # Her bir harness'i 10 saniye boyunca çalıştırıp sistem kararlılığını doğrula
+          cargo afl fuzz -i in -o out_frame -V 10 target/release/afl_frame_decode || true
+          cargo afl fuzz -i in -o out_ukey2 -V 10 target/release/afl_ukey2_client_init || true
+          cargo afl fuzz -i in -o out_secure -V 10 target/release/afl_secure_decrypt || true

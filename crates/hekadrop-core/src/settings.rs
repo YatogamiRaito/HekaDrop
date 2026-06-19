@@ -151,7 +151,7 @@ pub struct TrustedDevice {
 /// attribute `skip_serializing_if = "Option::is_none"`). Length != 6 veya
 /// non-hex input → deserialize hatası.
 mod hex_hash_opt {
-    use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
 
     #[expect(
         clippy::trivially_copy_pass_by_ref,
@@ -786,10 +786,10 @@ fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 #[cfg(windows)]
 fn replace_atomic(tmp: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
     };
+    use windows::core::PCWSTR;
     // PCWSTR dizileri null-terminated olmalı — OsStr::encode_wide null
     // katmaz, bu yüzden manuel ekliyoruz (repo içi başka Win32 çağrılarıyla
     // aynı pattern, bkz. src/platform.rs, src/main.rs).
@@ -997,7 +997,7 @@ pub(crate) fn migrate_trusted_value(v: serde_json::Value) -> Result<Vec<TrustedD
         other => {
             return Err(format!(
                 "trusted_devices array bekleniyordu, geldi: {other:?}"
-            ))
+            ));
         }
     };
     let mut out = Vec::with_capacity(arr.len());
@@ -1024,7 +1024,7 @@ pub(crate) fn migrate_trusted_value(v: serde_json::Value) -> Result<Vec<TrustedD
             other => {
                 return Err(format!(
                     "trusted_devices elemanı beklenmeyen tip: {other:?}"
-                ))
+                ));
             }
         }
     }

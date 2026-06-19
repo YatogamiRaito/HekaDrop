@@ -147,7 +147,9 @@ pub enum HekaError {
     #[error("chunk gönderim sırasında iptal")]
     CancelledDuringChunk,
     /// Peer Response status=reject (çoğunlukla PIN uyuşmazlığı).
-    #[error("Peer aktarımı reddetti (status={status}). Session fingerprint: {fingerprint} — PIN eşleşmedi mi?")]
+    #[error(
+        "Peer aktarımı reddetti (status={status}). Session fingerprint: {fingerprint} — PIN eşleşmedi mi?"
+    )]
     PeerRejected { status: i32, fingerprint: String },
 
     // ---- Settings / config ----

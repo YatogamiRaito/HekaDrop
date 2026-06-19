@@ -44,7 +44,7 @@
 //! gerçek wire bytes → decode → validate zincirini uçtan uca koşturur. Unit
 //! test'ler struct alanlarını doğrudan kurar ve bu decode sözleşmesini atlar.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use hekadrop::securegcm::{Ukey2HandshakeCipher, Ukey2Message, Ukey2ServerInit};
 use hekadrop::validate_server_init;
 use prost::Message;

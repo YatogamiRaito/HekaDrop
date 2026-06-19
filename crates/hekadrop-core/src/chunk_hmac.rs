@@ -599,7 +599,8 @@ mod tests {
             let buffered = hmac_sha256(&key, &buffered_input);
 
             assert_eq!(
-                streaming, buffered,
+                streaming,
+                buffered,
                 "streaming HMAC tag = buffered baseline (params: id={payload_id} idx={chunk_index} off={offset} len={})",
                 body.len()
             );

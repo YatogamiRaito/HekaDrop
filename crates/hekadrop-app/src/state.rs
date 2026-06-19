@@ -22,7 +22,7 @@
               referans verir; kullanım eklenince bu expect kaldırılır."
 )]
 pub(crate) use hekadrop_core::state::{
-    AppState, HistoryItem, ProgressState, RateLimiter, TransferGuard, DEFAULT_COMPLETED_IDLE_DELAY,
+    AppState, DEFAULT_COMPLETED_IDLE_DELAY, HistoryItem, ProgressState, RateLimiter, TransferGuard,
 };
 
 use hekadrop_core::settings::Settings;

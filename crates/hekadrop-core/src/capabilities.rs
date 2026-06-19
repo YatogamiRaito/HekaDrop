@@ -295,8 +295,8 @@ mod tests {
         // RFC-0004 §3.2 + docs/protocol/resume.md §3 — 7 reason variant.
         // Tüm enum değerlerinin encode + decode round-trip'i korunduğunu
         // sabitler (proto3 unknown variant fallback hata kaynağı olabilir).
-        use hekadrop_proto::hekadrop_ext::resume_reject::Reason;
         use hekadrop_proto::hekadrop_ext::ResumeReject;
+        use hekadrop_proto::hekadrop_ext::resume_reject::Reason;
 
         let reasons = [
             Reason::Unspecified,
@@ -324,8 +324,8 @@ mod tests {
     fn resume_hint_envelope_oneof_slot_12() {
         // HekaDropFrame.payload oneof slot 12 = resume_hint (capabilities.md
         // §3.1 slot policy). Dispatch'in doğru variant'ı seçtiğini sabitler.
-        use hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload;
         use hekadrop_proto::hekadrop_ext::ResumeHint;
+        use hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload;
 
         let hint = ResumeHint {
             session_id: 1,
@@ -355,9 +355,9 @@ mod tests {
     fn resume_reject_envelope_oneof_slot_13() {
         // HekaDropFrame.payload oneof slot 13 = resume_reject (capabilities.md
         // §3.1 slot policy). Dispatch'in doğru variant'ı seçtiğini sabitler.
+        use hekadrop_proto::hekadrop_ext::ResumeReject;
         use hekadrop_proto::hekadrop_ext::heka_drop_frame::Payload;
         use hekadrop_proto::hekadrop_ext::resume_reject::Reason;
-        use hekadrop_proto::hekadrop_ext::ResumeReject;
 
         let reject = ResumeReject {
             payload_id: 99,

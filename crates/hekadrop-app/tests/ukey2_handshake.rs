@@ -31,9 +31,9 @@
 
 mod common;
 
-use common::{hkdf_sha256, pin_code_from_auth_key, sha256, to_signed_bytes, D2D_SALT};
-use elliptic_curve::{sec1::ToSec1Point, Generate};
-use p256::{ecdh::diffie_hellman, PublicKey, SecretKey};
+use common::{D2D_SALT, hkdf_sha256, pin_code_from_auth_key, sha256, to_signed_bytes};
+use elliptic_curve::{Generate, sec1::ToSec1Point};
+use p256::{PublicKey, SecretKey, ecdh::diffie_hellman};
 
 /// İki taraf için HKDF ile türetilen 4+ anahtarı kapsayan yardımcı.
 /// `HekaDrop` `DerivedKeys` yapısıyla aynı alanlar.
