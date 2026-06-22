@@ -46,7 +46,7 @@
 use crate::folder::bundle::{BundleError, BundleReader, HEADER_LEN};
 use crate::folder::manifest::{BundleManifest, ManifestEntry, ManifestError};
 use crate::folder::sanitize::{
-    sanitize_received_relative_path, sanitize_root_name, PathError, MAX_DEPTH,
+    MAX_DEPTH, PathError, sanitize_received_relative_path, sanitize_root_name,
 };
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
@@ -621,7 +621,7 @@ impl Drop for ExtractCleanup {
 mod tests {
     use super::*;
     use crate::folder::bundle::{BundleWriter, HEKABUND_VERSION};
-    use crate::folder::manifest::{BundleManifest, ManifestEntry, MANIFEST_VERSION};
+    use crate::folder::manifest::{BundleManifest, MANIFEST_VERSION, ManifestEntry};
     use chrono::{DateTime, Utc};
     use std::io::Write;
     use tempfile::tempdir;
@@ -888,12 +888,14 @@ mod tests {
             )))
         ));
         // Atomic-reject: escape.txt MİYAR.
-        assert!(!downloads
-            .path()
-            .parent()
-            .unwrap()
-            .join("escape.txt")
-            .exists());
+        assert!(
+            !downloads
+                .path()
+                .parent()
+                .unwrap()
+                .join("escape.txt")
+                .exists()
+        );
         assert!(!downloads.path().join("rt").exists());
     }
 

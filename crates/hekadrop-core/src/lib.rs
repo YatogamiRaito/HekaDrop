@@ -100,4 +100,4 @@ pub mod state;
 // ve test'ler eski lib.rs surface üzerinden bu sembolleri root-level alıyordu;
 // shim app tarafında devam ettirir ama core de kendi root pub re-export'larını
 // belgelemek için aşağıdakileri sabitler.
-pub use ukey2::{process_client_init, validate_server_init, DerivedKeys};
+pub use ukey2::{DerivedKeys, process_client_init, validate_server_init};

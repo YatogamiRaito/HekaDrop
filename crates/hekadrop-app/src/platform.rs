@@ -451,23 +451,23 @@ pub(crate) mod win {
     #[allow(clippy::wildcard_imports)]
     use super::*;
     use std::cell::Cell;
-    use windows::core::{Result, GUID, PCWSTR, PWSTR};
     use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
     use windows::Win32::System::Com::{
-        CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoTaskMemFree,
     };
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
     };
     use windows::Win32::System::Memory::{
-        GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
     };
     use windows::Win32::System::SystemInformation::{ComputerNameDnsHostname, GetComputerNameExW};
     use windows::Win32::UI::Shell::{
-        ILCreateFromPathW, ILFree, SHGetKnownFolderPath, SHOpenFolderAndSelectItems, ShellExecuteW,
-        KF_FLAG_DEFAULT,
+        ILCreateFromPathW, ILFree, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+        SHOpenFolderAndSelectItems, ShellExecuteW,
     };
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use windows::core::{GUID, PCWSTR, PWSTR, Result};
 
     /// UTF-16 LE null-terminated vektör üretir.
     /// `pub(crate)` — ui.rs (`MessageBoxW`) ve main.rs (Registry) de kullanır.

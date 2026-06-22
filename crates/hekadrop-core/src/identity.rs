@@ -25,7 +25,7 @@
 //!   kullanıcı manuel müdahale etmeli (aksi halde eski trust ilişkileri
 //!   sessizce kaybolurdu).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rand::Rng;
 #[cfg(target_os = "windows")]
 use std::path::PathBuf;

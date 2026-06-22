@@ -31,7 +31,7 @@
 //! Çalıştırma: `cargo bench --bench crypto`
 //! Derleme kontrolü (CI/pre-commit): `cargo bench --no-run`
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use hekadrop::crypto;
 use std::hint::black_box;
 

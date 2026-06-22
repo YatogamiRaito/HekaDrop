@@ -7,7 +7,7 @@
 //!
 //! Wire-byte-exact spec: `docs/protocol/folder-payload.md` §3.
 
-use crate::folder::sanitize::{sanitize_received_relative_path, sanitize_root_name, PathError};
+use crate::folder::sanitize::{PathError, sanitize_received_relative_path, sanitize_root_name};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

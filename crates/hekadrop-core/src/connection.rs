@@ -12,25 +12,26 @@
 use crate::error::HekaError;
 use crate::frame;
 use crate::location::nearby::connections::{
+    ConnectionResponseFrame, DisconnectionFrame, KeepAliveFrame, OfflineFrame, OsInfo,
+    PayloadTransferFrame, V1Frame,
     os_info::OsType,
     payload_transfer_frame::{
-        self as ptf, payload_header::PayloadType, PayloadChunk, PayloadHeader,
+        self as ptf, PayloadChunk, PayloadHeader, payload_header::PayloadType,
     },
-    v1_frame, ConnectionResponseFrame, DisconnectionFrame, KeepAliveFrame, OfflineFrame, OsInfo,
-    PayloadTransferFrame, V1Frame,
+    v1_frame,
 };
 use crate::payload::{CompletedPayload, PayloadAssembler};
 use crate::secure::SecureCtx;
 use crate::sharing::nearby::{
-    connection_response_frame::Status as ConsentStatus, frame::Version as ShVersion,
-    paired_key_result_frame::Status as PkrStatus, text_metadata::Type as TextType,
-    v1_frame as sh_v1, ConnectionResponseFrame as ShConsent, Frame as SharingFrame,
-    PairedKeyEncryptionFrame, PairedKeyResultFrame, V1Frame as ShV1Frame,
+    ConnectionResponseFrame as ShConsent, Frame as SharingFrame, PairedKeyEncryptionFrame,
+    PairedKeyResultFrame, V1Frame as ShV1Frame, connection_response_frame::Status as ConsentStatus,
+    frame::Version as ShVersion, paired_key_result_frame::Status as PkrStatus,
+    text_metadata::Type as TextType, v1_frame as sh_v1,
 };
 use crate::state::{self, AppState, HistoryItem, ProgressState};
 use crate::ui_port::{AcceptDecision, FileSummary, FolderPromptSummary, UiNotification, UiPort};
 use crate::ukey2;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use prost::Message;
 use rand::Rng;
 use std::collections::HashMap;
@@ -1760,8 +1761,8 @@ async fn handle_resume_for_file(
     announced_total_size: i64,
     peer_endpoint_id: &str,
 ) -> Result<()> {
-    use base64::engine::general_purpose::STANDARD as BASE64_STD;
     use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64_STD;
     use hekadrop_proto::hekadrop_ext::ResumeHint;
 
     // PR #133 medium: `dir` caller-cached `partial_dir()`. Introduction loop'u
@@ -2061,7 +2062,7 @@ async fn handle_hekadrop_frame(
     remote_name: &str,
     ui: &dyn UiPort,
 ) -> Result<()> {
-    use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, HekaDropFrame};
+    use hekadrop_proto::hekadrop_ext::{HekaDropFrame, heka_drop_frame::Payload};
     use tracing::debug;
 
     let frame = HekaDropFrame::decode(bytes)
@@ -2505,7 +2506,7 @@ fn classify_handshake_error(e: &anyhow::Error) -> &'static str {
             match he {
                 HekaError::ReadTimeout(_) => return "err.peer_timeout",
                 HekaError::UnexpectedEof | HekaError::PeerDisconnected => {
-                    return "err.peer_disconnected"
+                    return "err.peer_disconnected";
                 }
                 HekaError::Ukey2CommitmentMismatch => return "err.pin_mismatch",
                 HekaError::Ukey2CipherDowngrade(_)
@@ -2945,7 +2946,7 @@ mod tests {
     /// cevap verir.
     #[test]
     fn dispatch_recognizes_hekadrop_magic_prefix() {
-        use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, Capabilities, HekaDropFrame};
+        use hekadrop_proto::hekadrop_ext::{Capabilities, HekaDropFrame, heka_drop_frame::Payload};
         use prost::Message;
 
         let caps = HekaDropFrame {

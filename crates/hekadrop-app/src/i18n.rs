@@ -194,12 +194,16 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "notify.trust_expired" => "{0} artık güvenilir değil (süre doldu)",
 
         // Dialog
-        "dialog.no_devices" => "Yakında Quick Share cihazı bulunamadı.\n\nAndroid'de: Ayarlar → Bağlı cihazlar → Quick Share → görünürlüğü \"Herkes\" yap ve ekranı açık tut.",
+        "dialog.no_devices" => {
+            "Yakında Quick Share cihazı bulunamadı.\n\nAndroid'de: Ayarlar → Bağlı cihazlar → Quick Share → görünürlüğü \"Herkes\" yap ve ekranı açık tut."
+        }
         "dialog.history.empty" => "Henüz aktarım yok.",
         "dialog.history.title" => "Son aktarımlar",
         "dialog.update.latest" => "En güncel sürümü kullanıyorsun (v{0}).",
         "dialog.update.available" => "Mevcut: v{0}\nYeni sürüm: {1}\n\n{2}",
-        "dialog.update.failed" => "Güncelleme kontrolü başarısız.\n\nGitHub API'ye ulaşılamamış olabilir; internet bağlantını kontrol edip tekrar dene.",
+        "dialog.update.failed" => {
+            "Güncelleme kontrolü başarısız.\n\nGitHub API'ye ulaşılamamış olabilir; internet bağlantını kontrol edip tekrar dene."
+        }
         "dialog.update.title" => "HekaDrop — Güncelleme var",
 
         // Accept dialog
@@ -210,7 +214,9 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         "accept.accept_trust" => "Kabul + güven",
         "accept.content_none" => "içerik yok",
         "accept.text_count" => "{0} metin",
-        "accept.trust_prompt" => "{0} cihazını bu ve sonraki aktarımlar için güven listesine ekleyeyim mi?",
+        "accept.trust_prompt" => {
+            "{0} cihazını bu ve sonraki aktarımlar için güven listesine ekleyeyim mi?"
+        }
         "accept.trust_yes" => "Evet, güven",
         "accept.trust_later" => "Sadece bu sefer",
 
@@ -286,17 +292,25 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
         // Webview — privacy panel (H#4)
         "webview.privacy.title" => "Gizlilik",
         "webview.privacy.advertise.label" => "LAN'da görünür ol (mDNS yayını)",
-        "webview.privacy.advertise.desc" => "Kapatınca cihaz Android \"Quick Share\" listesinde çıkmaz; sen yine gönderebilirsin.",
+        "webview.privacy.advertise.desc" => {
+            "Kapatınca cihaz Android \"Quick Share\" listesinde çıkmaz; sen yine gönderebilirsin."
+        }
         "webview.privacy.log_level.label" => "Log seviyesi",
-        "webview.privacy.log_level.desc" => "Warn+: sadece uyarı/hata kaydedilir. RUST_LOG env'i set ise o öncelikli.",
+        "webview.privacy.log_level.desc" => {
+            "Warn+: sadece uyarı/hata kaydedilir. RUST_LOG env'i set ise o öncelikli."
+        }
         "webview.privacy.log_level.error" => "Error (sadece hata)",
         "webview.privacy.log_level.warn" => "Warn (uyarı + hata)",
         "webview.privacy.log_level.info" => "Info (varsayılan)",
         "webview.privacy.log_level.debug" => "Debug (geliştirici)",
         "webview.privacy.keep_stats.label" => "Aktarım istatistiklerini kaydet",
-        "webview.privacy.keep_stats.desc" => "Kapatınca yeni aktarımlar diske yazılmaz; mevcut stats.json silinmez.",
+        "webview.privacy.keep_stats.desc" => {
+            "Kapatınca yeni aktarımlar diske yazılmaz; mevcut stats.json silinmez."
+        }
         "webview.privacy.update_check.label" => "Güncellemeleri otomatik kontrol et",
-        "webview.privacy.update_check.desc" => "Kapalıysa GitHub API'ye istek atılmaz. HEKADROP_NO_UPDATE_CHECK env'i de aynı etki.",
+        "webview.privacy.update_check.desc" => {
+            "Kapalıysa GitHub API'ye istek atılmaz. HEKADROP_NO_UPDATE_CHECK env'i de aynı etki."
+        }
         "webview.privacy.restart_notice" => "Değişiklik için uygulamayı yeniden başlat.",
         "webview.privacy.restart_badge" => "Restart gerekli",
         "webview.privacy.hotswap_badge" => "Anında uygulanır",
@@ -306,10 +320,14 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
 
         // Settings — trust clear confirmation dialog
         "webview.settings.trust_clear_title" => "Tüm güvenilen cihazları temizle",
-        "webview.settings.trust_clear_body" => "Tüm güvenilen cihazlar silinecek. Bu işlem geri alınamaz. Devam edilsin mi?",
+        "webview.settings.trust_clear_body" => {
+            "Tüm güvenilen cihazlar silinecek. Bu işlem geri alınamaz. Devam edilsin mi?"
+        }
         "webview.settings.trust_clear_cancel" => "İptal",
         "webview.settings.trust_clear_confirm" => "Temizle",
-        "webview.trusted.expired_tooltip" => "Bu cihazın güven süresi doldu. Bağlanmak isterse yeniden onay gerekir.",
+        "webview.trusted.expired_tooltip" => {
+            "Bu cihazın güven süresi doldu. Bağlanmak isterse yeniden onay gerekir."
+        }
 
         // Connection errors (receiver/sender ortak)
         "err.pin_mismatch" => "PIN uyuşmadı. Güvenli bağlantı kurulamadı.",
@@ -320,7 +338,9 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
 
         // Trust migration (identity rotation)
         "trust.migration.title" => "Cihaz kimliği güncelleniyor",
-        "trust.migration.body" => "{0} bu cihazda daha önce güvenliydi. Yeni güvenlik kimliğini doğrulamak için PIN kodunu karşılaştırın.\n\nBu kodlar eşleşiyorsa 'Kabul + Güven', eşleşmiyorsa 'Reddet' seçin.",
+        "trust.migration.body" => {
+            "{0} bu cihazda daha önce güvenliydi. Yeni güvenlik kimliğini doğrulamak için PIN kodunu karşılaştırın.\n\nBu kodlar eşleşiyorsa 'Kabul + Güven', eşleşmiyorsa 'Reddet' seçin."
+        }
 
         // Update check — error categories & status
         "update.error.network" => "Ağ bağlantısı yok — güncelleme sunucusuna ulaşılamadı.",
@@ -332,7 +352,9 @@ fn lookup_tr(key: &str) -> Option<&'static str> {
 
         // Onboarding (Dalga 3 placeholder)
         "onboarding.title" => "HekaDrop'a hoş geldiniz",
-        "onboarding.body" => "Bu cihaz şu adla görünüyor: {0}\n\nmacOS'ta uygulama menü çubuğunda çalışır — Dock'ta simge yoktur.\n\nDosya almak için Android/diğer HekaDrop cihazları aynı Wi-Fi ağına bağlanmalı.",
+        "onboarding.body" => {
+            "Bu cihaz şu adla görünüyor: {0}\n\nmacOS'ta uygulama menü çubuğunda çalışır — Dock'ta simge yoktur.\n\nDosya almak için Android/diğer HekaDrop cihazları aynı Wi-Fi ağına bağlanmalı."
+        }
         "onboarding.cta_settings" => "Ayarları aç",
         "onboarding.cta_dismiss" => "Anladım",
 
@@ -413,12 +435,16 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "notify.trust_expired" => "{0} is no longer trusted (expired)",
 
         // Dialog
-        "dialog.no_devices" => "No Quick Share device found nearby.\n\nOn Android: Settings → Connected devices → Quick Share → set visibility to \"Everyone\" and keep the screen on.",
+        "dialog.no_devices" => {
+            "No Quick Share device found nearby.\n\nOn Android: Settings → Connected devices → Quick Share → set visibility to \"Everyone\" and keep the screen on."
+        }
         "dialog.history.empty" => "No transfers yet.",
         "dialog.history.title" => "Recent transfers",
         "dialog.update.latest" => "You're on the latest version (v{0}).",
         "dialog.update.available" => "Current: v{0}\nNew version: {1}\n\n{2}",
-        "dialog.update.failed" => "Update check failed.\n\nCould not reach GitHub API; check your internet connection and retry.",
+        "dialog.update.failed" => {
+            "Update check failed.\n\nCould not reach GitHub API; check your internet connection and retry."
+        }
         "dialog.update.title" => "HekaDrop — Update available",
 
         // Accept dialog
@@ -429,7 +455,9 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         "accept.accept_trust" => "Accept + trust",
         "accept.content_none" => "no content",
         "accept.text_count" => "{0} text",
-        "accept.trust_prompt" => "Add {0} to the trusted devices list for this and future transfers?",
+        "accept.trust_prompt" => {
+            "Add {0} to the trusted devices list for this and future transfers?"
+        }
         "accept.trust_yes" => "Yes, trust",
         "accept.trust_later" => "Just this once",
 
@@ -504,17 +532,25 @@ fn lookup_en(key: &str) -> Option<&'static str> {
         // Webview — privacy panel (H#4)
         "webview.privacy.title" => "Privacy",
         "webview.privacy.advertise.label" => "Advertise on LAN (mDNS)",
-        "webview.privacy.advertise.desc" => "When off, this device is hidden from Android's Quick Share list; you can still send.",
+        "webview.privacy.advertise.desc" => {
+            "When off, this device is hidden from Android's Quick Share list; you can still send."
+        }
         "webview.privacy.log_level.label" => "Log level",
-        "webview.privacy.log_level.desc" => "Warn+ only records warnings/errors. RUST_LOG env var takes precedence if set.",
+        "webview.privacy.log_level.desc" => {
+            "Warn+ only records warnings/errors. RUST_LOG env var takes precedence if set."
+        }
         "webview.privacy.log_level.error" => "Error (errors only)",
         "webview.privacy.log_level.warn" => "Warn (warnings + errors)",
         "webview.privacy.log_level.info" => "Info (default)",
         "webview.privacy.log_level.debug" => "Debug (developer)",
         "webview.privacy.keep_stats.label" => "Record transfer statistics",
-        "webview.privacy.keep_stats.desc" => "When off, new transfers are not written to disk; existing stats.json is kept.",
+        "webview.privacy.keep_stats.desc" => {
+            "When off, new transfers are not written to disk; existing stats.json is kept."
+        }
         "webview.privacy.update_check.label" => "Check for updates automatically",
-        "webview.privacy.update_check.desc" => "When off, no request is sent to GitHub. HEKADROP_NO_UPDATE_CHECK env var has the same effect.",
+        "webview.privacy.update_check.desc" => {
+            "When off, no request is sent to GitHub. HEKADROP_NO_UPDATE_CHECK env var has the same effect."
+        }
         "webview.privacy.restart_notice" => "Restart the app for changes to take effect.",
         "webview.privacy.restart_badge" => "Restart required",
         "webview.privacy.hotswap_badge" => "Applied instantly",
@@ -524,10 +560,14 @@ fn lookup_en(key: &str) -> Option<&'static str> {
 
         // Settings — trust clear confirmation dialog
         "webview.settings.trust_clear_title" => "Clear all trusted devices",
-        "webview.settings.trust_clear_body" => "All trusted devices will be deleted. This cannot be undone. Continue?",
+        "webview.settings.trust_clear_body" => {
+            "All trusted devices will be deleted. This cannot be undone. Continue?"
+        }
         "webview.settings.trust_clear_cancel" => "Cancel",
         "webview.settings.trust_clear_confirm" => "Clear",
-        "webview.trusted.expired_tooltip" => "This device's trust has expired. Reconnecting will require re-approval.",
+        "webview.trusted.expired_tooltip" => {
+            "This device's trust has expired. Reconnecting will require re-approval."
+        }
 
         // Connection errors (receiver/sender shared)
         "err.pin_mismatch" => "PIN mismatch. Secure connection could not be established.",
@@ -538,7 +578,9 @@ fn lookup_en(key: &str) -> Option<&'static str> {
 
         // Trust migration (identity rotation)
         "trust.migration.title" => "Device identity update",
-        "trust.migration.body" => "{0} was previously trusted on this device. Verify the new security identity by comparing the PIN.\n\nIf the PINs match, choose 'Accept + Trust'; otherwise choose 'Reject'.",
+        "trust.migration.body" => {
+            "{0} was previously trusted on this device. Verify the new security identity by comparing the PIN.\n\nIf the PINs match, choose 'Accept + Trust'; otherwise choose 'Reject'."
+        }
 
         // Update check — error categories & status
         "update.error.network" => "No network — could not reach update server.",
@@ -550,7 +592,9 @@ fn lookup_en(key: &str) -> Option<&'static str> {
 
         // Onboarding (Wave 3 placeholder)
         "onboarding.title" => "Welcome to HekaDrop",
-        "onboarding.body" => "This device appears as: {0}\n\nOn macOS the app lives in the menu bar — no Dock icon.\n\nTo receive files, Android/other HekaDrop devices must be on the same Wi-Fi network.",
+        "onboarding.body" => {
+            "This device appears as: {0}\n\nOn macOS the app lives in the menu bar — no Dock icon.\n\nTo receive files, Android/other HekaDrop devices must be on the same Wi-Fi network."
+        }
         "onboarding.cta_settings" => "Open settings",
         "onboarding.cta_dismiss" => "Got it",
 

@@ -20,22 +20,23 @@ use crate::discovery_types::DiscoveredDevice;
 use crate::error::HekaError;
 use crate::frame;
 use crate::location::nearby::connections::{
+    ConnectionRequestFrame, KeepAliveFrame, OfflineFrame, PayloadTransferFrame, V1Frame,
     connection_request_frame::Medium,
     payload_transfer_frame::{
-        self as ptf, payload_header::PayloadType, PayloadChunk, PayloadHeader,
+        self as ptf, PayloadChunk, PayloadHeader, payload_header::PayloadType,
     },
-    v1_frame, ConnectionRequestFrame, KeepAliveFrame, OfflineFrame, PayloadTransferFrame, V1Frame,
+    v1_frame,
 };
 use crate::payload::{CompletedPayload, PayloadAssembler};
 use crate::secure::SecureCtx;
 use crate::sharing::nearby::{
+    FileMetadata, Frame as SharingFrame, IntroductionFrame, TextMetadata, V1Frame as ShV1Frame,
     connection_response_frame::Status as ConsentStatus, file_metadata::Type as FileKind,
-    frame::Version as ShVersion, text_metadata::Type as TextKind, v1_frame as sh_v1, FileMetadata,
-    Frame as SharingFrame, IntroductionFrame, TextMetadata, V1Frame as ShV1Frame,
+    frame::Version as ShVersion, text_metadata::Type as TextKind, v1_frame as sh_v1,
 };
 use crate::state::{self, AppState, ProgressState};
 use crate::ukey2;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use bytes::Bytes;
 use prost::Message;
 use rand::Rng;
@@ -460,9 +461,11 @@ pub async fn send(req: SendRequest, state: Arc<AppState>) -> Result<()> {
                             info!(
                                 "[sender] active capabilities: 0x{:04x} (chunk_hmac={}, resume={}, folder={})",
                                 active_capabilities.raw(),
-                                active_capabilities.has(crate::capabilities::features::CHUNK_HMAC_V1),
+                                active_capabilities
+                                    .has(crate::capabilities::features::CHUNK_HMAC_V1),
                                 active_capabilities.has(crate::capabilities::features::RESUME_V1),
-                                active_capabilities.has(crate::capabilities::features::FOLDER_STREAM_V1),
+                                active_capabilities
+                                    .has(crate::capabilities::features::FOLDER_STREAM_V1),
                             );
                             // RFC-0003 §4.1: capability aktif ise chunk-HMAC
                             // anahtarını UKEY2 next_secret'ten türet. Sender
@@ -1250,13 +1253,18 @@ async fn send_file_chunks(
         // emit et. capability gate kapalı (Some(key) yok) → legacy Quick
         // Share davranışı, tag emission yok.
         if let Some(key) = chunk_hmac_key {
-            let tag =
-                crate::chunk_hmac::compute_tag(key, payload_id, chunk_index, offset, body_slice)
-                    .with_context(|| {
-                        format!(
+            let tag = crate::chunk_hmac::compute_tag(
+                key,
+                payload_id,
+                chunk_index,
+                offset,
+                body_slice,
+            )
+            .with_context(|| {
+                format!(
                     "chunk-HMAC tag compute (payload_id={payload_id}, chunk_index={chunk_index})"
                 )
-                    })?;
+            })?;
             let ci = crate::chunk_hmac::build_chunk_integrity(
                 payload_id,
                 chunk_index,
@@ -1337,7 +1345,7 @@ async fn wait_for_resume_hint_or_zero(
     timeout: Duration,
 ) -> i64 {
     use hekadrop_proto::hekadrop_ext::resume_reject::Reason;
-    use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, HekaDropFrame};
+    use hekadrop_proto::hekadrop_ext::{HekaDropFrame, heka_drop_frame::Payload};
 
     // 1. Frame oku — timeout → silent legacy fallback.
     let Ok(raw) = frame::read_frame_timeout(socket, timeout).await else {
@@ -2214,7 +2222,7 @@ mod tests {
     use crate::ukey2::DerivedKeys;
     use hekadrop_proto::hekadrop_ext::resume_reject::Reason;
     use hekadrop_proto::hekadrop_ext::{
-        heka_drop_frame::Payload as ExtPayload, HekaDropFrame, ResumeHint, ResumeReject,
+        HekaDropFrame, ResumeHint, ResumeReject, heka_drop_frame::Payload as ExtPayload,
     };
     use std::io::Write as _;
     use tokio::net::{TcpListener, TcpStream};

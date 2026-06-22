@@ -18,11 +18,11 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 
 use crate::capabilities::{
-    build_capabilities_frame, build_self_capabilities, features, ActiveCapabilities,
+    ActiveCapabilities, build_capabilities_frame, build_self_capabilities, features,
 };
-use crate::frame::{self, dispatch_frame_body, wrap_hekadrop_frame, FrameKind};
+use crate::frame::{self, FrameKind, dispatch_frame_body, wrap_hekadrop_frame};
 use crate::secure::SecureCtx;
-use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, HekaDropFrame};
+use hekadrop_proto::hekadrop_ext::{HekaDropFrame, heka_drop_frame::Payload};
 use prost::Message;
 
 /// Capabilities exchange için varsayılan timeout — `docs/protocol/capabilities.md`

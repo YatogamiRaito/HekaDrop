@@ -30,8 +30,8 @@
 
 mod common;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use common::sha256;
 
 const NEARBY_SHARING_MARKER: &[u8] = b"NearbySharing";

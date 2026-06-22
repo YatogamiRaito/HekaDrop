@@ -10,14 +10,14 @@
 use crate::crypto;
 use crate::error::HekaError;
 use crate::frame;
-use anyhow::{anyhow, Result};
-use elliptic_curve::{sec1::ToSec1Point, Generate};
+use anyhow::{Result, anyhow};
+use elliptic_curve::{Generate, sec1::ToSec1Point};
 use hekadrop_proto::securegcm::{
-    ukey2_client_init, Ukey2ClientFinished, Ukey2ClientInit, Ukey2HandshakeCipher, Ukey2Message,
-    Ukey2ServerInit,
+    Ukey2ClientFinished, Ukey2ClientInit, Ukey2HandshakeCipher, Ukey2Message, Ukey2ServerInit,
+    ukey2_client_init,
 };
 use hekadrop_proto::securemessage::{EcP256PublicKey, GenericPublicKey, PublicKeyType};
-use p256::{ecdh::diffie_hellman, PublicKey, SecretKey};
+use p256::{PublicKey, SecretKey, ecdh::diffie_hellman};
 use prost::Message;
 use rand::Rng;
 use tokio::net::TcpStream;
@@ -597,8 +597,8 @@ mod tests {
         // SECURITY: process_client_init 8'den fazla cipher_commitment içeren
         // ClientInit'i reddetmeli — prost default sınırsız repeated field.
         use hekadrop_proto::securegcm::{
-            ukey2_client_init::CipherCommitment, Ukey2ClientInit, Ukey2HandshakeCipher,
-            Ukey2Message,
+            Ukey2ClientInit, Ukey2HandshakeCipher, Ukey2Message,
+            ukey2_client_init::CipherCommitment,
         };
         use prost::Message;
 

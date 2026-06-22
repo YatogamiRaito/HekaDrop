@@ -81,7 +81,7 @@ pub use hekadrop_proto::{location, securegcm, securemessage, sharing};
 // `tests/ukey2_handshake.rs` + `tests/ukey2_downgrade.rs` ve fuzz harness
 // (`fuzz_ukey2_handshake_init`) bu sembolleri root-level `hekadrop::xxx` ile
 // alıyordu — Adım 3 öncesi yüzeyi korumak için aynı seviyede yeniden export.
-pub use hekadrop_core::{process_client_init, validate_server_init, DerivedKeys};
+pub use hekadrop_core::{DerivedKeys, process_client_init, validate_server_init};
 
 // NOT: `platform` modülü sadece binary (`main.rs`) tarafından kullanılır.
 // Cargo lib+bin hibrit yapısında modül ağaçları bağımsız olduğu için,

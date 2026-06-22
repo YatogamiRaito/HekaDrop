@@ -7,11 +7,11 @@ mod bootstrap;
 mod paths;
 mod terminal;
 
-use crate::terminal::{start_progress_tracker, AcceptMode, CliPlatformOps, CliUiPort};
+use crate::terminal::{AcceptMode, CliPlatformOps, CliUiPort, start_progress_tracker};
 use clap::{Parser, Subcommand, ValueEnum};
 use hekadrop_core::discovery_types::DiscoveredDevice;
 use hekadrop_core::state::AppState;
-use std::io::{stderr, stdin, IsTerminal, Write};
+use std::io::{IsTerminal, Write, stderr, stdin};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;

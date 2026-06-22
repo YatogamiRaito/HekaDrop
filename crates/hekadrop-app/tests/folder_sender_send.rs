@@ -47,15 +47,15 @@
 //! folder_e2e.rs` harness'ine eklenecek (loopback sender↔receiver).
 
 use hekadrop::folder::{
-    build_manifest, bundle_total_size, enumerate_folder, BundleManifest, BundleReader,
-    BundleWriter, EntryKind, EnumerateError, ManifestEntry, HEADER_LEN, MAX_FOLDER_ENTRIES,
-    TRAILER_LEN,
+    BundleManifest, BundleReader, BundleWriter, EntryKind, EnumerateError, HEADER_LEN,
+    MAX_FOLDER_ENTRIES, ManifestEntry, TRAILER_LEN, build_manifest, bundle_total_size,
+    enumerate_folder,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use tempfile::{tempdir, NamedTempFile};
+use tempfile::{NamedTempFile, tempdir};
 
 fn write_file(dir: &Path, rel: &str, body: &[u8]) {
     let full = dir.join(rel);
@@ -180,7 +180,8 @@ fn bundle_total_size_calculation() {
     let total = bundle_total_size(manifest_json.len(), &entries).unwrap();
     let expected = HEADER_LEN as u64 + manifest_json.len() as u64 + 10 + 6 + TRAILER_LEN as u64;
     assert_eq!(
-        total, expected,
+        total,
+        expected,
         "bundle_total_size hesabı yanlış (header={HEADER_LEN}, manifest_len={}, files=16, trailer={TRAILER_LEN})",
         manifest_json.len()
     );

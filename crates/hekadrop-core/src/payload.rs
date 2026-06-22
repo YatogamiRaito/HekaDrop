@@ -15,14 +15,14 @@
 use crate::chunk_hmac;
 use crate::error::HekaError;
 use crate::resume;
-use anyhow::{anyhow, Context, Result};
-use base64::engine::general_purpose::STANDARD as BASE64_STD;
+use anyhow::{Context, Result, anyhow};
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STD;
 use bytes::Bytes;
 use chrono::Utc;
 use hekadrop_proto::hekadrop_ext::ChunkIntegrity;
 use hekadrop_proto::location::nearby::connections::{
-    payload_transfer_frame::payload_header::PayloadType, PayloadTransferFrame,
+    PayloadTransferFrame, payload_transfer_frame::payload_header::PayloadType,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -1286,10 +1286,10 @@ fn remove_resume_meta(payload_id: i64, rs: &ResumeState) {
 )]
 mod tests {
     use super::*;
-    use hekadrop_proto::location::nearby::connections::payload_transfer_frame::{
-        payload_header::PayloadType as PbPayloadType, PayloadChunk, PayloadHeader,
-    };
     use hekadrop_proto::location::nearby::connections::PayloadTransferFrame;
+    use hekadrop_proto::location::nearby::connections::payload_transfer_frame::{
+        PayloadChunk, PayloadHeader, payload_header::PayloadType as PbPayloadType,
+    };
 
     /// Test helper: minimal `PayloadTransferFrame` inşa et.
     fn make_frame(id: i64, ptype: PbPayloadType, body: &[u8], last: bool) -> PayloadTransferFrame {

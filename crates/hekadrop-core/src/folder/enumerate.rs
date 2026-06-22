@@ -21,8 +21,8 @@
 //! - [`MAX_FOLDER_DEPTH`] = 32 (path-traversal + filesystem `PATH_MAX` guard)
 //! - [`MAX_FOLDER_ENTRIES`] = 10 000 (manifest size + receiver memory cap)
 
-use crate::folder::manifest::{BundleManifest, ManifestEntry, MANIFEST_VERSION};
-use crate::folder::sanitize::{sanitize_root_name, PathError};
+use crate::folder::manifest::{BundleManifest, MANIFEST_VERSION, ManifestEntry};
+use crate::folder::sanitize::{PathError, sanitize_root_name};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::fs;

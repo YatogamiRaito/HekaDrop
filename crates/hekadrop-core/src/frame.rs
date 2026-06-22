@@ -239,7 +239,7 @@ mod dispatcher_tests {
         match dispatch_frame_body(&kat_legacy) {
             FrameKind::HekaDrop { inner } => {
                 use crate::capabilities::ActiveCapabilities;
-                use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, HekaDropFrame};
+                use hekadrop_proto::hekadrop_ext::{HekaDropFrame, heka_drop_frame::Payload};
                 use prost::Message;
                 let frame = HekaDropFrame::decode(inner).expect("KAT decode");
                 assert_eq!(frame.version, 1);
@@ -273,8 +273,8 @@ mod dispatcher_tests {
         ];
         match dispatch_frame_body(&kat_full) {
             FrameKind::HekaDrop { inner } => {
-                use crate::capabilities::{features, ActiveCapabilities};
-                use hekadrop_proto::hekadrop_ext::{heka_drop_frame::Payload, HekaDropFrame};
+                use crate::capabilities::{ActiveCapabilities, features};
+                use hekadrop_proto::hekadrop_ext::{HekaDropFrame, heka_drop_frame::Payload};
                 use prost::Message;
                 let frame = HekaDropFrame::decode(inner).expect("KAT decode");
                 if let Some(Payload::Capabilities(c)) = frame.payload {

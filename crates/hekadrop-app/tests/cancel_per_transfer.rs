@@ -37,8 +37,8 @@
 //!      `unregister/drop` olduğunda diğerinin child'ı canlı kalmalı
 //!      (global flag sıfırlama bug'ı regresyon testi).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;

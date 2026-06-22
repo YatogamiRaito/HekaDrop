@@ -34,7 +34,7 @@
 //! `src/connection.rs` içindeki Introduction handler bu modülü çağırır —
 //! mantık değişirse bu test refactor'ı yakalar.
 
-use hekadrop::file_size_guard::{classify_file_size, FileSizeGuard, MAX_FILE_BYTES};
+use hekadrop::file_size_guard::{FileSizeGuard, MAX_FILE_BYTES, classify_file_size};
 
 #[test]
 fn case1_negatif_size_clamped() {
