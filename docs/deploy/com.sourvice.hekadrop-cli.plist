@@ -24,10 +24,6 @@
     <key>ThrottleInterval</key>
     <integer>10</integer>
 
-    <!-- Logs -->
-    <key>StandardOutPath</key>
-    <string>/tmp/hekadrop-cli.stdout.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/hekadrop-cli.stderr.log</string>
+    <!-- Logs are handled by macOS Unified Logging System by default if StandardOutPath/StandardErrorPath are omitted -->
 </dict>
 </plist>

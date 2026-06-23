@@ -28,14 +28,18 @@ pub(crate) fn bootstrap(custom_config_path: Option<PathBuf>) -> anyhow::Result<A
         let parent = custom_path
             .parent()
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| custom_path.clone());
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
         (
             custom_path,
             parent.join("identity.key"),
             parent.join("stats.json"),
         )
     } else {
-        (paths::config_path(), paths::identity_path(), paths::stats_path())
+        (
+            paths::config_path(),
+            paths::identity_path(),
+            paths::stats_path(),
+        )
     };
     let dev_name = paths::device_name();
     let download_d = paths::default_download_dir();
