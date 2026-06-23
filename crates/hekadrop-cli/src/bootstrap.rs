@@ -25,9 +25,10 @@ use std::sync::Arc;
 )]
 pub(crate) fn bootstrap(custom_config_path: Option<PathBuf>) -> anyhow::Result<Arc<AppState>> {
     let (config_p, identity_p, stats_p) = if let Some(custom_path) = custom_config_path {
-        let parent = custom_path
-            .parent()
-            .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+        let parent = custom_path.parent().map_or_else(
+            || std::path::PathBuf::from("."),
+            std::path::Path::to_path_buf,
+        );
         (
             custom_path,
             parent.join("identity.key"),
