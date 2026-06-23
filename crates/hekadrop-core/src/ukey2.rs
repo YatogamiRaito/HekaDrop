@@ -142,6 +142,9 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
         .public_key
         .ok_or_else(|| anyhow!("server_init.public_key yok"))?;
     let peer_generic = GenericPublicKey::decode(&peer_pk_bytes[..])?;
+    if peer_generic.r#type != PublicKeyType::EcP256 as i32 {
+        return Err(anyhow!("geçersiz peer public key type: {:?}", peer_generic.r#type));
+    }
     let peer_ec = peer_generic
         .ec_p256_public_key
         .ok_or_else(|| anyhow!("peer ecP256 yok"))?;
@@ -197,14 +200,14 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
 /// `v`'yi tam 32 baytlık `Vec<u8>`'e normalize et — uzunsa kuyruğu, kısaysa
 /// sıfır-padli olanı döndürür. ECDH X9.62 koordinat hizalaması için.
 fn normalize_32(v: &[u8]) -> Vec<u8> {
-    if v.len() > 32 {
+    if v.len() == 32 {
+        v.to_vec()
+    } else if v.len() > 32 {
         v[v.len() - 32..].to_vec()
-    } else if v.len() < 32 {
+    } else {
         let mut p = vec![0u8; 32 - v.len()];
         p.extend_from_slice(v);
         p
-    } else {
-        v.to_vec()
     }
 }
 
@@ -434,27 +437,15 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
     let cf = Ukey2ClientFinished::decode(&message_data[..])?;
     let peer_generic_pk_bytes = cf.public_key.ok_or_else(|| anyhow!("publicKey yok"))?;
     let peer_generic = GenericPublicKey::decode(&peer_generic_pk_bytes[..])?;
+    if peer_generic.r#type != PublicKeyType::EcP256 as i32 {
+        return Err(anyhow!("geçersiz peer public key type: {:?}", peer_generic.r#type));
+    }
     let peer_ec = peer_generic
         .ec_p256_public_key
         .ok_or_else(|| anyhow!("ecP256PublicKey yok"))?;
 
-    let mut peer_x: Vec<u8> = peer_ec.x.to_vec();
-    let mut peer_y: Vec<u8> = peer_ec.y.to_vec();
-    // Android tarafı bazen 33 bayt (işaret biti 0x00 prefix) gönderir → son 32'yi al.
-    if peer_x.len() > 32 {
-        peer_x = peer_x[peer_x.len() - 32..].to_vec();
-    } else if peer_x.len() < 32 {
-        let mut p = vec![0u8; 32 - peer_x.len()];
-        p.extend_from_slice(&peer_x);
-        peer_x = p;
-    }
-    if peer_y.len() > 32 {
-        peer_y = peer_y[peer_y.len() - 32..].to_vec();
-    } else if peer_y.len() < 32 {
-        let mut p = vec![0u8; 32 - peer_y.len()];
-        p.extend_from_slice(&peer_y);
-        peer_y = p;
-    }
+    let peer_x = normalize_32(&peer_ec.x);
+    let peer_y = normalize_32(&peer_ec.y);
 
     let mut uncompressed = vec![0x04u8];
     uncompressed.extend_from_slice(&peer_x);
@@ -506,6 +497,7 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
 #[cfg(test)]
 mod tests {
     use super::to_signed_bytes;
+    use elliptic_curve::Generate;
 
     #[test]
     fn signed_bytes_msb_yuksekken_00_eklenir() {
@@ -602,27 +594,200 @@ mod tests {
         };
         use prost::Message;
 
-        let mut commitments = Vec::with_capacity(16);
-        for _ in 0..16 {
-            commitments.push(CipherCommitment {
+        // 1) Exactly 8 commitments -> Allowed
+        let mut commitments_8 = Vec::with_capacity(8);
+        for _ in 0..8 {
+            commitments_8.push(CipherCommitment {
                 handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
                 commitment: Some(vec![0u8; 64].into()),
             });
         }
-        let ci = Ukey2ClientInit {
+        let ci_8 = Ukey2ClientInit {
             version: Some(1),
             random: Some(vec![0u8; 32].into()),
-            cipher_commitments: commitments,
+            cipher_commitments: commitments_8,
             next_protocol: Some("AES_256_CBC-HMAC_SHA256".into()),
         };
-        let msg = Ukey2Message {
+        let msg_8 = Ukey2Message {
             message_type: Some(2),
-            message_data: Some(ci.encode_to_vec().into()),
+            message_data: Some(ci_8.encode_to_vec().into()),
+        };
+        let bytes_8 = msg_8.encode_to_vec();
+        let res_8 = super::process_client_init(&bytes_8);
+        // Res_8 might fail because public key generation or other things, but should not be CipherCommitmentFlood
+        if let Err(e) = res_8 {
+            assert!(!e.to_string().contains("cipher_commitment flood"), "8 commitments should be allowed but got: {e}");
+        }
+
+        // 2) Exactly 9 commitments -> Rejected
+        let mut commitments_9 = Vec::with_capacity(9);
+        for _ in 0..9 {
+            commitments_9.push(CipherCommitment {
+                handshake_cipher: Some(Ukey2HandshakeCipher::P256Sha512 as i32),
+                commitment: Some(vec![0u8; 64].into()),
+            });
+        }
+        let ci_9 = Ukey2ClientInit {
+            version: Some(1),
+            random: Some(vec![0u8; 32].into()),
+            cipher_commitments: commitments_9,
+            next_protocol: Some("AES_256_CBC-HMAC_SHA256".into()),
+        };
+        let msg_9 = Ukey2Message {
+            message_type: Some(2),
+            message_data: Some(ci_9.encode_to_vec().into()),
+        };
+        let bytes_9 = msg_9.encode_to_vec();
+        let res_9 = super::process_client_init(&bytes_9);
+        assert!(res_9.is_err(), "9 commitments should be rejected");
+        let err = res_9.err().unwrap();
+        assert!(err.to_string().contains("cipher_commitment flood"));
+    }
+
+    #[test]
+    fn test_normalize_32() {
+        use super::normalize_32;
+        // 32-byte input -> unmodified
+        let v32 = vec![1u8; 32];
+        assert_eq!(normalize_32(&v32), v32);
+
+        // >32-byte input -> truncated to last 32
+        let mut v35 = vec![2u8; 35];
+        v35[0] = 9;
+        v35[1] = 9;
+        v35[2] = 9;
+        let expected_truncated = vec![2u8; 32];
+        assert_eq!(normalize_32(&v35), expected_truncated);
+
+        // <32-byte input -> zero-padded
+        let v30 = vec![3u8; 30];
+        let mut expected_padded = vec![0u8; 2];
+        expected_padded.extend_from_slice(&v30);
+        assert_eq!(normalize_32(&v30), expected_padded);
+    }
+
+    #[test]
+    fn test_process_client_finish_mismatch() {
+        use hekadrop_proto::securegcm::{
+            Ukey2ClientFinished, Ukey2Message,
+        };
+        use prost::Message;
+
+        let state = super::ServerInitResult {
+            server_init_bytes: vec![],
+            secret_key: p256::SecretKey::generate(),
+            cipher_commitment: vec![0u8; 64], // Expected commitment
+            client_init_bytes: vec![],
+        };
+
+        let cf = Ukey2ClientFinished {
+            public_key: Some(vec![1u8; 32].into()),
+        };
+        let msg = Ukey2Message {
+            message_type: Some(4),
+            message_data: Some(cf.encode_to_vec().into()),
         };
         let bytes = msg.encode_to_vec();
-        let res = super::process_client_init(&bytes);
-        assert!(res.is_err(), "flood reddedilmeli");
+
+        let res = super::process_client_finish(&bytes, &state);
+        assert!(res.is_err());
         let err = res.err().unwrap();
-        assert!(err.to_string().contains("cipher_commitment flood"));
+        let heka_err = err.downcast_ref::<crate::error::HekaError>().expect("Expected HekaError");
+        assert!(
+            matches!(heka_err, crate::error::HekaError::Ukey2CommitmentMismatch),
+            "Expected Ukey2CommitmentMismatch, got: {:?}", heka_err
+        );
+    }
+
+    #[test]
+    fn test_process_client_finish_padding() {
+        use hekadrop_proto::securegcm::{
+            Ukey2ClientFinished, Ukey2Message,
+        };
+        use hekadrop_proto::securemessage::{GenericPublicKey, PublicKeyType, EcP256PublicKey};
+        use prost::Message;
+        use sha2::{Digest, Sha512};
+
+        let state = super::ServerInitResult {
+            server_init_bytes: vec![],
+            secret_key: p256::SecretKey::generate(),
+            cipher_commitment: vec![], // Will be set below
+            client_init_bytes: vec![],
+        };
+
+        let cf = Ukey2ClientFinished {
+            public_key: Some(GenericPublicKey {
+                r#type: PublicKeyType::EcP256 as i32,
+                ec_p256_public_key: Some(EcP256PublicKey {
+                    x: vec![0u8; 33].into(), // Length 33
+                    y: vec![0u8; 31].into(), // Length 31
+                }),
+                ..Default::default()
+            }.encode_to_vec().into()),
+        };
+        let msg = Ukey2Message {
+            message_type: Some(4),
+            message_data: Some(cf.encode_to_vec().into()),
+        };
+        let bytes = msg.encode_to_vec();
+
+        let mut sha = Sha512::new();
+        sha.update(&bytes);
+        let digest = sha.finalize();
+
+        let mut state_with_commitment = state;
+        state_with_commitment.cipher_commitment = digest.to_vec();
+
+        let res = super::process_client_finish(&bytes, &state_with_commitment);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        // Since we normalized coordinates to 32 bytes, the SEC1 uncompressed point is built
+        // as exactly 65 bytes, so it passes the length check and fails on "geçersiz eğri noktası"
+        assert!(err.to_string().contains("geçersiz eğri noktası"), "Expected invalid curve point error, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_ukey2_handshake_flow_integration() {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client_task = tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            super::client_handshake(&mut stream).await
+        });
+
+        let server_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            
+            // 1) Read ClientInit
+            let client_init_raw = crate::frame::read_frame(&mut stream).await.unwrap();
+            
+            // 2) Process ClientInit
+            let init_res = super::process_client_init(&client_init_raw).unwrap();
+            
+            // 3) Write ServerInit
+            crate::frame::write_frame(&mut stream, &init_res.server_init_bytes).await.unwrap();
+            
+            // 4) Read ClientFinished
+            let client_finished_raw = crate::frame::read_frame(&mut stream).await.unwrap();
+            
+            // 5) Process ClientFinished
+            let server_keys = super::process_client_finish(&client_finished_raw, &init_res).unwrap();
+            
+            server_keys
+        });
+
+        let client_keys = client_task.await.unwrap().unwrap();
+        let server_keys = server_task.await.unwrap();
+
+        // Client and Server keys must match (taking into account the roles)
+        assert_eq!(client_keys.encrypt_key, server_keys.decrypt_key);
+        assert_eq!(client_keys.send_hmac_key, server_keys.recv_hmac_key);
+        assert_eq!(client_keys.decrypt_key, server_keys.encrypt_key);
+        assert_eq!(client_keys.recv_hmac_key, server_keys.send_hmac_key);
+        assert_eq!(client_keys.auth_key, server_keys.auth_key);
+        assert_eq!(client_keys.pin_code, server_keys.pin_code);
+        assert_eq!(client_keys.next_secret, server_keys.next_secret);
     }
 }

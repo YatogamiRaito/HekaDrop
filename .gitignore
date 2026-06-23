@@ -24,3 +24,7 @@
 /HekaDrop-*.deb
 /HekaDrop-*.dmg
 memory/
+
+# cargo-mutants çıktı dizinleri
+/mutants.out/
+/mutants.out.old/
