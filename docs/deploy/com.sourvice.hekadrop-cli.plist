@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sourvice.hekadrop-cli</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Replace with absolute path to installed hekadrop-cli binary -->
+        <string>/usr/local/bin/hekadrop-cli</string>
+        <string>daemon</string>
+    </array>
+
+    <!-- Run automatically when user logs in -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Automatically restart if it crashes/stops -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Minimum delay in seconds before restart after a crash -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Logs -->
+    <key>StandardOutPath</key>
+    <string>/tmp/hekadrop-cli.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/hekadrop-cli.stderr.log</string>
+</dict>
+</plist>
