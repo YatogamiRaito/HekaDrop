@@ -704,8 +704,7 @@ mod tests {
             .expect("Expected HekaError");
         assert!(
             matches!(heka_err, crate::error::HekaError::Ukey2CommitmentMismatch),
-            "Expected Ukey2CommitmentMismatch, got: {:?}",
-            heka_err
+            "Expected Ukey2CommitmentMismatch, got: {heka_err:?}"
         );
     }
 
@@ -790,10 +789,7 @@ mod tests {
             let client_finished_raw = crate::frame::read_frame(&mut stream).await.unwrap();
 
             // 5) Process ClientFinished
-            let server_keys =
-                super::process_client_finish(&client_finished_raw, &init_res).unwrap();
-
-            server_keys
+            super::process_client_finish(&client_finished_raw, &init_res).unwrap()
         });
 
         let client_keys = client_task.await.unwrap().unwrap();

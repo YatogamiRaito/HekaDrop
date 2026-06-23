@@ -517,10 +517,10 @@ fn main() {
                 } else {
                     AcceptMode::Trusted
                 };
-                if !state.settings.read().auto_accept {
-                    eprintln!("🔐 Daemon starting in trusted-only mode. Only paired/trusted devices can send files.");
-                } else {
+                if state.settings.read().auto_accept {
                     eprintln!("⚠️ Daemon starting in auto-accept mode. Anyone on the local network can send files.");
+                } else {
+                    eprintln!("🔐 Daemon starting in trusted-only mode. Only paired/trusted devices can send files.");
                 }
                 run_receive(state, accept_mode, false).await?;
             }
