@@ -83,8 +83,8 @@ typos
 ## Repo bilgisi
 
 - **Güncel sürüm:** v0.9.0 (released)
-- **Aktif milestone:** v0.9.0 (Fuzzing ve Test Güvenliğinin Olgunlaştırılması)
-- **Sıradaki:** cargo-mutants ve proptest entegrasyonları ile test kapsamının güçlendirilmesi
+- **Aktif milestone:** v0.10.0 (CLI Daemon ve NLnet Hazırlıkları)
+- **Sıradaki:** NLnet hibe başvurusu hazırlıkları ve proptest kapsamının genişletilmesi
 - **MSRV:** Rust 1.90 (CI'da pinned)
 - **Edition:** 2021
 - **Lint policy:** root `Cargo.toml` `[workspace.lints]` — pedantic batch 1-14 enforce edildi (too_many_lines + large_futures dahil)
@@ -95,13 +95,10 @@ typos
 
 ## Sıradaki işler (öncelik sırasıyla)
 
-1. **cargo-mutants entegrasyonu** — Kod tabanındaki test kapsamını mutant testleriyle doğrula.
-2. **Property-based testing (proptest)** — UKEY2 state transitions ve payload reassembly için özellik tabanlı testler yaz.
-3. **afl.rs entegrasyonu** — Alternatif bir fuzzer olarak entegre et.
-4. **v0.10.1 daemon altyapısı** — `hekadrop-cli daemon` gerçek kurulabilir sistem/arkaplan servisi implementasyonu.
-5. **Static musl binary** — `x86_64-unknown-linux-musl` target ile ~4-6 MiB CLI binary.
-6. **NLnet başvurusu** — Ekim 2026 deadline; `docs/security/audit-scope.md` altyapı hazır.
-7. **OSS-Fuzz yeniden başvuru** — v0.11.0+ sonrası.
+1. **NLnet başvurusu** — Ekim 2026 deadline; `docs/security/audit-scope.md` altyapı hazırlandı, başvuru formu/metni taslağı oluşturulacak.
+2. **Property-based testing (proptest)** — UKEY2 state transitions, payload reassembly ve rate limiter için özellik tabanlı testleri genişlet.
+3. **Static musl binary** — v0.17.0/Docker/NAS milestone'una ertelendi, altyapı fizibilite çalışmaları yapılabilir.
+4. **OSS-Fuzz yeniden başvuru** — v0.11.0+ sonrası.
 
 ---
 
