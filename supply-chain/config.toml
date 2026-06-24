@@ -123,10 +123,6 @@ criteria = "safe-to-deploy"
 version = "1.6.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.bytes]]
-version = "1.11.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.cairo-rs]]
 version = "0.18.5"
 criteria = "safe-to-deploy"
