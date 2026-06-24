@@ -1,0 +1,17 @@
+[Unit]
+Description=HekaDrop CLI Daemon
+Documentation=https://github.com/YatogamiRaito/HekaDrop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Path to hekadrop-cli binary. 
+# For user-mode install, it resides under ~/.local/bin/hekadrop-cli.
+# For system-wide install, change this to /usr/local/bin/hekadrop-cli.
+ExecStart=%h/.local/bin/hekadrop-cli daemon
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

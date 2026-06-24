@@ -192,8 +192,8 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
   - `fuzz_resume_hint_parse`
 - ✅ **Corpora:** gerçek Pixel/Samsung traffic capture'larından türetilmiş; `fuzz/corpus/` altında.
 - ✅ **ClusterFuzzLite** CI entegrasyonu tamamlandı: `.clusterfuzzlite/` Dockerfile + `build.sh` + `.github/workflows/clusterfuzzlite.yml` (PR bazlı 5 dk + nightly 30 dk, ASan + UBSan matrix, SARIF upload). OSS-Fuzz başvurusu proje olgunlaşınca (daha yüksek criticality skoru) yeniden yapılır.
-- ⏳ **cargo-mutants** entegrasyonu; dead-code + gereksiz branch tespiti.
-- ⏳ **afl.rs** alternatif fuzzer olarak CI'da haftada bir çalışır.
+- ✅ **cargo-mutants** entegrasyonu; dead-code + gereksiz branch tespiti.
+- ✅ **afl.rs** alternatif fuzzer olarak CI'da haftada bir çalışır.
 - ✅ **Property-based testing (proptest)** kritik state machines için: UKEY2 state transitions, payload reassembly, rate limiter.
 
 **v0.10.0 — CLI Binary + Headless Daemon (2026-10-31)**
@@ -206,7 +206,7 @@ Protokolün doğruluğunu harici doğrulamaya hazırla. Fuzzing altyapısını o
   - ✅ `hekadrop trust add|remove|list`
   - ✅ `hekadrop doctor` — ağ teşhisi (croc gibi)
   - ✅ `hekadrop version` + `hekadrop check-update` (signed Releases API ile — v0.11.0'da signing)
-- ⏳ **Headless daemon modu** (v0.10.1'e ertelendi): `hekadrop daemon --config /etc/hekadrop.toml` — systemd unit + launchd plist + Windows service örnek dosyaları `docs/deploy/`
+- ✅ **Headless daemon modu** (v0.10.1'e ertelendi): `hekadrop daemon --config /etc/hekadrop.toml` — systemd unit + launchd plist + Windows service örnek dosyaları `docs/deploy/`
 - ✅ **`--json` output modu**: her komut için structured output, HA/scripting için.
 - ⏳ Unix philosophy: stdin pipe → send (örn. `cat report.pdf | hekadrop send --filename report.pdf`).
 - ⏳ **Static binary:** `hekadrop-cli` için `cargo build --release --target x86_64-unknown-linux-musl` test edilir; ~4-6 MiB hedef.

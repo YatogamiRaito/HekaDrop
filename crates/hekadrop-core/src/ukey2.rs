@@ -143,7 +143,10 @@ pub async fn client_handshake(socket: &mut TcpStream) -> Result<DerivedKeys> {
         .ok_or_else(|| anyhow!("server_init.public_key yok"))?;
     let peer_generic = GenericPublicKey::decode(&peer_pk_bytes[..])?;
     if peer_generic.r#type != PublicKeyType::EcP256 as i32 {
-        return Err(anyhow!("geçersiz peer public key type: {:?}", peer_generic.r#type));
+        return Err(anyhow!(
+            "geçersiz peer public key type: {:?}",
+            peer_generic.r#type
+        ));
     }
     let peer_ec = peer_generic
         .ec_p256_public_key
@@ -438,7 +441,10 @@ pub fn process_client_finish(raw_frame: &[u8], state: &ServerInitResult) -> Resu
     let peer_generic_pk_bytes = cf.public_key.ok_or_else(|| anyhow!("publicKey yok"))?;
     let peer_generic = GenericPublicKey::decode(&peer_generic_pk_bytes[..])?;
     if peer_generic.r#type != PublicKeyType::EcP256 as i32 {
-        return Err(anyhow!("geçersiz peer public key type: {:?}", peer_generic.r#type));
+        return Err(anyhow!(
+            "geçersiz peer public key type: {:?}",
+            peer_generic.r#type
+        ));
     }
     let peer_ec = peer_generic
         .ec_p256_public_key
@@ -616,7 +622,10 @@ mod tests {
         let res_8 = super::process_client_init(&bytes_8);
         // Res_8 might fail because public key generation or other things, but should not be CipherCommitmentFlood
         if let Err(e) = res_8 {
-            assert!(!e.to_string().contains("cipher_commitment flood"), "8 commitments should be allowed but got: {e}");
+            assert!(
+                !e.to_string().contains("cipher_commitment flood"),
+                "8 commitments should be allowed but got: {e}"
+            );
         }
 
         // 2) Exactly 9 commitments -> Rejected
@@ -668,9 +677,7 @@ mod tests {
 
     #[test]
     fn test_process_client_finish_mismatch() {
-        use hekadrop_proto::securegcm::{
-            Ukey2ClientFinished, Ukey2Message,
-        };
+        use hekadrop_proto::securegcm::{Ukey2ClientFinished, Ukey2Message};
         use prost::Message;
 
         let state = super::ServerInitResult {
@@ -692,19 +699,19 @@ mod tests {
         let res = super::process_client_finish(&bytes, &state);
         assert!(res.is_err());
         let err = res.err().unwrap();
-        let heka_err = err.downcast_ref::<crate::error::HekaError>().expect("Expected HekaError");
+        let heka_err = err
+            .downcast_ref::<crate::error::HekaError>()
+            .expect("Expected HekaError");
         assert!(
             matches!(heka_err, crate::error::HekaError::Ukey2CommitmentMismatch),
-            "Expected Ukey2CommitmentMismatch, got: {:?}", heka_err
+            "Expected Ukey2CommitmentMismatch, got: {heka_err:?}"
         );
     }
 
     #[test]
     fn test_process_client_finish_padding() {
-        use hekadrop_proto::securegcm::{
-            Ukey2ClientFinished, Ukey2Message,
-        };
-        use hekadrop_proto::securemessage::{GenericPublicKey, PublicKeyType, EcP256PublicKey};
+        use hekadrop_proto::securegcm::{Ukey2ClientFinished, Ukey2Message};
+        use hekadrop_proto::securemessage::{EcP256PublicKey, GenericPublicKey, PublicKeyType};
         use prost::Message;
         use sha2::{Digest, Sha512};
 
@@ -716,14 +723,18 @@ mod tests {
         };
 
         let cf = Ukey2ClientFinished {
-            public_key: Some(GenericPublicKey {
-                r#type: PublicKeyType::EcP256 as i32,
-                ec_p256_public_key: Some(EcP256PublicKey {
-                    x: vec![0u8; 33].into(), // Length 33
-                    y: vec![0u8; 31].into(), // Length 31
-                }),
-                ..Default::default()
-            }.encode_to_vec().into()),
+            public_key: Some(
+                GenericPublicKey {
+                    r#type: PublicKeyType::EcP256 as i32,
+                    ec_p256_public_key: Some(EcP256PublicKey {
+                        x: vec![0u8; 33].into(), // Length 33
+                        y: vec![0u8; 31].into(), // Length 31
+                    }),
+                    ..Default::default()
+                }
+                .encode_to_vec()
+                .into(),
+            ),
         };
         let msg = Ukey2Message {
             message_type: Some(4),
@@ -743,7 +754,10 @@ mod tests {
         let err = res.err().unwrap();
         // Since we normalized coordinates to 32 bytes, the SEC1 uncompressed point is built
         // as exactly 65 bytes, so it passes the length check and fails on "geçersiz eğri noktası"
-        assert!(err.to_string().contains("geçersiz eğri noktası"), "Expected invalid curve point error, got: {err}");
+        assert!(
+            err.to_string().contains("geçersiz eğri noktası"),
+            "Expected invalid curve point error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -759,23 +773,23 @@ mod tests {
 
         let server_task = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            
+
             // 1) Read ClientInit
             let client_init_raw = crate::frame::read_frame(&mut stream).await.unwrap();
-            
+
             // 2) Process ClientInit
             let init_res = super::process_client_init(&client_init_raw).unwrap();
-            
+
             // 3) Write ServerInit
-            crate::frame::write_frame(&mut stream, &init_res.server_init_bytes).await.unwrap();
-            
+            crate::frame::write_frame(&mut stream, &init_res.server_init_bytes)
+                .await
+                .unwrap();
+
             // 4) Read ClientFinished
             let client_finished_raw = crate::frame::read_frame(&mut stream).await.unwrap();
-            
+
             // 5) Process ClientFinished
-            let server_keys = super::process_client_finish(&client_finished_raw, &init_res).unwrap();
-            
-            server_keys
+            super::process_client_finish(&client_finished_raw, &init_res).unwrap()
         });
 
         let client_keys = client_task.await.unwrap().unwrap();

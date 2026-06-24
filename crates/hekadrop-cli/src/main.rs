@@ -293,7 +293,7 @@ fn main() {
         match args.command {
             Commands::ListPeers { scan_secs, json } => {
                 setup_cli_logging();
-                let _state = bootstrap::bootstrap()?;
+                let _state = bootstrap::bootstrap(None)?;
                 let duration = Duration::from_secs(scan_secs);
                 if !json {
                     println!("🔍 Scanning for HekaDrop/Quick Share devices...");
@@ -332,7 +332,7 @@ fn main() {
                 json,
             } => {
                 setup_cli_logging();
-                let state = bootstrap::bootstrap()?;
+                let state = bootstrap::bootstrap(None)?;
                 if !json {
                     eprintln!("🔍 Scanning for HekaDrop/Quick Share devices...");
                 }
@@ -362,7 +362,7 @@ fn main() {
                 json,
             } => {
                 setup_cli_logging();
-                let state = bootstrap::bootstrap()?;
+                let state = bootstrap::bootstrap(None)?;
                 if !json {
                     eprintln!("🔍 Scanning for HekaDrop/Quick Share devices...");
                 }
@@ -390,7 +390,7 @@ fn main() {
             }
             Commands::Receive { accept, json } => {
                 setup_cli_logging();
-                let state = bootstrap::bootstrap()?;
+                let state = bootstrap::bootstrap(None)?;
                 let accept_mode = match accept {
                     CliAcceptMode::Interactive => AcceptMode::Interactive,
                     CliAcceptMode::All => AcceptMode::All,
@@ -399,7 +399,7 @@ fn main() {
                 run_receive(state, accept_mode, json).await?;
             }
             Commands::Trust { action } => {
-                let state = bootstrap::bootstrap()?;
+                let state = bootstrap::bootstrap(None)?;
                 match action {
                     TrustAction::List { json } => {
                         let settings = state.settings.read();
@@ -509,8 +509,20 @@ fn main() {
                 println!("HekaDrop CLI v0.10.0");
                 println!("HekaDrop Core v0.8.0");
             }
-            Commands::Daemon { config: _ } => {
-                println!("HekaDrop headless background daemon coming in v0.10.1");
+            Commands::Daemon { config } => {
+                setup_cli_logging();
+                let state = bootstrap::bootstrap(config)?;
+                let accept_mode = if state.settings.read().auto_accept {
+                    AcceptMode::All
+                } else {
+                    AcceptMode::Trusted
+                };
+                if state.settings.read().auto_accept {
+                    eprintln!("⚠️ Daemon starting in auto-accept mode. Anyone on the local network can send files.");
+                } else {
+                    eprintln!("🔐 Daemon starting in trusted-only mode. Only paired/trusted devices can send files.");
+                }
+                run_receive(state, accept_mode, false).await?;
             }
         }
         anyhow::Ok(())

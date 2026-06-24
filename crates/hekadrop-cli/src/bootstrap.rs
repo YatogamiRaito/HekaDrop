@@ -7,6 +7,7 @@
 use crate::paths;
 use hekadrop_core::settings::Settings;
 use hekadrop_core::state::AppState;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Bootstraps and returns a clean `Arc<AppState>` instance for the CLI.
@@ -22,10 +23,24 @@ use std::sync::Arc;
     clippy::print_stderr,
     reason = "API: CLI bootstrap logs config loading warning directly to stderr"
 )]
-pub(crate) fn bootstrap() -> anyhow::Result<Arc<AppState>> {
-    let config_p = paths::config_path();
-    let identity_p = paths::identity_path();
-    let stats_p = paths::stats_path();
+pub(crate) fn bootstrap(custom_config_path: Option<PathBuf>) -> anyhow::Result<Arc<AppState>> {
+    let (config_p, identity_p, stats_p) = if let Some(custom_path) = custom_config_path {
+        let parent = custom_path.parent().map_or_else(
+            || std::path::PathBuf::from("."),
+            std::path::Path::to_path_buf,
+        );
+        (
+            custom_path,
+            parent.join("identity.key"),
+            parent.join("stats.json"),
+        )
+    } else {
+        (
+            paths::config_path(),
+            paths::identity_path(),
+            paths::stats_path(),
+        )
+    };
     let dev_name = paths::device_name();
     let download_d = paths::default_download_dir();
 

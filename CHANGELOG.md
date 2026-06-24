@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- (Geliştirme aşamasındaki değişiklikler buraya eklenecektir.)
+### Added
+- **feat(cli): Headless daemon modu** — `hekadrop-cli daemon` komutu ile arka planda çalışan servis desteği eklendi.
+- **feat(cli): Servis kurulum şablonları** — macOS launchd, Linux systemd ve Windows Service için konfigürasyon dosyaları ile kurulum kılavuzları (`docs/deploy/`) eklendi.
+- **feat(test): cargo-mutants ve afl.rs entegrasyonları** — Mutasyon testleri (`cargo-mutants`) ve alternatif fuzzing altyapısı (`afl.rs`) CI/CD ve yerel ortama entegre edildi.
+- **test(core): ukey2 test kapsamı artırıldı** — `ukey2.rs` mutasyon test kapsamı unit ve entegrasyon testleriyle güçlendirilerek %92'ye çıkarıldı.
+
+### Fixed
+- **fix(cli): Windows CI rustfmt uyumluluğu** — `bootstrap.rs` içinde cross-platform `cargo fmt` tutarsızlıkları giderildi.
+- **fix(cli): launchd plist log yapılandırması** — Plist şablonunda log yönlendirmeleri macOS Unified Logging System'e uygun hale getirildi.
 
 ## [0.9.0] - 2026-06-18
 
